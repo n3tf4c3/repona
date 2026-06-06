@@ -100,7 +100,7 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
         ))}
       </div>
 
-      {erro && (
+      {erro && !(criando || editando) && (
         <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
           <AlertCircle size={16} />
           {erro}
@@ -124,7 +124,9 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
               setEditando(produto);
               setCriando(false);
             }}
-            onExcluir={() => executar(() => excluirProdutoAction(produto.id))}
+            onExcluir={() => {
+              if (window.confirm(`Excluir ${produto.name}?`)) executar(() => excluirProdutoAction(produto.id));
+            }}
             onStock={(dir) =>
               executar(() =>
                 definirQuantidadeAction(produto.id, getNextInventoryQuantity(produto.inventoryQuantity, dir))
@@ -139,6 +141,7 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
       {(criando || editando) && (
         <ProdutoModal
           produto={editando}
+          erro={erro}
           pending={pending}
           onFechar={() => {
             setCriando(false);
@@ -294,11 +297,13 @@ function IconButton({
 
 function ProdutoModal({
   produto,
+  erro,
   pending,
   onFechar,
   onSalvar,
 }: {
   produto: ProductDTO | null;
+  erro: string | null;
   pending: boolean;
   onFechar: () => void;
   onSalvar: (input: NewProductInput) => void;
@@ -311,6 +316,12 @@ function ProdutoModal({
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
       <div className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl">
         <h2 className="text-lg font-black">{produto ? "Editar produto" : "Novo produto"}</h2>
+        {erro && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+            <AlertCircle size={16} />
+            {erro}
+          </div>
+        )}
         <div className="mt-4 space-y-3">
           <label className="block">
             <span className="text-sm font-semibold text-ink-soft">Nome</span>

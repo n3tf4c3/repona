@@ -1,12 +1,23 @@
 import { config } from "dotenv";
+import { randomInt } from "crypto";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
-import { usuarios } from "../../src/server/db/schema";
+import { casas, usuarios } from "../../src/server/db/schema";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
+
+const ALFABETO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+function gerarCodigo(): string {
+  let codigo = "";
+  for (let i = 0; i < 8; i++) {
+    codigo += ALFABETO[randomInt(ALFABETO.length)];
+  }
+  return codigo;
+}
 
 async function main() {
   const url = process.env.DATABASE_URL;
@@ -36,7 +47,11 @@ async function main() {
       .where(sql`${usuarios.id} = ${existente.id}`);
     console.log(`Usuário atualizado: ${email}`);
   } else {
-    await db.insert(usuarios).values({ nome, email, senhaHash });
+    const [casa] = await db
+      .insert(casas)
+      .values({ name: "Minha casa", inviteCode: gerarCodigo() })
+      .returning({ id: casas.id });
+    await db.insert(usuarios).values({ casaId: casa.id, nome, email, senhaHash });
     console.log(`Usuário criado: ${email}`);
   }
 }

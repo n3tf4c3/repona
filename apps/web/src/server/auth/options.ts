@@ -11,6 +11,30 @@ const loginSchema = z.object({
   password: z.string().min(1).max(200),
 });
 
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 10;
+
+function isLoginBlocked(email: string): boolean {
+  const attempt = loginAttempts.get(email);
+  if (!attempt) return false;
+  if (attempt.resetAt <= Date.now()) {
+    loginAttempts.delete(email);
+    return false;
+  }
+  return attempt.count >= MAX_LOGIN_ATTEMPTS;
+}
+
+function recordFailedLogin(email: string) {
+  const now = Date.now();
+  const attempt = loginAttempts.get(email);
+  if (!attempt || attempt.resetAt <= now) {
+    loginAttempts.set(email, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  loginAttempts.set(email, { ...attempt, count: attempt.count + 1 });
+}
+
 export const authOptions: NextAuthOptions = {
   // Getter: valida o segredo em runtime (quando o NextAuth o lê), não no build.
   get secret() {
@@ -35,6 +59,9 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
+        const email = parsed.data.email.toLowerCase();
+
+        if (isLoginBlocked(email)) return null;
 
         const [usuario] = await db
           .select({
@@ -44,13 +71,21 @@ export const authOptions: NextAuthOptions = {
             senhaHash: usuarios.senhaHash,
           })
           .from(usuarios)
-          .where(eq(sql`lower(${usuarios.email})`, parsed.data.email.toLowerCase()))
+          .where(eq(sql`lower(${usuarios.email})`, email))
           .limit(1);
 
-        if (!usuario) return null;
+        if (!usuario) {
+          recordFailedLogin(email);
+          return null;
+        }
 
         const ok = await verifyPassword(parsed.data.password, usuario.senhaHash);
-        if (!ok) return null;
+        if (!ok) {
+          recordFailedLogin(email);
+          return null;
+        }
+
+        loginAttempts.delete(email);
 
         return {
           id: String(usuario.id),

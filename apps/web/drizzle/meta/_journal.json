@@ -15,6 +15,20 @@
       "when": 1780776413894,
       "tag": "0001_mixed_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780786832579,
+      "tag": "0002_casa_sharing",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780787440119,
+      "tag": "0003_integrity_constraints",
+      "breakpoints": true
     }
   ]
 }

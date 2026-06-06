@@ -6,7 +6,7 @@ import { ListaClient } from "./lista-client";
 export default async function ListaPage() {
   const { casaId: id } = await requireCasa();
   const lista = await garantirListaAtiva(id);
-  const itens = await listarItensAtivos(id);
+  const itens = await listarItensAtivos(id, lista.id);
   const grupos = agruparPorCategoria(itens);
   return <ListaClient listName={lista.name} grupos={grupos} total={itens.length} />;
 }

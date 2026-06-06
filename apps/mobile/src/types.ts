@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
+import type { NewProductInput as CoreNewProductInput } from '@repona/core';
 
 export type TabKey = 'home' | 'list' | 'products' | 'history' | 'future';
 
@@ -23,13 +24,7 @@ export type Product = {
   tint: string;
 };
 
-export type NewProductInput = {
-  name: string;
-  category: string;
-  barcode?: string | null;
-  photoUri?: string | null;
-  alertThreshold?: string | null;
-};
+export type NewProductInput = CoreNewProductInput;
 
 export type ShoppingItem = {
   id: number;

@@ -32,6 +32,7 @@
     "lightningcss-linux-x64-gnu": "1.32.0"
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "^16.2.6",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
@@ -39,9 +40,10 @@
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "globals": "^14.0.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "typescript-eslint": "^8.60.1"
   }
 }

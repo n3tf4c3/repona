@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import type { ProductDTO, NewProductInput, ProductStatus, InventoryStatus } from "@repona/core";
+import { isEmptyQuantity, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents, purchaseHistory } from "@/server/db/schema";
 
@@ -24,7 +24,7 @@ function consumoSubquery() {
   return db
     .select({
       productId: inventoryEvents.productId,
-      consumptionCount: sql<number>`count(*)`.as("consumption_count"),
+      consumptionCount: sql<number>`count(*)::int`.as("consumption_count"),
       lastConsumedAt: sql<Date | null>`max(${inventoryEvents.occurredAt})`.as("last_consumed_at"),
     })
     .from(inventoryEvents)
@@ -67,7 +67,7 @@ function selecionarProdutos(casaId: number, id?: number) {
       status: products.status,
       alertThreshold: products.alertThreshold,
       inventoryQuantity: sql<string>`coalesce(${inventoryItems.quantity}, '0 un')`,
-      inventoryStatus: sql<string>`coalesce(${inventoryItems.status}, case ${products.status} when 'missing' then 'missing' else 'in_stock' end)`,
+      inventoryStatus: sql<string>`coalesce(${inventoryItems.status}, 'missing')`,
       consumptionCount: sql<number>`coalesce(${consumo.consumptionCount}, 0)`,
       lastConsumedAt: consumo.lastConsumedAt,
       createdAt: products.createdAt,
@@ -80,6 +80,7 @@ function selecionarProdutos(casaId: number, id?: number) {
 }
 
 function mapProduto(row: ProdutoRow): ProductDTO {
+  const estoqueVazio = isEmptyQuantity(row.inventoryQuantity);
   return {
     id: row.id,
     name: row.name,
@@ -87,10 +88,10 @@ function mapProduto(row: ProdutoRow): ProductDTO {
     barcode: row.barcode,
     photoUri: row.photoUri,
     purchaseCount: row.purchaseCount,
-    status: row.status as ProductStatus,
+    status: estoqueVazio ? "missing" : (row.status as ProductStatus),
     alertThreshold: row.alertThreshold,
     inventoryQuantity: row.inventoryQuantity,
-    inventoryStatus: row.inventoryStatus as InventoryStatus,
+    inventoryStatus: estoqueVazio ? "missing" : (row.inventoryStatus as InventoryStatus),
     consumptionCount: row.consumptionCount,
     lastConsumedAt: row.lastConsumedAt ? row.lastConsumedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
@@ -137,6 +138,12 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
     })
     .returning({ id: products.id });
 
+  await db.insert(inventoryItems).values({
+    productId: criado.id,
+    quantity: "0 un",
+    status: "missing",
+  });
+
   const dto = await getProdutoDTO(casaId, criado.id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND_AFTER_INSERT");
   return dto;
@@ -179,7 +186,7 @@ export async function deleteProduto(casaId: number, id: number): Promise<void> {
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
   const [historico] = await db
-    .select({ count: sql<number>`count(*)` })
+    .select({ count: sql<number>`count(*)::int` })
     .from(purchaseHistory)
     .where(eq(purchaseHistory.productId, id));
   if (Number(historico?.count ?? 0) > 0) throw new Error("PRODUCT_HAS_HISTORY");
@@ -190,7 +197,7 @@ export async function deleteProduto(casaId: number, id: number): Promise<void> {
 
 export async function seedProdutosIniciais(casaId: number): Promise<void> {
   const [contagem] = await db
-    .select({ count: sql<number>`count(*)` })
+    .select({ count: sql<number>`count(*)::int` })
     .from(products)
     .where(eq(products.casaId, casaId));
   if (Number(contagem?.count ?? 0) > 0) return;

@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import type { ShoppingListDTO, ShoppingListItemDTO, ProductStatus } from "@repona/core";
+import { isEmptyQuantity, type ShoppingListDTO, type ShoppingListItemDTO, type ProductStatus } from "@repona/core";
 import { db } from "@/server/db";
 import {
   products,
@@ -28,10 +28,22 @@ export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDT
     };
   }
 
-  const [criada] = await db
-    .insert(shoppingLists)
-    .values({ casaId: casaId, name: "Compra da Semana", status: "active" })
-    .returning();
+  let criada: typeof shoppingLists.$inferSelect | undefined;
+  try {
+    [criada] = await db
+      .insert(shoppingLists)
+      .values({ casaId: casaId, name: "Compra da Semana", status: "active" })
+      .returning();
+  } catch {
+    [criada] = await db
+      .select()
+      .from(shoppingLists)
+      .where(and(eq(shoppingLists.casaId, casaId), eq(shoppingLists.status, "active")))
+      .orderBy(sql`${shoppingLists.createdAt} desc`)
+      .limit(1);
+  }
+
+  if (!criada) throw new Error("SHOPPING_LIST_CREATE_FAILED");
 
   return {
     id: criada.id,
@@ -50,8 +62,11 @@ function listasDaCasa(casaId: number) {
     .where(eq(shoppingLists.casaId, casaId));
 }
 
-export async function listarItensAtivos(casaId: number): Promise<ShoppingListItemDTO[]> {
-  const lista = await garantirListaAtiva(casaId);
+export async function listarItensAtivos(
+  casaId: number,
+  listaId?: number
+): Promise<ShoppingListItemDTO[]> {
+  const lista = listaId === undefined ? await garantirListaAtiva(casaId) : { id: listaId };
   const rows = await db
     .select({
       id: shoppingListItems.id,
@@ -65,7 +80,7 @@ export async function listarItensAtivos(casaId: number): Promise<ShoppingListIte
     })
     .from(shoppingListItems)
     .innerJoin(products, eq(products.id, shoppingListItems.productId))
-    .where(eq(shoppingListItems.shoppingListId, lista.id))
+    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(products.casaId, casaId)))
     .orderBy(asc(products.category), asc(shoppingListItems.checked), asc(products.name));
 
   return rows.map((row) => ({
@@ -147,10 +162,18 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   const marcados = await db
     .select({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity })
     .from(shoppingListItems)
-    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)))
+    .innerJoin(products, eq(products.id, shoppingListItems.productId))
+    .where(
+      and(
+        eq(shoppingListItems.shoppingListId, lista.id),
+        eq(shoppingListItems.checked, true),
+        eq(products.casaId, casaId)
+      )
+    )
     .orderBy(asc(shoppingListItems.id));
 
   if (marcados.length === 0) return 0;
+  if (marcados.some((item) => isEmptyQuantity(item.quantity))) throw new Error("QUANTITY_INVALID");
   const now = new Date();
 
   // Tudo numa transação (db.batch): por item marcado grava histórico, incrementa
@@ -174,7 +197,7 @@ export async function finalizarCompra(casaId: number): Promise<number> {
           status: "active",
           updatedAt: now,
         })
-        .where(eq(products.id, item.productId))
+        .where(and(eq(products.casaId, casaId), eq(products.id, item.productId)))
     );
     escritas.push(
       db

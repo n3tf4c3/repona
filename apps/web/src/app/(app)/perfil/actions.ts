@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { requireUser, requireCasa } from "@/server/auth/session";
 import {
   entrarComCodigo,
@@ -14,7 +15,12 @@ type Resultado = { ok: true } | { ok: false; error: string };
 const MENSAGENS: Record<string, string> = {
   CODIGO_INVALIDO: "Código inválido. Confira e tente de novo.",
   NOME_INVALIDO: "Informe um nome para a casa.",
+  INPUT_INVALID: "Dados inválidos. Confira as informações e tente novamente.",
+  TOO_MANY_ATTEMPTS: "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
 };
+
+const codigoSchema = z.string().trim().toUpperCase().regex(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/);
+const nomeSchema = z.string().trim().min(1).max(80);
 
 function tratar(error: unknown): Resultado {
   const codigo = error instanceof Error ? error.message : "ERRO";
@@ -31,10 +37,11 @@ function revalidarTudo() {
 export async function entrarComCodigoAction(code: string): Promise<Resultado> {
   const { id } = await requireUser();
   try {
-    await entrarComCodigo(id, code);
+    await entrarComCodigo(id, codigoSchema.parse(code));
     revalidarTudo();
     return { ok: true };
   } catch (error) {
+    if (error instanceof z.ZodError) return tratar(new Error("CODIGO_INVALIDO"));
     return tratar(error);
   }
 }
@@ -53,10 +60,11 @@ export async function regenerarCodigoAction(): Promise<Resultado> {
 export async function renomearCasaAction(name: string): Promise<Resultado> {
   const { casaId } = await requireCasa();
   try {
-    await renomearCasa(casaId, name);
+    await renomearCasa(casaId, nomeSchema.parse(name));
     revalidatePath("/perfil");
     return { ok: true };
   } catch (error) {
+    if (error instanceof z.ZodError) return tratar(new Error("NOME_INVALIDO"));
     return tratar(error);
   }
 }

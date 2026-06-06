@@ -8,11 +8,8 @@ export default async function InicioPage() {
   const { casaId: id } = await requireCasa();
   await seedProdutosIniciais(id);
 
-  const [produtos, lista, itens] = await Promise.all([
-    listProdutos(id),
-    garantirListaAtiva(id),
-    listarItensAtivos(id),
-  ]);
+  const lista = await garantirListaAtiva(id);
+  const [produtos, itens] = await Promise.all([listProdutos(id), listarItensAtivos(id, lista.id)]);
 
   const listedIds = itens.map((i) => i.productId);
   const listedSet = new Set(listedIds);

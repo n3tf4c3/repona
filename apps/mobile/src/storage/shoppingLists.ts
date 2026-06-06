@@ -1,3 +1,4 @@
+import { isEmptyQuantity } from '@repona/core';
 import { initializeDatabase } from './database';
 
 export type ShoppingListRecord = {
@@ -60,15 +61,29 @@ export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
   }
 
   const now = new Date().toISOString();
-  const result = await database.runAsync(
-    `INSERT INTO shopping_lists (name, status, created_at, updated_at)
-     VALUES ('Compra da Semana', 'active', ?, ?)`,
-    now,
-    now,
-  );
+  let createdListId = 0;
+  try {
+    const result = await database.runAsync(
+      `INSERT INTO shopping_lists (name, status, created_at, updated_at)
+       VALUES ('Compra da Semana', 'active', ?, ?)`,
+      now,
+      now,
+    );
+    createdListId = result.lastInsertRowId;
+  } catch {
+    const active = await database.getFirstAsync<ShoppingListRow>(`
+      SELECT id, name, status, created_at, updated_at
+      FROM shopping_lists
+      WHERE status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    if (active) return mapShoppingListRow(active);
+    throw new Error('SHOPPING_LIST_CREATE_FAILED');
+  }
 
   return {
-    id: result.lastInsertRowId,
+    id: createdListId,
     name: 'Compra da Semana',
     status: 'active',
     createdAt: now,
@@ -238,6 +253,10 @@ export async function finalizeActiveShoppingList() {
 
   if (purchasedItems.length === 0) {
     return 0;
+  }
+
+  if (purchasedItems.some((item) => isEmptyQuantity(item.quantity))) {
+    throw new Error('QUANTITY_INVALID');
   }
 
   const now = new Date().toISOString();

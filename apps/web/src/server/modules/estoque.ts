@@ -38,7 +38,10 @@ export async function definirQuantidade(
         target: inventoryItems.productId,
         set: { quantity: normalizada, status, updatedAt: now },
       }),
-    db.update(products).set({ status: productStatus, updatedAt: now }).where(eq(products.id, produtoId)),
+    db
+      .update(products)
+      .set({ status: productStatus, updatedAt: now })
+      .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
   ]);
 }
 
@@ -68,6 +71,9 @@ export async function consumir(casaId: number, produtoId: number): Promise<void>
         target: inventoryItems.productId,
         set: { quantity: proxima, status, updatedAt: now },
       }),
-    db.update(products).set({ status: productStatus, updatedAt: now }).where(eq(products.id, produtoId)),
+    db
+      .update(products)
+      .set({ status: productStatus, updatedAt: now })
+      .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
   ]);
 }

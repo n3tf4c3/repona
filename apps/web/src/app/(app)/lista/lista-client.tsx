@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Check, Plus, Minus, Trash2, ShoppingBag, CheckCircle2, AlertCircle, ClipboardList } from "lucide-react";
-import { getNextInventoryQuantity, type ShoppingListItemDTO } from "@repona/core";
+import { getNextInventoryQuantity, isEmptyQuantity, type ShoppingListItemDTO } from "@repona/core";
 import type { GrupoItens } from "@/lib/categorias";
 import { CategoriaBolha } from "@/components/categoria-icone";
 import {
@@ -51,6 +51,11 @@ export function ListaClient({
         setAviso(`Compra finalizada: ${r.total} ${r.total === 1 ? "item" : "itens"} no histórico.`);
       }
     });
+  }
+
+  function proximaQuantidadeCompra(quantity: string, dir: 1 | -1) {
+    const next = getNextInventoryQuantity(quantity, dir);
+    return isEmptyQuantity(next) ? quantity : next;
   }
 
   return (
@@ -113,7 +118,7 @@ export function ListaClient({
               onToggle={() => executar(() => alternarItemAction(item.id))}
               onQty={(dir) =>
                 executar(() =>
-                  atualizarQuantidadeAction(item.id, getNextInventoryQuantity(item.quantity, dir))
+                  atualizarQuantidadeAction(item.id, proximaQuantidadeCompra(item.quantity, dir))
                 )
               }
               onRemove={() => executar(() => removerItemAction(item.id))}

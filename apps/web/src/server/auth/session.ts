@@ -16,7 +16,11 @@ export async function requireUser(): Promise<{ id: number }> {
   if (!id) {
     redirect("/login");
   }
-  return { id: Number(id) };
+  const userId = Number(id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    redirect("/login");
+  }
+  return { id: userId };
 }
 
 // Garante usuário autenticado e resolve a casa dele (criando se necessário).

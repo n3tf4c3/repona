@@ -1,4 +1,5 @@
 import "server-only";
+import { randomInt } from "crypto";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { casas, usuarios } from "@/server/db/schema";
@@ -13,13 +14,33 @@ export type CasaDTO = {
 
 // Código de convite: 8 chars base32 sem caracteres ambíguos (0/O/1/I).
 const ALFABETO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const tentativasConvite = new Map<number, { count: number; resetAt: number }>();
+const JANELA_TENTATIVAS_MS = 15 * 60 * 1000;
+const MAX_TENTATIVAS_CONVITE = 10;
 
 function gerarCodigo(): string {
   let codigo = "";
   for (let i = 0; i < 8; i++) {
-    codigo += ALFABETO[Math.floor(Math.random() * ALFABETO.length)];
+    codigo += ALFABETO[randomInt(ALFABETO.length)];
   }
   return codigo;
+}
+
+function validarTentativasConvite(userId: number) {
+  const agora = Date.now();
+  const tentativa = tentativasConvite.get(userId);
+  if (!tentativa || tentativa.resetAt <= agora) return;
+  if (tentativa.count >= MAX_TENTATIVAS_CONVITE) throw new Error("TOO_MANY_ATTEMPTS");
+}
+
+function registrarTentativaConvite(userId: number) {
+  const agora = Date.now();
+  const tentativa = tentativasConvite.get(userId);
+  if (!tentativa || tentativa.resetAt <= agora) {
+    tentativasConvite.set(userId, { count: 1, resetAt: agora + JANELA_TENTATIVAS_MS });
+    return;
+  }
+  tentativasConvite.set(userId, { ...tentativa, count: tentativa.count + 1 });
 }
 
 async function criarCasa(name = "Minha casa"): Promise<number> {
@@ -41,12 +62,13 @@ async function criarCasa(name = "Minha casa"): Promise<number> {
 // Garante que o usuário tem uma casa; cria e vincula se necessário. Retorna casaId.
 export async function garantirCasa(userId: number): Promise<number> {
   const [usuario] = await db
-    .select({ casaId: usuarios.casaId })
+    .select({ id: usuarios.id, casaId: usuarios.casaId })
     .from(usuarios)
     .where(eq(usuarios.id, userId))
     .limit(1);
 
-  if (usuario?.casaId) return usuario.casaId;
+  if (!usuario) throw new Error("USER_NOT_FOUND");
+  if (usuario.casaId) return usuario.casaId;
 
   const casaId = await criarCasa();
   await db.update(usuarios).set({ casaId }).where(eq(usuarios.id, userId));
@@ -71,6 +93,7 @@ export async function obterCasa(userId: number): Promise<CasaDTO> {
 }
 
 export async function entrarComCodigo(userId: number, code: string): Promise<void> {
+  validarTentativasConvite(userId);
   const codigo = code.trim().toUpperCase();
   if (!codigo) throw new Error("CODIGO_INVALIDO");
 
@@ -79,9 +102,13 @@ export async function entrarComCodigo(userId: number, code: string): Promise<voi
     .from(casas)
     .where(eq(casas.inviteCode, codigo))
     .limit(1);
-  if (!casa) throw new Error("CODIGO_INVALIDO");
+  if (!casa) {
+    registrarTentativaConvite(userId);
+    throw new Error("CODIGO_INVALIDO");
+  }
 
   await db.update(usuarios).set({ casaId: casa.id }).where(eq(usuarios.id, userId));
+  tentativasConvite.delete(userId);
 }
 
 export async function regenerarCodigo(casaId: number): Promise<void> {

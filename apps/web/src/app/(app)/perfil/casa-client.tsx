@@ -29,10 +29,14 @@ export function CasaClient({ casa, userId }: { casa: CasaDTO; userId: number }) 
     });
   }
 
-  function copiarCodigo() {
-    navigator.clipboard?.writeText(casa.inviteCode);
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 1500);
+  async function copiarCodigo() {
+    try {
+      await navigator.clipboard.writeText(casa.inviteCode);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1500);
+    } catch {
+      setErro("Não foi possível copiar o código.");
+    }
   }
 
   return (

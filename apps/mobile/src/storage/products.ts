@@ -1,5 +1,6 @@
+import { isEmptyQuantity } from '@repona/core';
 import { initializeDatabase } from './database';
-import { NewProductInput } from '../types';
+import type { NewProductInput } from '../types';
 import type { InventoryStatus } from './inventory';
 
 export type ProductStatus = 'active' | 'missing';
@@ -104,7 +105,7 @@ export async function listProducts(): Promise<ProductRecord[]> {
       p.status,
       p.alert_threshold,
       COALESCE(ii.quantity, '0 un') as inventory_quantity,
-      COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+      COALESCE(ii.status, 'missing') as inventory_status,
       COALESCE(ie.consumption_count, 0) as consumption_count,
       ie.last_consumed_at,
       p.created_at,
@@ -142,17 +143,29 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   }
 
   const now = new Date().toISOString();
-  const result = await database.runAsync(
-    `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, purchase_count, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 0, 'active', ?, ?)`,
-    name,
-    category || 'Mercearia',
-    input.barcode ?? null,
-    input.photoUri ?? null,
-    input.alertThreshold?.trim() || null,
-    now,
-    now,
-  );
+  let productId = 0;
+  await database.withTransactionAsync(async () => {
+    const result = await database.runAsync(
+      `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, purchase_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      name,
+      category || 'Mercearia',
+      input.barcode ?? null,
+      input.photoUri ?? null,
+      input.alertThreshold?.trim() || null,
+      now,
+      now,
+    );
+    productId = result.lastInsertRowId;
+
+    await database.runAsync(
+      `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
+       VALUES (?, '0 un', 'missing', ?, ?)`,
+      productId,
+      now,
+      now,
+    );
+  });
 
   const created = await database.getFirstAsync<ProductRow>(
     `SELECT
@@ -165,7 +178,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        p.status,
        p.alert_threshold,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
-       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       COALESCE(ii.status, 'missing') as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
        p.created_at,
@@ -179,7 +192,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        GROUP BY product_id
      ) ie ON ie.product_id = p.id
      WHERE p.id = ?`,
-    result.lastInsertRowId,
+    productId,
   );
 
   if (!created) {
@@ -239,7 +252,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
        p.status,
        p.alert_threshold,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
-       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       COALESCE(ii.status, 'missing') as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
        p.created_at,
@@ -283,6 +296,7 @@ export async function deleteProduct(productId: number) {
 }
 
 function mapProductRow(row: ProductRow): ProductRecord {
+  const isMissing = isEmptyQuantity(row.inventory_quantity);
   return {
     id: row.id,
     name: row.name,
@@ -290,10 +304,10 @@ function mapProductRow(row: ProductRow): ProductRecord {
     barcode: row.barcode,
     photoUri: row.photo_uri,
     purchaseCount: row.purchase_count,
-    status: row.status,
+    status: isMissing ? 'missing' : row.status,
     alertThreshold: row.alert_threshold,
     inventoryQuantity: row.inventory_quantity,
-    inventoryStatus: row.inventory_status,
+    inventoryStatus: isMissing ? 'missing' : row.inventory_status,
     consumptionCount: row.consumption_count,
     lastConsumedAt: row.last_consumed_at,
     createdAt: row.created_at,

@@ -7,6 +7,7 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -25,7 +26,9 @@ export const usuarios = pgTable(
   "usuarios",
   {
     id: serial("id").primaryKey(),
-    casaId: integer("casa_id").references(() => casas.id),
+    casaId: integer("casa_id")
+      .notNull()
+      .references(() => casas.id),
     nome: text("nome"),
     email: text("email").notNull(),
     senhaHash: text("senha_hash").notNull(),
@@ -59,6 +62,7 @@ export const products = pgTable(
   },
   (table) => [
     uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
+    check("products_status_check", sql`${table.status} in ('active', 'missing')`),
   ]
 );
 
@@ -74,7 +78,13 @@ export const shoppingLists = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("shopping_lists_casa_status_idx").on(table.casaId, table.status)]
+  (table) => [
+    index("shopping_lists_casa_status_idx").on(table.casaId, table.status),
+    uniqueIndex("shopping_lists_active_casa_unique")
+      .on(table.casaId)
+      .where(sql`${table.status} = 'active'`),
+    check("shopping_lists_status_check", sql`${table.status} in ('active', 'archived')`),
+  ]
 );
 
 export const shoppingListItems = pgTable(
@@ -93,6 +103,7 @@ export const shoppingListItems = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    index("shopping_list_items_product_idx").on(table.productId),
     uniqueIndex("shopping_list_items_unique_product").on(
       table.shoppingListId,
       table.productId
@@ -100,29 +111,40 @@ export const shoppingListItems = pgTable(
   ]
 );
 
-export const purchaseHistory = pgTable("purchase_history", {
-  id: serial("id").primaryKey(),
-  productId: integer("product_id")
-    .notNull()
-    .references(() => products.id),
-  quantity: text("quantity").notNull().default("1 un"),
-  purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull().defaultNow(),
-  sourceListId: integer("source_list_id").references(() => shoppingLists.id, {
-    onDelete: "set null",
-  }),
-});
+export const purchaseHistory = pgTable(
+  "purchase_history",
+  {
+    id: serial("id").primaryKey(),
+    productId: integer("product_id")
+      .notNull()
+      .references(() => products.id),
+    quantity: text("quantity").notNull().default("1 un"),
+    purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull().defaultNow(),
+    sourceListId: integer("source_list_id").references(() => shoppingLists.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("purchase_history_product_idx").on(table.productId),
+    index("purchase_history_source_list_idx").on(table.sourceListId),
+  ]
+);
 
-export const inventoryItems = pgTable("inventory_items", {
-  id: serial("id").primaryKey(),
-  productId: integer("product_id")
-    .notNull()
-    .unique()
-    .references(() => products.id, { onDelete: "cascade" }),
-  quantity: text("quantity").notNull().default("0 un"),
-  status: text("status").notNull().default("missing"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const inventoryItems = pgTable(
+  "inventory_items",
+  {
+    id: serial("id").primaryKey(),
+    productId: integer("product_id")
+      .notNull()
+      .unique()
+      .references(() => products.id, { onDelete: "cascade" }),
+    quantity: text("quantity").notNull().default("0 un"),
+    status: text("status").notNull().default("missing"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("inventory_items_status_check", sql`${table.status} in ('in_stock', 'missing')`)]
+);
 
 export const inventoryEvents = pgTable(
   "inventory_events",
@@ -135,5 +157,8 @@ export const inventoryEvents = pgTable(
     quantity: text("quantity").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("inventory_events_product_idx").on(table.productId, table.eventType)]
+  (table) => [
+    index("inventory_events_product_idx").on(table.productId, table.eventType),
+    check("inventory_events_event_type_check", sql`${table.eventType} in ('consumed')`),
+  ]
 );

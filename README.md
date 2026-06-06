@@ -31,10 +31,10 @@ Copie `apps/web/.env.example` para `apps/web/.env.local` e preencha:
 - `AUTH_SECRET` (e `NEXTAUTH_SECRET` com o mesmo valor) — segredo do NextAuth
 - `NEXTAUTH_URL` — `http://localhost:3000` em dev
 
-Com o banco configurado, aplique o schema:
+Com o banco configurado, aplique as migrations:
 
 ```bash
-npm run db:push --workspace apps/web
+npm run db:migrate --workspace apps/web
 ```
 
 ## Deploy na Vercel

@@ -52,6 +52,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'products', label: 'Produtos', icon: 'package-variant-closed' },
   { key: 'future', label: 'Perfil', icon: 'account-outline' },
 ];
+const historyTab: { key: TabKey; label: string; icon: IconName } = { key: 'history', label: 'Histórico', icon: 'history' };
 
 type InventoryAlert = CoreInventoryAlert<Product>;
 type RebuySuggestion = CoreRebuySuggestion<Product>;
@@ -311,6 +312,13 @@ export default function App() {
       ),
     [products, shoppingItems],
   );
+  const frequentProducts = useMemo(() => {
+    const listedProductIds = new Set(shoppingItems.map((item) => item.productId).filter((id): id is number => typeof id === 'number'));
+    return products
+      .filter((product) => !product.id || !listedProductIds.has(product.id))
+      .sort((a, b) => (b.purchaseCount ?? 0) - (a.purchaseCount ?? 0))
+      .slice(0, 2);
+  }, [products, shoppingItems]);
 
   return (
     <SafeAreaProvider>
@@ -326,7 +334,7 @@ export default function App() {
               onNewList={confirmCreateNewShoppingList}
               onAddProductToList={handleAddProductToList}
               onAddSuggestionToList={handleAddProductToList}
-              products={products.slice(0, 2)}
+              products={frequentProducts}
               isProductsReady={isProductsReady}
               inventoryAlerts={inventoryAlerts}
               rebuySuggestion={rebuySuggestion}
@@ -420,11 +428,13 @@ function HomeScreen({
   checkedCount: number;
   totalCount: number;
 }) {
+  const todayLabel = formatTodayLabel();
+
   return (
     <ScreenScroll>
       <Header
-        eyebrow="Sábado, 5 de junho"
-        title="Olá, Marina"
+        eyebrow={todayLabel}
+        title="Olá"
         actions={
           <>
             <IconButton icon="magnify" />
@@ -533,7 +543,7 @@ function ProductsScreen({
       />
       <SearchBox placeholder="Buscar produto..." value={searchTerm} onChangeText={setSearchTerm} />
       {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
-      <ChipRow chips={['Todos', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
+      <ChipRow chips={['Todos', 'Mercearia', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
       <ProductList
         products={filteredProducts}
         isReady={isProductsReady}
@@ -675,8 +685,8 @@ function ActiveListCard({
       <ProgressBar progress={progress} />
       <View style={styles.activeFooter}>
         <View>
-          <Text style={styles.subtleText}>Estimado</Text>
-          <Text style={styles.estimateText}>R$ 247,90</Text>
+          <Text style={styles.subtleText}>Itens</Text>
+          <Text style={styles.estimateText}>{totalCount}</Text>
         </View>
         <Pressable style={styles.blackButton} onPress={onOpen}>
           <MaterialCommunityIcons name="arrow-right" size={16} color={colors.surface} />
@@ -1207,11 +1217,13 @@ function BottomNavigation({
   onChange: (tab: TabKey) => void;
   onAdd: () => void;
 }) {
+  const secondaryTab = activeTab === 'history' ? historyTab : tabs[1];
+
   return (
     <SafeAreaView edges={['bottom']} style={styles.bottomShell}>
       <View style={styles.bottomBar}>
         <TabButton tab={tabs[0]} active={activeTab === tabs[0].key} onPress={() => onChange(tabs[0].key)} />
-        <TabButton tab={tabs[1]} active={activeTab === tabs[1].key || activeTab === 'history'} onPress={() => onChange(tabs[1].key)} />
+        <TabButton tab={secondaryTab} active={activeTab === secondaryTab.key} onPress={() => onChange(secondaryTab.key)} />
         <Pressable style={styles.fab} onPress={onAdd}>
           <MaterialCommunityIcons name="plus" size={28} color={colors.surface} />
         </Pressable>
@@ -1509,6 +1521,15 @@ function getProductErrorMessage(error: unknown) {
   }
 
   return 'Não foi possível salvar o produto agora.';
+}
+
+function formatTodayLabel() {
+  const label = new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date());
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function getNextQuantity(quantity: string, direction: 1 | -1) {
