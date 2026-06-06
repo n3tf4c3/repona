@@ -13,19 +13,26 @@ Status: implementado visualmente.
 - Implementar bottom sheet de novo produto e navegacao inferior.
 - Implementar persistencia inicial de produtos com Expo SQLite.
 - Implementar persistencia da lista ativa e marcacao de itens comprados.
+- Implementar edicao de quantidade e remocao de itens da lista ativa.
 
 ## Fase 1: MVP Local Funcional
 
+Status: implementado; falta validar em dispositivo.
+
 - Completar repositorio local de historico.
-- Permitir editar quantidade e remover itens da lista.
 - Registrar historico de compras ao finalizar lista.
-- Validar fluxo em Expo Go e emulador/dispositivo Android.
+- Conectar tela de historico aos dados reais.
+- Editar e remover produtos cadastrados.
+- Validar fluxo em Expo Go e emulador/dispositivo Android. (pendente)
 
 ## Fase 2: Captura Rapida de Produtos
+
+Status: implementado.
 
 - Integrar Expo Camera.
 - Permitir cadastro por codigo de barras.
 - Explorar cadastro por foto.
+- Buscar e filtrar produtos por categoria.
 
 ## Fase 3: Estoque Domestico
 

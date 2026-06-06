@@ -87,6 +87,57 @@ Entregue:
 
 Ainda pendente:
 
-- Editar quantidade dos itens.
-- Remover itens da lista.
 - Finalizar compra e registrar historico real.
+
+## 2026-06-06 - Edicao da Lista Ativa
+
+Terceira etapa do MVP funcional local.
+
+Entregue:
+
+- Persistencia da quantidade dos itens da lista.
+- Botoes `+` e `-` da lista conectados ao SQLite.
+- Remocao de item da lista ativa.
+- Separacao do toque de marcar comprado das acoes de quantidade/remocao.
+- TypeScript validado com `npx tsc --noEmit`.
+- Compatibilidade Expo validada com `npx expo install --check`.
+
+Ainda pendente:
+
+- Finalizar compra e registrar historico real.
+- Editar/remover produtos cadastrados.
+
+## 2026-06-06 - MVP Local Completo
+
+Conclusao do MVP funcional local: historico real e gestao completa de produtos.
+
+Entregue:
+
+- Finalizacao da lista ativa registrando as compras em `purchase_history`.
+- Incremento de `purchase_count` e atualizacao de status do produto ao finalizar.
+- Remocao dos itens comprados da lista apos a finalizacao.
+- Tela de historico conectada ao SQLite com dados reais e estado vazio.
+- Edicao de produto cadastrado (nome, categoria, codigo de barras, foto).
+- Remocao de produto, bloqueada quando ha historico de compra associado.
+- TypeScript validado com `npx tsc --noEmit`.
+
+Observacoes:
+
+- Conclui a Fase 1 do roadmap (MVP local funcional).
+
+## 2026-06-06 - Captura Rapida de Produtos
+
+Inicio da Fase 2 do roadmap: captura rapida via camera.
+
+Entregue:
+
+- `expo-camera` integrado com permissoes de uso.
+- Cadastro de produto por leitura de codigo de barras.
+- Captura de foto do produto no cadastro.
+- Busca de produtos por nome e filtro por categoria via chips.
+- TypeScript validado com `npx tsc --noEmit`.
+
+Ainda pendente:
+
+- Validar todo o app em Expo Go ou emulador/dispositivo Android.
+- Fase 3: controle de estoque domestico.

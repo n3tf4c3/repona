@@ -24,15 +24,20 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 - Persistir itens da lista de compras.
 - Adicionar produto a lista ativa pelo botao `+` do card.
 - Persistir marcacao de item comprado.
+- Persistir edicao de quantidade dos itens da lista.
+- Remover itens da lista ativa.
+- Finalizar lista e registrar compras no historico real.
+- Incrementar contagem de compra do produto ao finalizar.
+- Conectar tela de historico ao SQLite com dados reais.
+- Editar produto cadastrado.
+- Remover produto cadastrado (bloqueado quando ha historico).
+- Integrar `expo-camera` com permissoes.
+- Cadastrar produto por codigo de barras.
+- Capturar foto do produto no cadastro.
+- Buscar produtos por nome e filtrar por categoria.
 
 ## MVP Funcional
 
-- Integrar historico com estado real do app.
-- Permitir editar quantidade dos itens da lista.
-- Permitir remover itens da lista.
-- Registrar compras no historico.
-- Criar visualizacao simples do historico com dados reais.
-- Implementar edicao e remocao de produtos.
 - Validar o app com Expo Go ou emulador.
 
 ## Produto
@@ -44,8 +49,6 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 
 ## Integracoes Futuras
 
-- Scanner de codigo de barras com Expo Camera.
-- Captura de imagem com Expo Camera.
 - Autenticacao com Firebase Auth.
 - Sincronizacao com Firestore.
 - Notificacoes com Expo Notifications.

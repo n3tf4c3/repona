@@ -55,13 +55,20 @@ Implementado nesta etapa:
 - Lista de compras ativa persistida no SQLite.
 - Botao `+` do produto adicionando item a lista ativa.
 - Marcacao de item comprado persistida localmente.
+- Edicao de quantidade dos itens da lista.
+- Remocao de itens da lista.
+- Finalizacao da lista registrando as compras no historico real.
+- Tela de historico conectada ao SQLite com dados reais.
+- Edicao e remocao de produtos cadastrados.
+- Cadastro de produto por codigo de barras e por foto com Expo Camera.
+- Busca de produtos por nome e filtro por categoria.
 
-Ainda pendente para o MVP funcional:
+Com isso a Fase 1 (MVP local) e a Fase 2 (captura rapida) do roadmap estao implementadas.
 
-- Persistencia de historico.
-- Fluxos reais para editar e remover produtos/listas.
-- Registro real de compras no historico.
-- Testes e validacao em Expo Go, emulador ou build Android.
+Ainda pendente:
+
+- Validacao do app em Expo Go, emulador ou build Android.
+- Fase 3: controle de estoque domestico.
 
 ## Estrutura Inicial
 

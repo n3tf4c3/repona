@@ -23,10 +23,6 @@ yarn-error.log*
 # Local handoff bundles
 *.zip
 
-# Local documentation drafts
-README.md
-docs/
-
 # OpenCode local dependencies
 .opencode/node_modules/
 

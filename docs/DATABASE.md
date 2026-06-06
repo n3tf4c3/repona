@@ -71,6 +71,8 @@ Implementado:
 - Persistencia real de `Product`.
 - Persistencia real da lista ativa em `ShoppingList`.
 - Persistencia real de itens em `ShoppingListItem`.
+- Atualizacao de quantidade em `ShoppingListItem`.
+- Remocao de `ShoppingListItem`.
 - Seed inicial de produtos recorrentes.
 - Seed inicial da lista ativa.
 - Validacao simples de duplicidade por nome.

@@ -18,7 +18,7 @@ A persistencia local inicial ja existe para produtos e lista ativa com Expo SQLi
 - `src/types.ts`: tipos compartilhados da UI.
 - `src/storage/database.ts`: abertura do SQLite e criacao das tabelas iniciais.
 - `src/storage/products.ts`: seed, listagem e cadastro de produtos.
-- `src/storage/shoppingLists.ts`: lista ativa, seed de itens, adicao de produto e marcacao de comprado.
+- `src/storage/shoppingLists.ts`: lista ativa, seed de itens, adicao de produto, marcacao de comprado, quantidade e remocao.
 - `src/productPresentation.ts`: conversao de registros do banco para cards visuais.
 - `src/shoppingListPresentation.ts`: conversao dos itens salvos para linhas visuais da lista.
 - `package.json`: scripts e dependencias Expo.
@@ -31,7 +31,7 @@ A persistencia local inicial ja existe para produtos e lista ativa com Expo SQLi
 A UI atual implementa:
 
 - Tela inicial com lista ativa, acoes rapidas, sugestao de recompra e produtos recorrentes.
-- Tela de lista de compras com dados do SQLite, progresso, agrupamento por categoria, item comprado e item em falta.
+- Tela de lista de compras com dados do SQLite, progresso, agrupamento por categoria, item comprado, item em falta, quantidade editavel e remocao.
 - Tela de produtos com busca visual, chips de categoria e cards vindos do SQLite.
 - Tela de historico com compras anteriores e resumo de itens.
 - Tela de perfil/futuro com recursos planejados.
