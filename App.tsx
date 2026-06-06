@@ -46,6 +46,14 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'future', label: 'Perfil', icon: 'account-outline' },
 ];
 
+type InventoryAlert = {
+  id: string;
+  product: Product;
+  level: 'missing' | 'low';
+  label: string;
+  description: string;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [showNewProduct, setShowNewProduct] = useState(false);
@@ -290,6 +298,7 @@ export default function App() {
   }
 
   const checkedCount = shoppingItems.filter((item) => item.checked).length;
+  const inventoryAlerts = useMemo(() => buildInventoryAlerts(products), [products]);
 
   return (
     <SafeAreaProvider>
@@ -300,11 +309,13 @@ export default function App() {
             <HomeScreen
               onOpenList={() => setActiveTab('list')}
               onOpenHistory={() => setActiveTab('history')}
+              onOpenProducts={() => setActiveTab('products')}
               onNewProduct={openNewProduct}
               onNewList={confirmCreateNewShoppingList}
               onAddProductToList={handleAddProductToList}
               products={products.slice(0, 2)}
               isProductsReady={isProductsReady}
+              inventoryAlerts={inventoryAlerts}
               activeListName={activeShoppingListName}
               checkedCount={checkedCount}
               totalCount={shoppingItems.length}
@@ -367,22 +378,26 @@ export default function App() {
 function HomeScreen({
   onOpenList,
   onOpenHistory,
+  onOpenProducts,
   onNewProduct,
   onNewList,
   onAddProductToList,
   products,
   isProductsReady,
+  inventoryAlerts,
   activeListName,
   checkedCount,
   totalCount,
 }: {
   onOpenList: () => void;
   onOpenHistory: () => void;
+  onOpenProducts: () => void;
   onNewProduct: () => void;
   onNewList: () => void;
   onAddProductToList: (product: Product) => void;
   products: Product[];
   isProductsReady: boolean;
+  inventoryAlerts: InventoryAlert[];
   activeListName: string;
   checkedCount: number;
   totalCount: number;
@@ -401,6 +416,7 @@ function HomeScreen({
       />
       <ActiveListCard title={activeListName} checkedCount={checkedCount} totalCount={totalCount} onOpen={onOpenList} />
       <QuickActions onNewProduct={onNewProduct} onNewList={onNewList} onHistory={onOpenHistory} />
+      <InventoryAlertsCard alerts={inventoryAlerts} isReady={isProductsReady} onOpenProducts={onOpenProducts} />
       <SuggestionCard />
       <SectionTitle title="Você costuma comprar" action="Ver tudo" />
       <ProductListPreview products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
@@ -689,6 +705,64 @@ function QuickAction({
       <IconBubble icon={icon} background={background} tint={tint} size={38} />
       <Text style={styles.quickActionText}>{label}</Text>
     </Pressable>
+  );
+}
+
+function InventoryAlertsCard({
+  alerts,
+  isReady,
+  onOpenProducts,
+}: {
+  alerts: InventoryAlert[];
+  isReady: boolean;
+  onOpenProducts: () => void;
+}) {
+  if (!isReady) {
+    return (
+      <View style={styles.inventoryAlertCardOk}>
+        <IconBubble icon="home-search-outline" background={colors.primarySoft} tint={colors.primaryStrong} size={42} />
+        <View style={styles.inventoryAlertTextBlock}>
+          <Text style={styles.inventoryAlertOkLabel}>Verificando estoque</Text>
+          <Text style={styles.subtleText}>Buscando os itens salvos localmente.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (alerts.length === 0) {
+    return (
+      <View style={styles.inventoryAlertCardOk}>
+        <IconBubble icon="check-circle-outline" background={colors.primarySoft} tint={colors.primaryStrong} size={42} />
+        <View style={styles.inventoryAlertTextBlock}>
+          <Text style={styles.inventoryAlertOkLabel}>Estoque em dia</Text>
+          <Text style={styles.subtleText}>Nenhum item em falta ou baixo agora.</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.inventoryAlertCard}>
+      <View style={styles.inventoryAlertHeader}>
+        <View>
+          <Text style={styles.inventoryAlertLabel}>Alertas de estoque</Text>
+          <Text style={styles.inventoryAlertTitle}>{alerts.length} {alerts.length === 1 ? 'item precisa' : 'itens precisam'} de atenção</Text>
+        </View>
+        <Pressable style={styles.inventoryAlertAction} onPress={onOpenProducts}>
+          <Text style={styles.inventoryAlertActionText}>Ver</Text>
+        </Pressable>
+      </View>
+      {alerts.slice(0, 3).map((alert) => (
+        <View key={alert.id} style={styles.inventoryAlertRow}>
+          <View style={[styles.inventoryAlertDot, alert.level === 'missing' ? styles.inventoryAlertDotMissing : null]} />
+          <View style={styles.inventoryAlertTextBlock}>
+            <Text style={styles.inventoryAlertItemName}>{alert.product.name}</Text>
+            <Text style={styles.subtleText}>{alert.description}</Text>
+          </View>
+          <Text style={[styles.inventoryAlertBadge, alert.level === 'missing' ? styles.inventoryAlertBadgeMissing : null]}>{alert.label}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -1372,6 +1446,64 @@ function filterProducts(products: Product[], searchTerm: string, selectedCategor
   });
 }
 
+function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
+  return products.reduce<InventoryAlert[]>((alerts, product) => {
+    if (product.inventoryStatus === 'missing') {
+      alerts.push({
+        id: `${product.id ?? product.name}-missing`,
+        product,
+        level: 'missing',
+        label: 'Falta',
+        description: 'Sem estoque registrado em casa.',
+      });
+      return alerts;
+    }
+
+    const quantity = parseInventoryQuantity(product.inventoryQuantity);
+
+    if (quantity && isLowInventoryQuantity(quantity.value, quantity.unit)) {
+      alerts.push({
+        id: `${product.id ?? product.name}-low`,
+        product,
+        level: 'low',
+        label: 'Baixo',
+        description: `Restam ${product.inventoryQuantity} em casa.`,
+      });
+    }
+
+    return alerts;
+  }, []);
+}
+
+function parseInventoryQuantity(quantity?: string) {
+  const match = quantity?.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    value: Number(match[1].replace(',', '.')),
+    unit: match[2].trim().toLocaleLowerCase('pt-BR') || 'un',
+  };
+}
+
+function isLowInventoryQuantity(value: number, unit: string) {
+  if (value <= 0) {
+    return false;
+  }
+
+  if (unit === 'g') {
+    return value <= 500;
+  }
+
+  if (unit === 'kg') {
+    return value <= 1;
+  }
+
+  return value <= 1;
+}
+
 function getProductErrorMessage(error: unknown) {
   if (error instanceof Error) {
     if (error.message === 'PRODUCT_NAME_REQUIRED') {
@@ -1595,6 +1727,94 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  inventoryAlertCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.coralSoft,
+    padding: 15,
+    gap: 11,
+    ...shadow.small,
+  },
+  inventoryAlertCardOk: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.primarySoft,
+    padding: 14,
+    ...shadow.small,
+  },
+  inventoryAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  inventoryAlertLabel: {
+    ...typography.badge,
+    color: colors.coral,
+    textTransform: 'uppercase',
+  },
+  inventoryAlertOkLabel: {
+    ...typography.badge,
+    color: colors.primaryStrong,
+    textTransform: 'uppercase',
+  },
+  inventoryAlertTitle: {
+    ...typography.labelStrong,
+    color: colors.ink,
+    marginTop: 2,
+  },
+  inventoryAlertAction: {
+    borderRadius: 10,
+    backgroundColor: colors.coralSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  inventoryAlertActionText: {
+    ...typography.badge,
+    color: colors.coral,
+  },
+  inventoryAlertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderTopWidth: 1,
+    borderTopColor: colors.line2,
+    paddingTop: 10,
+  },
+  inventoryAlertDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 9,
+    backgroundColor: colors.amber,
+  },
+  inventoryAlertDotMissing: {
+    backgroundColor: colors.coral,
+  },
+  inventoryAlertTextBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  inventoryAlertItemName: {
+    ...typography.labelStrong,
+    color: colors.ink,
+  },
+  inventoryAlertBadge: {
+    ...typography.badge,
+    color: colors.amber,
+    backgroundColor: colors.amberSoft,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  inventoryAlertBadgeMissing: {
+    color: colors.coral,
+    backgroundColor: colors.coralSoft,
   },
   suggestionCard: {
     flexDirection: 'row',

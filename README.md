@@ -66,13 +66,14 @@ Implementado nesta etapa:
 - Controles de estoque na tela de produtos para aumentar, reduzir e marcar item em falta.
 - Finalizacao da lista atualizando o estoque dos itens comprados.
 - Registro local de consumo de estoque pela tela de produtos.
+- Alertas simples de estoque baixo ou em falta na tela inicial.
 - Validacao do app em Expo Go, emulador ou build Android feita pelo usuario.
 
 Com isso a Fase 1 (MVP local) e a Fase 2 (captura rapida) do roadmap estao implementadas, e a Fase 3 (estoque domestico) foi iniciada.
 
 Ainda pendente:
 
-- Fase 3: evolucao dos alertas de estoque baixo ou ruptura.
+- Fase 3: refinamento das regras de alerta e sugestoes com base no historico.
 
 ## Estrutura Inicial
 

@@ -32,7 +32,7 @@ A persistencia local existe para produtos, lista ativa, itens da lista, historic
 
 A UI atual implementa:
 
-- Tela inicial com lista ativa, acoes rapidas, sugestao de recompra e produtos recorrentes.
+- Tela inicial com lista ativa, acoes rapidas, alertas simples de estoque, sugestao de recompra e produtos recorrentes.
 - Tela de lista de compras com dados do SQLite, progresso, agrupamento por categoria, item comprado, item em falta, quantidade editavel e remocao.
 - Tela de produtos com busca visual, chips de categoria, cards vindos do SQLite e controles compactos de estoque/consumo.
 - Tela de historico com compras anteriores registradas no SQLite e estado vazio.
@@ -56,7 +56,7 @@ A implementacao atual usa SQLite para produtos, lista ativa, itens da lista, his
 
 Com o MVP local concluido, a recomendacao e evoluir gradualmente:
 
-- alertas simples de estoque domestico com base na quantidade atual;
+- regras de alerta mais refinadas usando historico de consumo;
 - regras de produto/lista/estoque para hooks ou stores quando a tela crescer;
 - acesso a dados para repositorios locais.
 

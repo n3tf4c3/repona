@@ -103,6 +103,7 @@ Implementado:
 - Atualizacao manual de estoque pela tela de produtos.
 - Atualizacao de estoque ao finalizar compras marcadas.
 - Registro local de consumo em `InventoryEvent`.
+- Alertas simples derivados de `InventoryItem` na UI.
 - Seed inicial de produtos recorrentes.
 - Seed inicial da lista ativa.
 - Validacao simples de duplicidade por nome.
@@ -110,4 +111,4 @@ Implementado:
 
 Ainda pendente:
 
-- Evoluir alertas e sugestoes com base no estoque atual.
+- Refinar alertas e sugestoes com base no historico de consumo.
