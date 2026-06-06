@@ -29,6 +29,9 @@ build/
 # Local handoff bundles
 *.zip
 
+# Local audit/report output
+relatorios/
+
 # OpenCode local dependencies
 .opencode/node_modules/
 
