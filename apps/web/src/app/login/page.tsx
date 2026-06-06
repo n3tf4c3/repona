@@ -22,7 +22,7 @@ export default function LoginPage() {
     const result = await signIn("credentials", { email, password, redirect: false });
     setLoading(false);
     if (result?.ok) {
-      router.push("/produtos");
+      router.push("/inicio");
       router.refresh();
       return;
     }

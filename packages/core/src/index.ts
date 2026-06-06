@@ -14,3 +14,9 @@ export {
   getNextInventoryQuantity,
   getConsumedQuantity,
 } from "./inventory-quantity";
+export type {
+  InventoryAlert,
+  InventoryAlertLevel,
+  RebuySuggestion,
+} from "./home-rules";
+export { buildInventoryAlerts, buildRebuySuggestion } from "./home-rules";
