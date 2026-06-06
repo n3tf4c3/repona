@@ -78,13 +78,10 @@ export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
 
 export async function seedActiveShoppingList() {
   const database = await initializeDatabase();
+  const listCount = await database.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM shopping_lists');
   const activeList = await ensureActiveShoppingList();
-  const count = await database.getFirstAsync<{ count: number }>(
-    'SELECT COUNT(*) as count FROM shopping_list_items WHERE shopping_list_id = ?',
-    activeList.id,
-  );
 
-  if ((count?.count ?? 0) > 0) {
+  if ((listCount?.count ?? 0) > 0) {
     return;
   }
 
@@ -169,6 +166,84 @@ export async function toggleShoppingListItem(itemId: number) {
     now,
     itemId,
   );
+}
+
+export async function updateShoppingListItemQuantity(itemId: number, quantity: string) {
+  const database = await initializeDatabase();
+  const now = new Date().toISOString();
+
+  await database.runAsync(
+    `UPDATE shopping_list_items
+     SET quantity = ?,
+         updated_at = ?
+     WHERE id = ?`,
+    quantity,
+    now,
+    itemId,
+  );
+}
+
+export async function removeShoppingListItem(itemId: number) {
+  const database = await initializeDatabase();
+
+  await database.runAsync('DELETE FROM shopping_list_items WHERE id = ?', itemId);
+}
+
+export async function finalizeActiveShoppingList() {
+  const database = await initializeDatabase();
+  const activeList = await ensureActiveShoppingList();
+  const purchasedItems = await database.getAllAsync<{ product_id: number; quantity: string }>(
+    `SELECT product_id, quantity
+     FROM shopping_list_items
+     WHERE shopping_list_id = ? AND checked = 1
+     ORDER BY id ASC`,
+    activeList.id,
+  );
+
+  if (purchasedItems.length === 0) {
+    return 0;
+  }
+
+  const now = new Date().toISOString();
+
+  await database.withTransactionAsync(async () => {
+    for (const item of purchasedItems) {
+      await database.runAsync(
+        `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id)
+         VALUES (?, ?, ?, ?)`,
+        item.product_id,
+        item.quantity,
+        now,
+        activeList.id,
+      );
+
+      await database.runAsync(
+        `UPDATE products
+         SET purchase_count = purchase_count + 1,
+             status = 'active',
+             updated_at = ?
+         WHERE id = ?`,
+        now,
+        item.product_id,
+      );
+    }
+
+    await database.runAsync(
+      `DELETE FROM shopping_list_items
+       WHERE shopping_list_id = ? AND checked = 1`,
+      activeList.id,
+    );
+
+    await database.runAsync(
+      `UPDATE shopping_lists
+       SET updated_at = ?
+       WHERE id = ?`,
+      now,
+      activeList.id,
+    );
+  });
+
+  return purchasedItems.length;
 }
 
 function mapShoppingListRow(row: ShoppingListRow): ShoppingListRecord {

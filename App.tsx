@@ -13,18 +13,21 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  futureFeatures,
-  historyGroups,
-} from './src/data';
+import { futureFeatures } from './src/data';
 import { productRecordToProduct } from './src/productPresentation';
+import { purchaseHistoryRecordsToGroups } from './src/purchaseHistoryPresentation';
+import type { PurchaseHistoryGroup, PurchaseHistoryItem } from './src/purchaseHistoryPresentation';
 import { shoppingListRecordToItem } from './src/shoppingListPresentation';
 import {
   addProductToActiveShoppingList,
+  finalizeActiveShoppingList,
   listActiveShoppingItems,
+  removeShoppingListItem,
   seedActiveShoppingList,
   toggleShoppingListItem,
+  updateShoppingListItemQuantity,
 } from './src/storage/shoppingLists';
+import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, listProducts, seedInitialProducts } from './src/storage/products';
 import { IconName, NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
 import { colors, radius, shadow, spacing, typography } from './src/theme';
@@ -43,6 +46,9 @@ export default function App() {
   const [isShoppingListReady, setIsShoppingListReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isProductsReady, setIsProductsReady] = useState(false);
+  const [historyGroups, setHistoryGroups] = useState<PurchaseHistoryGroup[]>([]);
+  const [isHistoryReady, setIsHistoryReady] = useState(false);
+  const [isFinalizingPurchase, setIsFinalizingPurchase] = useState(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,17 +60,20 @@ export default function App() {
         await seedActiveShoppingList();
         const records = await listProducts();
         const listRecords = await listActiveShoppingItems();
+        const historyRecords = await listPurchaseHistoryRecords();
 
         if (isMounted) {
           setProducts(records.map(productRecordToProduct));
           setShoppingItems(listRecords.map(shoppingListRecordToItem));
+          setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
         }
       } catch (error) {
-        console.error('Failed to load products', error);
+        console.error('Failed to load app data', error);
       } finally {
         if (isMounted) {
           setIsProductsReady(true);
           setIsShoppingListReady(true);
+          setIsHistoryReady(true);
         }
       }
     }
@@ -81,8 +90,29 @@ export default function App() {
     setShoppingItems(listRecords.map(shoppingListRecordToItem));
   }
 
+  async function refreshProducts() {
+    const records = await listProducts();
+    setProducts(records.map(productRecordToProduct));
+  }
+
+  async function refreshHistory() {
+    const historyRecords = await listPurchaseHistoryRecords();
+    setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
+  }
+
   async function toggleItem(id: number) {
     await toggleShoppingListItem(id);
+    await refreshShoppingItems();
+  }
+
+  async function changeItemQuantity(item: ShoppingItem, direction: 1 | -1) {
+    const nextQuantity = getNextQuantity(item.quantity, direction);
+    await updateShoppingListItemQuantity(item.id, nextQuantity);
+    await refreshShoppingItems();
+  }
+
+  async function removeItem(id: number) {
+    await removeShoppingListItem(id);
     await refreshShoppingItems();
   }
 
@@ -95,8 +125,7 @@ export default function App() {
     try {
       setProductFormError(null);
       await createProduct(input);
-      const records = await listProducts();
-      setProducts(records.map(productRecordToProduct));
+      await refreshProducts();
       setShowNewProduct(false);
       setActiveTab('products');
     } catch (error) {
@@ -112,6 +141,27 @@ export default function App() {
     await addProductToActiveShoppingList(product.id);
     await refreshShoppingItems();
     setActiveTab('list');
+  }
+
+  async function handleFinalizePurchase() {
+    if (isFinalizingPurchase) {
+      return;
+    }
+
+    setIsFinalizingPurchase(true);
+
+    try {
+      const finalizedCount = await finalizeActiveShoppingList();
+
+      if (finalizedCount > 0) {
+        await Promise.all([refreshShoppingItems(), refreshProducts(), refreshHistory()]);
+        setActiveTab('history');
+      }
+    } catch (error) {
+      console.error('Failed to finalize purchase', error);
+    } finally {
+      setIsFinalizingPurchase(false);
+    }
   }
 
   const checkedCount = shoppingItems.filter((item) => item.checked).length;
@@ -139,16 +189,20 @@ export default function App() {
               isReady={isShoppingListReady}
               onBack={() => setActiveTab('home')}
               onToggleItem={toggleItem}
+              onChangeQuantity={changeItemQuantity}
+              onRemoveItem={removeItem}
             />
           ) : null}
           {activeTab === 'products' ? (
             <ProductsScreen products={products} isProductsReady={isProductsReady} onAddProductToList={handleAddProductToList} />
           ) : null}
-          {activeTab === 'history' ? <HistoryScreen /> : null}
+          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
           {activeTab === 'future' ? <FutureScreen /> : null}
         </SafeAreaView>
 
-        {activeTab === 'list' ? <FinalizeBar /> : null}
+        {activeTab === 'list' ? (
+          <FinalizeBar items={shoppingItems} isFinalizing={isFinalizingPurchase} onFinalize={handleFinalizePurchase} />
+        ) : null}
         {activeTab !== 'list' ? (
           <BottomNavigation
             activeTab={activeTab}
@@ -213,11 +267,15 @@ function ShoppingListScreen({
   isReady,
   onBack,
   onToggleItem,
+  onChangeQuantity,
+  onRemoveItem,
 }: {
   items: ShoppingItem[];
   isReady: boolean;
   onBack: () => void;
   onToggleItem: (id: number) => void;
+  onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
+  onRemoveItem: (id: number) => void;
 }) {
   const checkedCount = items.filter((item) => item.checked).length;
   const grouped = useMemo(() => groupShoppingItems(items), [items]);
@@ -242,7 +300,13 @@ function ShoppingListScreen({
         <View key={group.category}>
           <CategoryHeader title={group.category} count={group.items.length} color={group.color} />
           {group.items.map((item) => (
-            <ShoppingItemRow key={item.id} item={item} onToggle={() => onToggleItem(item.id)} />
+            <ShoppingItemRow
+              key={item.id}
+              item={item}
+              onToggle={() => onToggleItem(item.id)}
+              onChangeQuantity={(direction) => onChangeQuantity(item, direction)}
+              onRemove={() => onRemoveItem(item.id)}
+            />
           ))}
         </View>
       ))}
@@ -273,7 +337,13 @@ function ProductsScreen({
   );
 }
 
-function HistoryScreen() {
+function HistoryScreen({
+  historyGroups,
+  isReady,
+}: {
+  historyGroups: PurchaseHistoryGroup[];
+  isReady: boolean;
+}) {
   return (
     <ScreenScroll>
       <Header
@@ -281,11 +351,13 @@ function HistoryScreen() {
         title="Histórico"
         actions={<IconButton icon="calendar-month-outline" />}
       />
+      {!isReady ? <EmptyState title="Carregando histórico" description="Buscando as compras finalizadas." /> : null}
+      {isReady && historyGroups.length === 0 ? <EmptyState title="Nenhuma compra registrada" description="Finalize itens marcados na lista para criar o primeiro histórico." /> : null}
       {historyGroups.map((group) => (
         <View key={group.title}>
           <Text style={styles.historyGroupTitle}>{group.title}</Text>
           {group.items.map((item) => (
-            <HistoryCard key={item.title} item={item} />
+            <HistoryCard key={item.id} item={item} />
           ))}
         </View>
       ))}
@@ -578,22 +650,41 @@ function CategoryHeader({ title, count, color }: { title: string; count: number;
   );
 }
 
-function ShoppingItemRow({ item, onToggle }: { item: ShoppingItem; onToggle: () => void }) {
+function ShoppingItemRow({
+  item,
+  onToggle,
+  onChangeQuantity,
+  onRemove,
+}: {
+  item: ShoppingItem;
+  onToggle: () => void;
+  onChangeQuantity: (direction: 1 | -1) => void;
+  onRemove: () => void;
+}) {
   return (
-    <Pressable style={styles.shoppingItem} onPress={onToggle}>
-      <View style={[styles.checkBox, item.checked ? styles.checkBoxDone : null]}>
-        {item.checked ? <MaterialCommunityIcons name="check" size={16} color={colors.surface} /> : null}
-      </View>
-      <View style={styles.shoppingItemText}>
-        <Text style={[styles.productName, item.checked ? styles.checkedText : null]} numberOfLines={1}>{item.name}</Text>
-        {item.missing ? <MissingBadge /> : <Text style={styles.productMeta}>{item.meta}</Text>}
-      </View>
+    <View style={styles.shoppingItem}>
+      <Pressable style={styles.shoppingItemToggle} onPress={onToggle}>
+        <View style={[styles.checkBox, item.checked ? styles.checkBoxDone : null]}>
+          {item.checked ? <MaterialCommunityIcons name="check" size={16} color={colors.surface} /> : null}
+        </View>
+        <View style={styles.shoppingItemText}>
+          <Text style={[styles.productName, item.checked ? styles.checkedText : null]} numberOfLines={1}>{item.name}</Text>
+          {item.missing ? <MissingBadge /> : <Text style={styles.productMeta}>{item.meta}</Text>}
+        </View>
+      </Pressable>
       <View style={styles.quantityPill}>
-        <View style={styles.qtyButton}><MaterialCommunityIcons name="minus" size={14} color={colors.ink2} /></View>
+        <Pressable style={styles.qtyButton} onPress={() => onChangeQuantity(-1)}>
+          <MaterialCommunityIcons name="minus" size={14} color={colors.ink2} />
+        </Pressable>
         <Text style={styles.quantityText}>{item.quantity}</Text>
-        <View style={styles.qtyButton}><MaterialCommunityIcons name="plus" size={14} color={colors.ink2} /></View>
+        <Pressable style={styles.qtyButton} onPress={() => onChangeQuantity(1)}>
+          <MaterialCommunityIcons name="plus" size={14} color={colors.ink2} />
+        </Pressable>
       </View>
-    </Pressable>
+      <Pressable style={styles.removeItemButton} onPress={onRemove}>
+        <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.coral} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -606,7 +697,7 @@ function MissingBadge() {
   );
 }
 
-function HistoryCard({ item }: { item: (typeof historyGroups)[number]['items'][number] }) {
+function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
   return (
     <View style={styles.historyCard}>
       <View style={styles.historyCardTop}>
@@ -674,12 +765,29 @@ function StatusPill({ label, background, tint }: { label: string; background: st
   );
 }
 
-function FinalizeBar() {
+function FinalizeBar({
+  items,
+  isFinalizing,
+  onFinalize,
+}: {
+  items: ShoppingItem[];
+  isFinalizing: boolean;
+  onFinalize: () => void;
+}) {
+  const checkedCount = items.filter((item) => item.checked).length;
+  const disabled = isFinalizing || checkedCount === 0;
+  const itemLabel = checkedCount === 1 ? 'item' : 'itens';
+  const label = isFinalizing
+    ? 'Finalizando...'
+    : checkedCount > 0
+      ? `Finalizar compra · ${checkedCount} ${itemLabel}`
+      : 'Marque itens comprados';
+
   return (
     <SafeAreaView edges={['bottom']} style={styles.finalizeShell}>
-      <Pressable style={styles.finalizeButton}>
+      <Pressable style={[styles.finalizeButton, disabled ? styles.finalizeButtonDisabled : null]} onPress={disabled ? undefined : onFinalize}>
         <MaterialCommunityIcons name="shopping-outline" size={22} color={colors.surface} />
-        <Text style={styles.finalizeText}>Finalizar compra · R$ 247,90</Text>
+        <Text style={styles.finalizeText}>{label}</Text>
       </Pressable>
     </SafeAreaView>
   );
@@ -826,6 +934,23 @@ function getProductErrorMessage(error: unknown) {
   }
 
   return 'Não foi possível salvar o produto agora.';
+}
+
+function getNextQuantity(quantity: string, direction: 1 | -1) {
+  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+
+  if (!match) {
+    return direction > 0 ? '2 un' : '1 un';
+  }
+
+  const currentValue = Number(match[1].replace(',', '.'));
+  const unit = match[2].trim() || 'un';
+  const step = unit === 'g' ? 100 : 1;
+  const min = unit === 'g' ? 100 : 1;
+  const nextValue = Math.max(min, currentValue + direction * step);
+  const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
+
+  return `${formattedValue} ${unit}`;
 }
 
 const styles = StyleSheet.create({
@@ -1166,7 +1291,7 @@ const styles = StyleSheet.create({
   shoppingItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
     backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1,
@@ -1175,6 +1300,13 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     marginBottom: 7,
     ...shadow.small,
+  },
+  shoppingItemToggle: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minWidth: 0,
   },
   checkBox: {
     width: 26,
@@ -1217,8 +1349,16 @@ const styles = StyleSheet.create({
   quantityText: {
     ...typography.labelStrong,
     color: colors.ink,
-    minWidth: 34,
+    minWidth: 40,
     textAlign: 'center',
+  },
+  removeItemButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    backgroundColor: colors.coralSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   missingBadge: {
     flexDirection: 'row',
@@ -1400,6 +1540,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     ...shadow.medium,
+  },
+  finalizeButtonDisabled: {
+    opacity: 0.55,
   },
   finalizeText: {
     ...typography.labelStrong,
