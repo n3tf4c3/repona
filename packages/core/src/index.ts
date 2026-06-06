@@ -15,6 +15,7 @@ export {
   getConsumedQuantity,
 } from "./inventory-quantity";
 export type {
+  ProductLike,
   InventoryAlert,
   InventoryAlertLevel,
   RebuySuggestion,

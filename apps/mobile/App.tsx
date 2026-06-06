@@ -38,6 +38,13 @@ import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
 import { IconName, NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
 import { colors, radius, shadow, spacing, typography } from './src/theme';
+import {
+  buildInventoryAlerts,
+  buildRebuySuggestion,
+  getNextInventoryQuantity,
+  type InventoryAlert as CoreInventoryAlert,
+  type RebuySuggestion as CoreRebuySuggestion,
+} from '@repona/core';
 
 const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'home', label: 'Início', icon: 'home-variant-outline' },
@@ -46,26 +53,8 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'future', label: 'Perfil', icon: 'account-outline' },
 ];
 
-type InventoryAlert = {
-  id: string;
-  product: Product;
-  level: 'missing' | 'low';
-  label: string;
-  description: string;
-};
-
-type RebuySuggestion = {
-  product: Product;
-  title: string;
-  description: string;
-  badge: string;
-  score: number;
-};
-
-type ParsedInventoryQuantity = {
-  value: number;
-  unit: string;
-};
+type InventoryAlert = CoreInventoryAlert<Product>;
+type RebuySuggestion = CoreRebuySuggestion<Product>;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
@@ -312,7 +301,16 @@ export default function App() {
 
   const checkedCount = shoppingItems.filter((item) => item.checked).length;
   const inventoryAlerts = useMemo(() => buildInventoryAlerts(products), [products]);
-  const rebuySuggestion = useMemo(() => buildRebuySuggestion(products, shoppingItems), [products, shoppingItems]);
+  const rebuySuggestion = useMemo(
+    () =>
+      buildRebuySuggestion(
+        products,
+        shoppingItems
+          .map((item) => item.productId)
+          .filter((id): id is number => typeof id === 'number'),
+      ),
+    [products, shoppingItems],
+  );
 
   return (
     <SafeAreaProvider>
@@ -1491,239 +1489,6 @@ function filterProducts(products: Product[], searchTerm: string, selectedCategor
   });
 }
 
-function buildRebuySuggestion(products: Product[], shoppingItems: ShoppingItem[]): RebuySuggestion | null {
-  const listedProductIds = new Set(shoppingItems.map((item) => item.productId).filter((id): id is number => typeof id === 'number'));
-  const suggestions = products.reduce<RebuySuggestion[]>((items, product) => {
-    if (!product.id || listedProductIds.has(product.id)) {
-      return items;
-    }
-
-    const suggestion = getProductRebuySuggestion(product);
-
-    if (suggestion) {
-      items.push(suggestion);
-    }
-
-    return items;
-  }, []);
-
-  suggestions.sort((first, second) => second.score - first.score);
-
-  return suggestions[0] ?? null;
-}
-
-function getProductRebuySuggestion(product: Product): RebuySuggestion | null {
-  const purchaseCount = product.purchaseCount ?? 0;
-  const consumptionCount = product.consumptionCount ?? 0;
-  const quantity = parseInventoryQuantity(product.inventoryQuantity);
-  const threshold = parseInventoryQuantity(product.alertThreshold ?? undefined);
-  const isLowStock = Boolean(quantity && isLowInventoryQuantity(quantity, threshold));
-
-  if (product.inventoryStatus === 'missing') {
-    return {
-      product,
-      title: `Repor ${product.name}`,
-      description: buildRebuyDescription(product, 'Está em falta no estoque da casa.'),
-      badge: 'Reposição urgente',
-      score: 120 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
-    };
-  }
-
-  if (isLowStock) {
-    return {
-      product,
-      title: `Comprar ${product.name}`,
-      description: buildRebuyDescription(product, `Estoque baixo: ${product.inventoryQuantity}.`),
-      badge: 'Estoque baixo',
-      score: 90 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
-    };
-  }
-
-  if (purchaseCount >= 5 || consumptionCount >= 2) {
-    return {
-      product,
-      title: `${product.name} costuma voltar para a lista`,
-      description: buildRebuyDescription(product, `${purchaseCount} compras registradas.`),
-      badge: 'Recorrente',
-      score: 40 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
-    };
-  }
-
-  return null;
-}
-
-function buildRebuyDescription(product: Product, baseDescription: string) {
-  if (product.lastConsumedAt) {
-    return `${baseDescription} Último consumo: ${formatRelativeConsumptionDate(product.lastConsumedAt)}.`;
-  }
-
-  return baseDescription;
-}
-
-function getRecentConsumptionScore(value?: string | null) {
-  const consumedAt = getDateTime(value);
-
-  if (consumedAt === 0) {
-    return 0;
-  }
-
-  const diffDays = getDayDifference(new Date(consumedAt), new Date());
-
-  if (diffDays <= 1) {
-    return 8;
-  }
-
-  if (diffDays <= 7) {
-    return 4;
-  }
-
-  return 1;
-}
-
-function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
-  const alerts = products.reduce<InventoryAlert[]>((items, product) => {
-    if (product.inventoryStatus === 'missing') {
-      items.push({
-        id: `${product.id ?? product.name}-missing`,
-        product,
-        level: 'missing',
-        label: 'Falta',
-        description: buildInventoryAlertDescription(product, 'Sem estoque registrado em casa.'),
-      });
-      return items;
-    }
-
-    const quantity = parseInventoryQuantity(product.inventoryQuantity);
-    const threshold = parseInventoryQuantity(product.alertThreshold ?? undefined);
-
-    if (quantity && isLowInventoryQuantity(quantity, threshold)) {
-      const baseDescription = threshold && threshold.unit === quantity.unit
-        ? `Restam ${product.inventoryQuantity} em casa. Limiar: ${product.alertThreshold}.`
-        : `Restam ${product.inventoryQuantity} em casa.`;
-
-      items.push({
-        id: `${product.id ?? product.name}-low`,
-        product,
-        level: 'low',
-        label: 'Baixo',
-        description: buildInventoryAlertDescription(product, baseDescription),
-      });
-    }
-
-    return items;
-  }, []);
-
-  return alerts.sort(compareInventoryAlerts);
-}
-
-function parseInventoryQuantity(quantity?: string): ParsedInventoryQuantity | null {
-  const match = quantity?.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    value: Number(match[1].replace(',', '.')),
-    unit: match[2].trim().toLocaleLowerCase('pt-BR') || 'un',
-  };
-}
-
-function isLowInventoryQuantity(quantity: ParsedInventoryQuantity, threshold: ParsedInventoryQuantity | null) {
-  if (quantity.value <= 0) {
-    return false;
-  }
-
-  if (threshold && threshold.unit === quantity.unit) {
-    return quantity.value <= threshold.value;
-  }
-
-  if (quantity.unit === 'g') {
-    return quantity.value <= 500;
-  }
-
-  if (quantity.unit === 'kg') {
-    return quantity.value <= 1;
-  }
-
-  return quantity.value <= 1;
-}
-
-function buildInventoryAlertDescription(product: Product, baseDescription: string) {
-  if (!product.lastConsumedAt) {
-    return baseDescription;
-  }
-
-  return `${baseDescription} Último consumo: ${formatRelativeConsumptionDate(product.lastConsumedAt)}.`;
-}
-
-function compareInventoryAlerts(first: InventoryAlert, second: InventoryAlert) {
-  const levelDifference = getInventoryAlertLevelRank(first.level) - getInventoryAlertLevelRank(second.level);
-
-  if (levelDifference !== 0) {
-    return levelDifference;
-  }
-
-  const firstConsumedAt = getDateTime(first.product.lastConsumedAt);
-  const secondConsumedAt = getDateTime(second.product.lastConsumedAt);
-
-  if (firstConsumedAt !== secondConsumedAt) {
-    return secondConsumedAt - firstConsumedAt;
-  }
-
-  return (second.product.consumptionCount ?? 0) - (first.product.consumptionCount ?? 0);
-}
-
-function getInventoryAlertLevelRank(level: InventoryAlert['level']) {
-  return level === 'missing' ? 0 : 1;
-}
-
-function getDateTime(value?: string | null) {
-  if (!value) {
-    return 0;
-  }
-
-  const date = new Date(value);
-
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-}
-
-function formatRelativeConsumptionDate(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'registrado';
-  }
-
-  const today = new Date();
-  const diffDays = getDayDifference(date, today);
-
-  if (diffDays === 0) {
-    return 'hoje';
-  }
-
-  if (diffDays === 1) {
-    return 'ontem';
-  }
-
-  if (diffDays > 1 && diffDays <= 6) {
-    return `há ${diffDays} dias`;
-  }
-
-  return `${date.getDate()} ${getShortMonth(date.getMonth())}`;
-}
-
-function getDayDifference(date: Date, otherDate: Date) {
-  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const otherStart = new Date(otherDate.getFullYear(), otherDate.getMonth(), otherDate.getDate()).getTime();
-
-  return Math.round((otherStart - dateStart) / 86400000);
-}
-
-function getShortMonth(month: number) {
-  return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][month] ?? 'data salva';
-}
-
 function getProductErrorMessage(error: unknown) {
   if (error instanceof Error) {
     if (error.message === 'PRODUCT_NAME_REQUIRED') {
@@ -1758,22 +1523,6 @@ function getNextQuantity(quantity: string, direction: 1 | -1) {
   const step = unit === 'g' ? 100 : 1;
   const min = unit === 'g' ? 100 : 1;
   const nextValue = Math.max(min, currentValue + direction * step);
-  const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
-
-  return `${formattedValue} ${unit}`;
-}
-
-function getNextInventoryQuantity(quantity: string, direction: 1 | -1) {
-  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
-
-  if (!match) {
-    return direction > 0 ? '1 un' : '0 un';
-  }
-
-  const currentValue = Number(match[1].replace(',', '.'));
-  const unit = match[2].trim() || 'un';
-  const step = unit === 'g' ? 100 : 1;
-  const nextValue = Math.max(0, currentValue + direction * step);
   const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
 
   return `${formattedValue} ${unit}`;

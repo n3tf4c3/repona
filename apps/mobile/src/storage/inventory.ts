@@ -1,3 +1,4 @@
+import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity } from '@repona/core';
 import { initializeDatabase } from './database';
 
 export type InventoryStatus = 'in_stock' | 'missing';
@@ -88,39 +89,3 @@ export async function consumeProductInventory(productId: number, currentQuantity
   });
 }
 
-function isEmptyQuantity(quantity: string) {
-  const match = quantity.match(/^(\d+(?:[.,]\d+)?)/);
-
-  if (!match) {
-    return false;
-  }
-
-  return Number(match[1].replace(',', '.')) <= 0;
-}
-
-function getNextInventoryQuantity(quantity: string, direction: 1 | -1) {
-  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
-
-  if (!match) {
-    return direction > 0 ? '1 un' : '0 un';
-  }
-
-  const currentValue = Number(match[1].replace(',', '.'));
-  const unit = match[2].trim() || 'un';
-  const step = unit === 'g' ? 100 : 1;
-  const nextValue = Math.max(0, currentValue + direction * step);
-  const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
-
-  return `${formattedValue} ${unit}`;
-}
-
-function getConsumedQuantity(quantity: string) {
-  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
-  const currentValue = match ? Number(match[1].replace(',', '.')) : 1;
-  const unit = match?.[2].trim() || 'un';
-  const step = unit === 'g' ? 100 : 1;
-  const consumedValue = Math.min(currentValue, step);
-  const formattedValue = Number.isInteger(consumedValue) ? `${consumedValue}` : `${consumedValue.toFixed(1).replace('.', ',')}`;
-
-  return `${formattedValue} ${unit}`;
-}

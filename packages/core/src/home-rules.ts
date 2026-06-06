@@ -4,16 +4,30 @@ import type { ProductDTO } from "./contracts";
 
 export type InventoryAlertLevel = "missing" | "low";
 
-export type InventoryAlert = {
+// Conjunto mínimo de campos que as regras leem. ProductDTO (web) e Product
+// (mobile, enriquecido com ícone/cores) satisfazem este formato, então cada app
+// passa o seu tipo e o recebe de volta nos alertas/sugestões (genérico em P).
+export type ProductLike = {
+  id?: number;
+  name: string;
+  purchaseCount?: number;
+  consumptionCount?: number;
+  inventoryQuantity?: string;
+  inventoryStatus?: "in_stock" | "missing";
+  alertThreshold?: string | null;
+  lastConsumedAt?: string | null;
+};
+
+export type InventoryAlert<P extends ProductLike = ProductDTO> = {
   id: string;
-  product: ProductDTO;
+  product: P;
   level: InventoryAlertLevel;
   label: string;
   description: string;
 };
 
-export type RebuySuggestion = {
-  product: ProductDTO;
+export type RebuySuggestion<P extends ProductLike = ProductDTO> = {
+  product: P;
   title: string;
   description: string;
   badge: string;
@@ -77,7 +91,7 @@ function getRecentConsumptionScore(value?: string | null): number {
   return 1;
 }
 
-function descricaoComConsumo(product: ProductDTO, base: string): string {
+function descricaoComConsumo(product: ProductLike, base: string): string {
   if (product.lastConsumedAt) {
     return `${base} Último consumo: ${formatRelativeConsumptionDate(product.lastConsumedAt)}.`;
   }
@@ -86,8 +100,8 @@ function descricaoComConsumo(product: ProductDTO, base: string): string {
 
 // ---- Alertas de estoque ----
 
-export function buildInventoryAlerts(products: ProductDTO[]): InventoryAlert[] {
-  const alerts = products.reduce<InventoryAlert[]>((items, product) => {
+export function buildInventoryAlerts<P extends ProductLike>(products: P[]): InventoryAlert<P>[] {
+  const alerts = products.reduce<InventoryAlert<P>[]>((items, product) => {
     if (product.inventoryStatus === "missing") {
       items.push({
         id: `${product.id}-missing`,
@@ -121,7 +135,10 @@ export function buildInventoryAlerts(products: ProductDTO[]): InventoryAlert[] {
   return alerts.sort(compareInventoryAlerts);
 }
 
-function compareInventoryAlerts(first: InventoryAlert, second: InventoryAlert): number {
+function compareInventoryAlerts<P extends ProductLike>(
+  first: InventoryAlert<P>,
+  second: InventoryAlert<P>
+): number {
   const rank = (level: InventoryAlertLevel) => (level === "missing" ? 0 : 1);
   const levelDiff = rank(first.level) - rank(second.level);
   if (levelDiff !== 0) return levelDiff;
@@ -133,13 +150,13 @@ function compareInventoryAlerts(first: InventoryAlert, second: InventoryAlert): 
 
 // ---- Sugestão de recompra ----
 
-export function buildRebuySuggestion(
-  products: ProductDTO[],
+export function buildRebuySuggestion<P extends ProductLike>(
+  products: P[],
   listedProductIds: Iterable<number>
-): RebuySuggestion | null {
+): RebuySuggestion<P> | null {
   const listed = new Set(listedProductIds);
-  const suggestions = products.reduce<RebuySuggestion[]>((items, product) => {
-    if (listed.has(product.id)) return items;
+  const suggestions = products.reduce<RebuySuggestion<P>[]>((items, product) => {
+    if (product.id !== undefined && listed.has(product.id)) return items;
     const suggestion = getProductRebuySuggestion(product);
     if (suggestion) items.push(suggestion);
     return items;
@@ -149,7 +166,7 @@ export function buildRebuySuggestion(
   return suggestions[0] ?? null;
 }
 
-function getProductRebuySuggestion(product: ProductDTO): RebuySuggestion | null {
+function getProductRebuySuggestion<P extends ProductLike>(product: P): RebuySuggestion<P> | null {
   const purchaseCount = product.purchaseCount ?? 0;
   const consumptionCount = product.consumptionCount ?? 0;
   const quantity = parseInventoryQuantity(product.inventoryQuantity);
