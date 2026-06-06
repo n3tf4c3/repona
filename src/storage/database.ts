@@ -60,6 +60,25 @@ export async function initializeDatabase() {
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (source_list_id) REFERENCES shopping_lists(id)
     );
+
+    CREATE TABLE IF NOT EXISTS inventory_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL UNIQUE,
+      quantity TEXT NOT NULL DEFAULT '0 un',
+      status TEXT NOT NULL DEFAULT 'missing',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      quantity TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
   `);
 
   return database;

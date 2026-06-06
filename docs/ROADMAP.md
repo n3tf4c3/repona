@@ -17,13 +17,13 @@ Status: implementado visualmente.
 
 ## Fase 1: MVP Local Funcional
 
-Status: implementado; falta validar em dispositivo.
+Status: implementado e validado pelo usuario.
 
 - Completar repositorio local de historico.
 - Registrar historico de compras ao finalizar lista.
 - Conectar tela de historico aos dados reais.
 - Editar e remover produtos cadastrados.
-- Validar fluxo em Expo Go e emulador/dispositivo Android. (pendente)
+- Validar fluxo em Expo Go e emulador/dispositivo Android.
 
 ## Fase 2: Captura Rapida de Produtos
 
@@ -36,9 +36,13 @@ Status: implementado.
 
 ## Fase 3: Estoque Domestico
 
-- Controlar quantidade de itens em casa.
-- Marcar produtos como comprados, consumidos ou em falta.
-- Relacionar historico de compras com estoque atual.
+Status: iniciado.
+
+- Controlar quantidade de itens em casa. (implementado inicial)
+- Marcar produtos como em falta. (implementado inicial)
+- Relacionar historico de compras com estoque atual. (parcial: finalizacao da lista atualiza estoque)
+- Registrar consumo de itens em casa. (implementado inicial)
+- Evoluir alertas de estoque baixo ou ruptura. (pendente)
 
 ## Fase 4: Compartilhamento Familiar
 

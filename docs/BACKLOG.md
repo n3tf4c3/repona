@@ -35,16 +35,23 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 - Cadastrar produto por codigo de barras.
 - Capturar foto do produto no cadastro.
 - Buscar produtos por nome e filtrar por categoria.
+- Criar entidade local de estoque domestico no SQLite.
+- Exibir e atualizar quantidade em casa na tela de produtos.
+- Marcar produto como em falta pelo estoque.
+- Atualizar estoque ao finalizar compra.
+- Registrar consumo local de estoque pela tela de produtos.
+- Validar o app com Expo Go ou emulador.
 
 ## MVP Funcional
 
-- Validar o app com Expo Go ou emulador.
+- Concluido para o MVP local.
 
 ## Produto
 
 - Definir fluxo principal de uso familiar.
 - Definir categorias iniciais de produtos.
 - Definir estados de um item: planejado, comprado, consumido e em falta.
+- Evoluir alertas de estoque baixo ou ruptura.
 - Avaliar modelo de organizacao por casa ou familia.
 
 ## Integracoes Futuras

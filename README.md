@@ -62,13 +62,17 @@ Implementado nesta etapa:
 - Edicao e remocao de produtos cadastrados.
 - Cadastro de produto por codigo de barras e por foto com Expo Camera.
 - Busca de produtos por nome e filtro por categoria.
+- Estoque domestico local com quantidade e estado por produto.
+- Controles de estoque na tela de produtos para aumentar, reduzir e marcar item em falta.
+- Finalizacao da lista atualizando o estoque dos itens comprados.
+- Registro local de consumo de estoque pela tela de produtos.
+- Validacao do app em Expo Go, emulador ou build Android feita pelo usuario.
 
-Com isso a Fase 1 (MVP local) e a Fase 2 (captura rapida) do roadmap estao implementadas.
+Com isso a Fase 1 (MVP local) e a Fase 2 (captura rapida) do roadmap estao implementadas, e a Fase 3 (estoque domestico) foi iniciada.
 
 Ainda pendente:
 
-- Validacao do app em Expo Go, emulador ou build Android.
-- Fase 3: controle de estoque domestico.
+- Fase 3: evolucao dos alertas de estoque baixo ou ruptura.
 
 ## Estrutura Inicial
 

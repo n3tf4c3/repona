@@ -43,7 +43,8 @@ const fallbackVisual: ProductVisual = {
 };
 
 export function productRecordToProduct(record: ProductRecord): Product {
-  const visual = record.status === 'missing'
+  const isMissing = record.status === 'missing' || record.inventoryStatus === 'missing';
+  const visual = isMissing
     ? { icon: 'coffee-outline' as IconName, background: colors.coralSoft, tint: colors.coral }
     : categoryVisuals[record.category] ?? fallbackVisual;
 
@@ -53,14 +54,20 @@ export function productRecordToProduct(record: ProductRecord): Product {
     category: record.category,
     barcode: record.barcode,
     photoUri: record.photoUri,
+    inventoryQuantity: record.inventoryQuantity,
+    inventoryStatus: record.inventoryStatus,
     meta: buildProductMeta(record),
     ...visual,
   };
 }
 
 function buildProductMeta(record: ProductRecord): string {
-  if (record.status === 'missing') {
+  if (record.status === 'missing' || record.inventoryStatus === 'missing') {
     return `${record.category} · em falta`;
+  }
+
+  if (record.inventoryQuantity && record.inventoryQuantity !== '0 un') {
+    return `${record.category} · ${record.inventoryQuantity} em casa`;
   }
 
   if (record.purchaseCount > 0) {

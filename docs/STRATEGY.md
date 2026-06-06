@@ -27,17 +27,18 @@ O MVP deve evitar complexidade de sincronizacao e inteligencia no inicio. A prio
 
 ## Estado de Implementacao
 
-A primeira entrega tecnica priorizou a experiencia visual antes da persistencia. O app agora usa Expo/React Native em TypeScript, com telas baseadas no handoff de design e dados mockados para validar hierarquia, fluxo e componentes.
+O app usa Expo/React Native em TypeScript, com telas baseadas no handoff de design e os fluxos principais conectados ao Expo SQLite local.
 
-O proximo passo estrategico e transformar essa experiencia visual em MVP funcional local, conectando as telas ao Expo SQLite sem adicionar nuvem, scanner ou inteligencia neste momento.
+Ja estao implementados o cadastro de produtos, lista ativa, historico real de compras, edicao/remocao de produtos, busca/filtro por categoria, captura rapida por codigo de barras ou foto e estoque domestico local com consumo registrado.
+
+O proximo passo estrategico e continuar a Fase 3 com alertas simples de estoque baixo ou ruptura, ainda sem adicionar nuvem ou inteligencia neste momento.
 
 ## Diferenciais Futuros
 
-- Cadastro rapido por codigo de barras.
-- Cadastro por foto.
+- Controle de estoque domestico.
 - Compartilhamento familiar.
 - Sugestoes inteligentes de recompra.
-- Controle de estoque domestico.
+- Alertas de falta com base no historico e no estoque.
 
 ## Principios de Desenvolvimento
 

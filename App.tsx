@@ -33,6 +33,7 @@ import {
   toggleShoppingListItem,
   updateShoppingListItemQuantity,
 } from './src/storage/shoppingLists';
+import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
 import { IconName, NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
@@ -216,6 +217,57 @@ export default function App() {
     setActiveTab('list');
   }
 
+  async function handleChangeProductInventory(product: Product, direction: 1 | -1) {
+    if (!product.id) {
+      return;
+    }
+
+    try {
+      setProductActionError(null);
+      const nextQuantity = getNextInventoryQuantity(product.inventoryQuantity ?? '0 un', direction);
+      await setProductInventoryQuantity(product.id, nextQuantity);
+      await Promise.all([refreshProducts(), refreshShoppingItems()]);
+    } catch (error) {
+      console.error('Failed to update inventory', error);
+      setProductActionError('Não foi possível atualizar o estoque agora.');
+    }
+  }
+
+  async function handleMarkProductMissing(product: Product) {
+    if (!product.id) {
+      return;
+    }
+
+    try {
+      setProductActionError(null);
+      await markProductInventoryMissing(product.id);
+      await Promise.all([refreshProducts(), refreshShoppingItems()]);
+    } catch (error) {
+      console.error('Failed to mark product as missing', error);
+      setProductActionError('Não foi possível atualizar o estoque agora.');
+    }
+  }
+
+  async function handleConsumeProduct(product: Product) {
+    if (!product.id) {
+      return;
+    }
+
+    try {
+      setProductActionError(null);
+      await consumeProductInventory(product.id, product.inventoryQuantity ?? '0 un');
+      await Promise.all([refreshProducts(), refreshShoppingItems()]);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INVENTORY_ALREADY_MISSING') {
+        setProductActionError('Esse produto já está em falta.');
+        return;
+      }
+
+      console.error('Failed to consume product inventory', error);
+      setProductActionError('Não foi possível registrar o consumo agora.');
+    }
+  }
+
   async function handleFinalizePurchase() {
     if (isFinalizingPurchase) {
       return;
@@ -277,6 +329,9 @@ export default function App() {
               onAddProductToList={handleAddProductToList}
               onEditProduct={openEditProduct}
               onRemoveProduct={confirmRemoveProduct}
+              onChangeInventory={handleChangeProductInventory}
+              onMarkInventoryMissing={handleMarkProductMissing}
+              onConsumeProduct={handleConsumeProduct}
             />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
@@ -414,6 +469,9 @@ function ProductsScreen({
   onAddProductToList,
   onEditProduct,
   onRemoveProduct,
+  onChangeInventory,
+  onMarkInventoryMissing,
+  onConsumeProduct,
 }: {
   products: Product[];
   isProductsReady: boolean;
@@ -421,6 +479,9 @@ function ProductsScreen({
   onAddProductToList: (product: Product) => void;
   onEditProduct: (product: Product) => void;
   onRemoveProduct: (product: Product) => void;
+  onChangeInventory: (product: Product, direction: 1 | -1) => void;
+  onMarkInventoryMissing: (product: Product) => void;
+  onConsumeProduct: (product: Product) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
@@ -446,6 +507,9 @@ function ProductsScreen({
         onAdd={onAddProductToList}
         onEdit={onEditProduct}
         onRemove={onRemoveProduct}
+        onChangeInventory={onChangeInventory}
+        onMarkInventoryMissing={onMarkInventoryMissing}
+        onConsume={onConsumeProduct}
       />
     </ScreenScroll>
   );
@@ -658,11 +722,17 @@ function ProductRow({
   onAdd,
   onEdit,
   onRemove,
+  onChangeInventory,
+  onMarkInventoryMissing,
+  onConsume,
 }: {
   product: Product;
   onAdd: (product: Product) => void;
   onEdit?: (product: Product) => void;
   onRemove?: (product: Product) => void;
+  onChangeInventory?: (product: Product, direction: 1 | -1) => void;
+  onMarkInventoryMissing?: (product: Product) => void;
+  onConsume?: (product: Product) => void;
 }) {
   return (
     <View style={styles.productRow}>
@@ -674,6 +744,9 @@ function ProductRow({
       <View style={styles.productText}>
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
         <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
+        {onChangeInventory && onMarkInventoryMissing && onConsume ? (
+          <InventoryControls product={product} onChange={onChangeInventory} onMarkMissing={onMarkInventoryMissing} onConsume={onConsume} />
+        ) : null}
       </View>
       <View style={styles.productActions}>
         {onEdit ? (
@@ -690,6 +763,49 @@ function ProductRow({
           <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+function InventoryControls({
+  product,
+  onChange,
+  onMarkMissing,
+  onConsume,
+}: {
+  product: Product;
+  onChange: (product: Product, direction: 1 | -1) => void;
+  onMarkMissing: (product: Product) => void;
+  onConsume: (product: Product) => void;
+}) {
+  const isMissing = product.inventoryStatus === 'missing';
+
+  return (
+    <View style={styles.inventoryControls}>
+      <View style={[styles.inventoryQuantityPill, isMissing ? styles.inventoryMissingPill : null]}>
+        <Pressable style={styles.inventoryMiniButton} onPress={() => onChange(product, -1)}>
+          <MaterialCommunityIcons name="minus" size={13} color={colors.ink2} />
+        </Pressable>
+        <Text style={styles.inventoryQuantityText}>{product.inventoryQuantity ?? '0 un'}</Text>
+        <Pressable style={styles.inventoryMiniButton} onPress={() => onChange(product, 1)}>
+          <MaterialCommunityIcons name="plus" size={13} color={colors.ink2} />
+        </Pressable>
+      </View>
+      <Pressable
+        style={[styles.inventoryMissingButton, isMissing ? styles.inventoryMissingButtonActive : null]}
+        onPress={() => onMarkMissing(product)}
+      >
+        <Text style={[styles.inventoryMissingButtonText, isMissing ? styles.inventoryMissingButtonTextActive : null]}>
+          {isMissing ? 'Em falta' : 'Falta'}
+        </Text>
+      </Pressable>
+      <Pressable
+        style={[styles.inventoryConsumeButton, isMissing ? styles.inventoryConsumeButtonDisabled : null]}
+        disabled={isMissing}
+        onPress={() => onConsume(product)}
+      >
+        <Text style={styles.inventoryConsumeButtonText}>{isMissing ? 'Sem estoque' : 'Consumir'}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -723,6 +839,9 @@ function ProductList({
   onAdd,
   onEdit,
   onRemove,
+  onChangeInventory,
+  onMarkInventoryMissing,
+  onConsume,
 }: {
   products: Product[];
   isReady: boolean;
@@ -730,6 +849,9 @@ function ProductList({
   onAdd: (product: Product) => void;
   onEdit: (product: Product) => void;
   onRemove: (product: Product) => void;
+  onChangeInventory: (product: Product, direction: 1 | -1) => void;
+  onMarkInventoryMissing: (product: Product) => void;
+  onConsume: (product: Product) => void;
 }) {
   if (!isReady) {
     return <EmptyState title="Carregando produtos" description="Buscando o catálogo salvo localmente." />;
@@ -744,7 +866,16 @@ function ProductList({
   }
 
   return products.map((product) => (
-    <ProductRow key={product.id ?? product.name} product={product} onAdd={onAdd} onEdit={onEdit} onRemove={onRemove} />
+    <ProductRow
+      key={product.id ?? product.name}
+      product={product}
+      onAdd={onAdd}
+      onEdit={onEdit}
+      onRemove={onRemove}
+      onChangeInventory={onChangeInventory}
+      onMarkInventoryMissing={onMarkInventoryMissing}
+      onConsume={onConsume}
+    />
   ));
 }
 
@@ -1280,6 +1411,22 @@ function getNextQuantity(quantity: string, direction: 1 | -1) {
   return `${formattedValue} ${unit}`;
 }
 
+function getNextInventoryQuantity(quantity: string, direction: 1 | -1) {
+  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+
+  if (!match) {
+    return direction > 0 ? '1 un' : '0 un';
+  }
+
+  const currentValue = Number(match[1].replace(',', '.'));
+  const unit = match[2].trim() || 'un';
+  const step = unit === 'g' ? 100 : 1;
+  const nextValue = Math.max(0, currentValue + direction * step);
+  const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
+
+  return `${formattedValue} ${unit}`;
+}
+
 const styles = StyleSheet.create({
   appShell: {
     flex: 1,
@@ -1523,6 +1670,73 @@ const styles = StyleSheet.create({
   productMeta: {
     ...typography.bodySmall,
     color: colors.ink3,
+  },
+  inventoryControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 7,
+  },
+  inventoryQuantityPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.bg,
+    padding: 3,
+  },
+  inventoryMissingPill: {
+    borderColor: colors.coralSoft,
+    backgroundColor: colors.coralSoft,
+  },
+  inventoryMiniButton: {
+    width: 22,
+    height: 22,
+    borderRadius: 8,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inventoryQuantityText: {
+    ...typography.badge,
+    color: colors.ink,
+    minWidth: 34,
+    textAlign: 'center',
+  },
+  inventoryMissingButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 9,
+    backgroundColor: colors.bg2,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  inventoryMissingButtonActive: {
+    backgroundColor: colors.coralSoft,
+  },
+  inventoryMissingButtonText: {
+    ...typography.badge,
+    color: colors.ink2,
+  },
+  inventoryMissingButtonTextActive: {
+    color: colors.coral,
+  },
+  inventoryConsumeButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 9,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  inventoryConsumeButtonDisabled: {
+    opacity: 0.58,
+  },
+  inventoryConsumeButtonText: {
+    ...typography.badge,
+    color: colors.primaryStrong,
   },
   productActions: {
     flexDirection: 'row',

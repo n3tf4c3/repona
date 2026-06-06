@@ -1,5 +1,6 @@
 import { initializeDatabase } from './database';
 import { NewProductInput } from '../types';
+import type { InventoryStatus } from './inventory';
 
 export type ProductStatus = 'active' | 'missing';
 
@@ -11,6 +12,8 @@ export type ProductRecord = {
   photoUri: string | null;
   purchaseCount: number;
   status: ProductStatus;
+  inventoryQuantity: string;
+  inventoryStatus: InventoryStatus;
   createdAt: string;
   updatedAt: string;
 };
@@ -23,6 +26,8 @@ type ProductRow = {
   photo_uri: string | null;
   purchase_count: number;
   status: ProductStatus;
+  inventory_quantity: string;
+  inventory_status: InventoryStatus;
   created_at: string;
   updated_at: string;
 };
@@ -55,13 +60,24 @@ export async function seedInitialProducts() {
 
   await database.withTransactionAsync(async () => {
     for (const product of seedProducts) {
-      await database.runAsync(
+      const productStatus = product.status ?? 'active';
+      const result = await database.runAsync(
         `INSERT INTO products (name, category, purchase_count, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         product.name,
         product.category,
         product.purchaseCount,
-        product.status ?? 'active',
+        productStatus,
+        now,
+        now,
+      );
+
+      await database.runAsync(
+        `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        result.lastInsertRowId,
+        productStatus === 'missing' ? '0 un' : '1 un',
+        productStatus === 'missing' ? 'missing' : 'in_stock',
         now,
         now,
       );
@@ -72,9 +88,21 @@ export async function seedInitialProducts() {
 export async function listProducts(): Promise<ProductRecord[]> {
   const database = await initializeDatabase();
   const rows = await database.getAllAsync<ProductRow>(`
-    SELECT id, name, category, barcode, photo_uri, purchase_count, status, created_at, updated_at
-    FROM products
-    ORDER BY created_at DESC, name ASC
+    SELECT
+      p.id,
+      p.name,
+      p.category,
+      p.barcode,
+      p.photo_uri,
+      p.purchase_count,
+      p.status,
+      COALESCE(ii.quantity, '0 un') as inventory_quantity,
+      COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+      p.created_at,
+      p.updated_at
+    FROM products p
+    LEFT JOIN inventory_items ii ON ii.product_id = p.id
+    ORDER BY p.created_at DESC, p.name ASC
   `);
 
   return rows.map(mapProductRow);
@@ -111,9 +139,21 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   );
 
   const created = await database.getFirstAsync<ProductRow>(
-    `SELECT id, name, category, barcode, photo_uri, purchase_count, status, created_at, updated_at
-     FROM products
-     WHERE id = ?`,
+    `SELECT
+       p.id,
+       p.name,
+       p.category,
+       p.barcode,
+       p.photo_uri,
+       p.purchase_count,
+       p.status,
+       COALESCE(ii.quantity, '0 un') as inventory_quantity,
+       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       p.created_at,
+       p.updated_at
+     FROM products p
+     LEFT JOIN inventory_items ii ON ii.product_id = p.id
+     WHERE p.id = ?`,
     result.lastInsertRowId,
   );
 
@@ -162,9 +202,21 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   );
 
   const updated = await database.getFirstAsync<ProductRow>(
-    `SELECT id, name, category, barcode, photo_uri, purchase_count, status, created_at, updated_at
-     FROM products
-     WHERE id = ?`,
+    `SELECT
+       p.id,
+       p.name,
+       p.category,
+       p.barcode,
+       p.photo_uri,
+       p.purchase_count,
+       p.status,
+       COALESCE(ii.quantity, '0 un') as inventory_quantity,
+       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       p.created_at,
+       p.updated_at
+     FROM products p
+     LEFT JOIN inventory_items ii ON ii.product_id = p.id
+     WHERE p.id = ?`,
     productId,
   );
 
@@ -187,6 +239,8 @@ export async function deleteProduct(productId: number) {
   }
 
   await database.withTransactionAsync(async () => {
+    await database.runAsync('DELETE FROM inventory_events WHERE product_id = ?', productId);
+    await database.runAsync('DELETE FROM inventory_items WHERE product_id = ?', productId);
     await database.runAsync('DELETE FROM shopping_list_items WHERE product_id = ?', productId);
     await database.runAsync('DELETE FROM products WHERE id = ?', productId);
   });
@@ -201,6 +255,8 @@ function mapProductRow(row: ProductRow): ProductRecord {
     photoUri: row.photo_uri,
     purchaseCount: row.purchase_count,
     status: row.status,
+    inventoryQuantity: row.inventory_quantity,
+    inventoryStatus: row.inventory_status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

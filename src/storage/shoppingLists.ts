@@ -262,6 +262,19 @@ export async function finalizeActiveShoppingList() {
         now,
         item.product_id,
       );
+
+      await database.runAsync(
+        `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
+         VALUES (?, ?, 'in_stock', ?, ?)
+         ON CONFLICT(product_id)
+         DO UPDATE SET quantity = excluded.quantity,
+                       status = excluded.status,
+                       updated_at = excluded.updated_at`,
+        item.product_id,
+        item.quantity,
+        now,
+        now,
+      );
     }
 
     await database.runAsync(
