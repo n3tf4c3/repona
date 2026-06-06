@@ -3,9 +3,10 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import type { BarcodeScanningResult } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -657,7 +658,11 @@ function ProductRow({
 }) {
   return (
     <View style={styles.productRow}>
-      <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
+      {product.photoUri ? (
+        <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
+      ) : (
+        <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
+      )}
       <View style={styles.productText}>
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
         <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
@@ -984,10 +989,15 @@ function NewProductSheet({
   const [category, setCategory] = useState('Mercearia');
   const [barcode, setBarcode] = useState<string | null>(null);
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [isPhotoCameraVisible, setIsPhotoCameraVisible] = useState(false);
+  const [isTakingPhoto, setIsTakingPhoto] = useState(false);
   const [isScannerVisible, setIsScannerVisible] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const photoCameraRef = useRef<CameraView>(null);
 
   useEffect(() => {
     if (visible) {
@@ -995,6 +1005,10 @@ function NewProductSheet({
       setCategory(product?.category ?? 'Mercearia');
       setBarcode(product?.barcode ?? null);
       setBarcodeError(null);
+      setPhotoUri(product?.photoUri ?? null);
+      setPhotoError(null);
+      setIsPhotoCameraVisible(false);
+      setIsTakingPhoto(false);
       setIsScannerVisible(false);
       setHasScanned(false);
       setIsSaving(false);
@@ -1014,6 +1028,39 @@ function NewProductSheet({
     setIsScannerVisible(true);
   }
 
+  async function openPhotoCamera() {
+    setPhotoError(null);
+    const permission = cameraPermission?.granted ? cameraPermission : await requestCameraPermission();
+
+    if (!permission.granted) {
+      setPhotoError('Permita acesso à câmera para tirar a foto.');
+      return;
+    }
+
+    setIsPhotoCameraVisible(true);
+  }
+
+  async function capturePhoto() {
+    if (isTakingPhoto) {
+      return;
+    }
+
+    setIsTakingPhoto(true);
+
+    try {
+      const photo = await photoCameraRef.current?.takePictureAsync({ quality: 0.75 });
+
+      if (photo?.uri) {
+        setPhotoUri(photo.uri);
+        setIsPhotoCameraVisible(false);
+      }
+    } catch (error) {
+      setPhotoError('Não foi possível tirar a foto agora.');
+    } finally {
+      setIsTakingPhoto(false);
+    }
+  }
+
   function handleBarcodeScanned(result: BarcodeScanningResult) {
     if (hasScanned) {
       return;
@@ -1030,7 +1077,7 @@ function NewProductSheet({
     }
 
     setIsSaving(true);
-    await onSave({ name, category, barcode, photoUri: product?.photoUri ?? null });
+    await onSave({ name, category, barcode, photoUri });
     setIsSaving(false);
   }
 
@@ -1056,10 +1103,12 @@ function NewProductSheet({
           {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
           <Text style={styles.fieldLabel}>Categoria</Text>
           <ChipRow chips={['Mercearia', 'Hortifrúti', 'Laticínios', 'Bebidas', 'Limpeza']} selected={category} onSelect={setCategory} />
+          {photoUri ? <Image source={{ uri: photoUri }} style={styles.sheetPhotoPreview} /> : null}
           <View style={styles.optionalRow}>
-            <OptionalCapture icon="camera-outline" label="Foto (opcional)" />
+            <OptionalCapture icon="camera-outline" label={photoUri ? 'Foto anexada' : 'Foto (opcional)'} onPress={openPhotoCamera} />
             <OptionalCapture icon="barcode-scan" label={barcode ? 'Código lido' : 'Código (opcional)'} onPress={openBarcodeScanner} />
           </View>
+          {photoError ? <Text style={styles.formError}>{photoError}</Text> : null}
           {barcode ? <Text style={styles.captureResult}>Código: {barcode}</Text> : null}
           {barcodeError ? <Text style={styles.formError}>{barcodeError}</Text> : null}
           <Pressable style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]} onPress={handleSave}>
@@ -1086,6 +1135,26 @@ function NewProductSheet({
             onBarcodeScanned={hasScanned ? undefined : handleBarcodeScanned}
           />
           <Text style={styles.scannerHint}>O código será anexado ao cadastro do produto.</Text>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={isPhotoCameraVisible} animationType="slide" onRequestClose={() => setIsPhotoCameraVisible(false)}>
+        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
+          <View style={styles.scannerHeader}>
+            <View>
+              <Text style={styles.scannerTitle}>Foto do produto</Text>
+              <Text style={styles.scannerSubtitle}>Centralize a embalagem e tire uma foto simples.</Text>
+            </View>
+            <Pressable style={styles.scannerClose} onPress={() => setIsPhotoCameraVisible(false)}>
+              <MaterialCommunityIcons name="close" size={22} color={colors.surface} />
+            </Pressable>
+          </View>
+          <CameraView ref={photoCameraRef} style={styles.scannerCamera} facing="back" />
+          <View style={styles.photoCaptureBar}>
+            <Pressable style={styles.photoCaptureButton} onPress={capturePhoto}>
+              <View style={styles.photoCaptureButtonInner} />
+            </Pressable>
+            <Text style={styles.scannerHint}>{isTakingPhoto ? 'Salvando foto...' : 'Toque para capturar a foto.'}</Text>
+          </View>
         </SafeAreaView>
       </Modal>
     </>
@@ -1391,6 +1460,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 11,
     ...shadow.small,
+  },
+  productPhoto: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    backgroundColor: colors.bg2,
   },
   productText: {
     flex: 1,
@@ -1860,6 +1935,12 @@ const styles = StyleSheet.create({
     ...typography.label,
     color: colors.ink3,
   },
+  sheetPhotoPreview: {
+    width: '100%',
+    height: 140,
+    borderRadius: 16,
+    backgroundColor: colors.bg2,
+  },
   captureResult: {
     ...typography.label,
     color: colors.ink2,
@@ -1905,6 +1986,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: spacing.screen,
     paddingVertical: 16,
+  },
+  photoCaptureBar: {
+    alignItems: 'center',
+    paddingTop: 18,
+    backgroundColor: colors.ink,
+  },
+  photoCaptureButton: {
+    width: 74,
+    height: 74,
+    borderRadius: 74,
+    borderWidth: 4,
+    borderColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoCaptureButtonInner: {
+    width: 54,
+    height: 54,
+    borderRadius: 54,
+    backgroundColor: colors.surface,
   },
   saveButton: {
     height: 54,

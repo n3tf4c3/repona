@@ -24,7 +24,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Permita que o Repona leia códigos de barras dos produtos."
+          "cameraPermission": "Permita que o Repona tire fotos e leia códigos de barras dos produtos."
         }
       ]
     ]
