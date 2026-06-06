@@ -9,3 +9,8 @@ export type {
   ShoppingListItemDTO,
   PurchaseHistoryDTO,
 } from "./contracts";
+export {
+  isEmptyQuantity,
+  getNextInventoryQuantity,
+  getConsumedQuantity,
+} from "./inventory-quantity";
