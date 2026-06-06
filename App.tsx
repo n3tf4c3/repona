@@ -1,4 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import type { BarcodeScanningResult } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -980,15 +982,47 @@ function NewProductSheet({
 }) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Mercearia');
+  const [barcode, setBarcode] = useState<string | null>(null);
+  const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const [isScannerVisible, setIsScannerVisible] = useState(false);
+  const [hasScanned, setHasScanned] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   useEffect(() => {
     if (visible) {
       setName(product?.name ?? '');
       setCategory(product?.category ?? 'Mercearia');
+      setBarcode(product?.barcode ?? null);
+      setBarcodeError(null);
+      setIsScannerVisible(false);
+      setHasScanned(false);
       setIsSaving(false);
     }
   }, [product, visible]);
+
+  async function openBarcodeScanner() {
+    setBarcodeError(null);
+    const permission = cameraPermission?.granted ? cameraPermission : await requestCameraPermission();
+
+    if (!permission.granted) {
+      setBarcodeError('Permita acesso à câmera para ler o código.');
+      return;
+    }
+
+    setHasScanned(false);
+    setIsScannerVisible(true);
+  }
+
+  function handleBarcodeScanned(result: BarcodeScanningResult) {
+    if (hasScanned) {
+      return;
+    }
+
+    setHasScanned(true);
+    setBarcode(result.data);
+    setIsScannerVisible(false);
+  }
 
   async function handleSave() {
     if (isSaving) {
@@ -996,49 +1030,87 @@ function NewProductSheet({
     }
 
     setIsSaving(true);
-    await onSave({ name, category });
+    await onSave({ name, category, barcode, photoUri: product?.photoUri ?? null });
     setIsSaving(false);
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.modalScrim} onPress={onClose} />
-      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
-        <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
-        <Text style={styles.sheetSubtitle}>{product ? 'Ajuste nome e categoria do produto cadastrado.' : 'Só o nome já basta. O resto é opcional.'}</Text>
-        <Text style={styles.fieldLabel}>Nome do produto</Text>
-        <View style={styles.inputBox}>
-          <MaterialCommunityIcons name="tag-outline" size={20} color={colors.primaryStrong} />
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            style={styles.input}
-            placeholder="Nome do produto"
-            placeholderTextColor={colors.ink3}
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <Pressable style={styles.modalScrim} onPress={onClose} />
+        <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
+          <Text style={styles.sheetSubtitle}>{product ? 'Ajuste nome e categoria do produto cadastrado.' : 'Só o nome já basta. O resto é opcional.'}</Text>
+          <Text style={styles.fieldLabel}>Nome do produto</Text>
+          <View style={styles.inputBox}>
+            <MaterialCommunityIcons name="tag-outline" size={20} color={colors.primaryStrong} />
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              style={styles.input}
+              placeholder="Nome do produto"
+              placeholderTextColor={colors.ink3}
+            />
+          </View>
+          {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
+          <Text style={styles.fieldLabel}>Categoria</Text>
+          <ChipRow chips={['Mercearia', 'Hortifrúti', 'Laticínios', 'Bebidas', 'Limpeza']} selected={category} onSelect={setCategory} />
+          <View style={styles.optionalRow}>
+            <OptionalCapture icon="camera-outline" label="Foto (opcional)" />
+            <OptionalCapture icon="barcode-scan" label={barcode ? 'Código lido' : 'Código (opcional)'} onPress={openBarcodeScanner} />
+          </View>
+          {barcode ? <Text style={styles.captureResult}>Código: {barcode}</Text> : null}
+          {barcodeError ? <Text style={styles.formError}>{barcodeError}</Text> : null}
+          <Pressable style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]} onPress={handleSave}>
+            <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
+            <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
+          </Pressable>
+        </SafeAreaView>
+      </Modal>
+      <Modal visible={isScannerVisible} animationType="slide" onRequestClose={() => setIsScannerVisible(false)}>
+        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
+          <View style={styles.scannerHeader}>
+            <View>
+              <Text style={styles.scannerTitle}>Ler código</Text>
+              <Text style={styles.scannerSubtitle}>Aponte a câmera para o código de barras.</Text>
+            </View>
+            <Pressable style={styles.scannerClose} onPress={() => setIsScannerVisible(false)}>
+              <MaterialCommunityIcons name="close" size={22} color={colors.surface} />
+            </Pressable>
+          </View>
+          <CameraView
+            style={styles.scannerCamera}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39'] }}
+            onBarcodeScanned={hasScanned ? undefined : handleBarcodeScanned}
           />
-        </View>
-        {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
-        <Text style={styles.fieldLabel}>Categoria</Text>
-        <ChipRow chips={['Mercearia', 'Hortifrúti', 'Laticínios', 'Bebidas', 'Limpeza']} selected={category} onSelect={setCategory} />
-        <View style={styles.optionalRow}>
-          <OptionalCapture icon="camera-outline" label="Foto (opcional)" />
-          <OptionalCapture icon="barcode-scan" label="Código (opcional)" />
-        </View>
-        <Pressable style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]} onPress={handleSave}>
-          <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
-          <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
-        </Pressable>
-      </SafeAreaView>
-    </Modal>
+          <Text style={styles.scannerHint}>O código será anexado ao cadastro do produto.</Text>
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }
 
-function OptionalCapture({ icon, label }: { icon: IconName; label: string }) {
-  return (
-    <View style={styles.optionalCapture}>
+function OptionalCapture({ icon, label, onPress }: { icon: IconName; label: string; onPress?: () => void }) {
+  const content = (
+    <>
       <MaterialCommunityIcons name={icon} size={22} color={colors.ink3} />
       <Text style={styles.optionalText}>{label}</Text>
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <Pressable style={styles.optionalCapture} onPress={onPress}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={styles.optionalCapture}>
+      {content}
     </View>
   );
 }
@@ -1787,6 +1859,52 @@ const styles = StyleSheet.create({
   optionalText: {
     ...typography.label,
     color: colors.ink3,
+  },
+  captureResult: {
+    ...typography.label,
+    color: colors.ink2,
+    backgroundColor: colors.bg2,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  scannerShell: {
+    flex: 1,
+    backgroundColor: colors.ink,
+  },
+  scannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    paddingHorizontal: spacing.screen,
+    paddingVertical: 16,
+  },
+  scannerTitle: {
+    ...typography.h2,
+    color: colors.surface,
+  },
+  scannerSubtitle: {
+    ...typography.bodySmall,
+    color: 'rgba(255,255,255,0.68)',
+  },
+  scannerClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerCamera: {
+    flex: 1,
+  },
+  scannerHint: {
+    ...typography.label,
+    color: 'rgba(255,255,255,0.72)',
+    textAlign: 'center',
+    paddingHorizontal: spacing.screen,
+    paddingVertical: 16,
   },
   saveButton: {
     height: 54,

@@ -9,6 +9,8 @@ export type Product = {
   id?: number;
   name: string;
   category?: string;
+  barcode?: string | null;
+  photoUri?: string | null;
   meta: string;
   icon: IconName;
   background: string;

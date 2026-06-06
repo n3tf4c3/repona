@@ -51,6 +51,8 @@ export function productRecordToProduct(record: ProductRecord): Product {
     id: record.id,
     name: record.name,
     category: record.category,
+    barcode: record.barcode,
+    photoUri: record.photoUri,
     meta: buildProductMeta(record),
     ...visual,
   };

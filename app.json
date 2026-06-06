@@ -20,7 +20,13 @@
     },
     "plugins": [
       "expo-sqlite",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita que o Repona leia códigos de barras dos produtos."
+        }
+      ]
     ]
   }
 }

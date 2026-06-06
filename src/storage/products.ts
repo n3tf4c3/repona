@@ -149,10 +149,14 @@ export async function updateProduct(productId: number, input: NewProductInput): 
     `UPDATE products
      SET name = ?,
          category = ?,
+         barcode = ?,
+         photo_uri = ?,
          updated_at = ?
      WHERE id = ?`,
     name,
     category || 'Mercearia',
+    input.barcode ?? null,
+    input.photoUri ?? null,
     now,
     productId,
   );
