@@ -422,6 +422,13 @@ function ProductsScreen({
   onEditProduct: (product: Product) => void;
   onRemoveProduct: (product: Product) => void;
 }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('Todos');
+  const filteredProducts = useMemo(
+    () => filterProducts(products, searchTerm, selectedCategory),
+    [products, searchTerm, selectedCategory],
+  );
+
   return (
     <ScreenScroll>
       <Header
@@ -429,12 +436,13 @@ function ProductsScreen({
         title="Produtos"
         actions={<IconButton icon="tune-variant" />}
       />
-      <SearchBox placeholder="Buscar produto..." />
+      <SearchBox placeholder="Buscar produto..." value={searchTerm} onChangeText={setSearchTerm} />
       {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
-      <ChipRow chips={['Todos', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected="Todos" />
+      <ChipRow chips={['Todos', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
       <ProductList
-        products={products}
+        products={filteredProducts}
         isReady={isProductsReady}
+        hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos'}
         onAdd={onAddProductToList}
         onEdit={onEditProduct}
         onRemove={onRemoveProduct}
@@ -711,12 +719,14 @@ function ProductListPreview({
 function ProductList({
   products,
   isReady,
+  hasFilters,
   onAdd,
   onEdit,
   onRemove,
 }: {
   products: Product[];
   isReady: boolean;
+  hasFilters: boolean;
   onAdd: (product: Product) => void;
   onEdit: (product: Product) => void;
   onRemove: (product: Product) => void;
@@ -726,6 +736,10 @@ function ProductList({
   }
 
   if (products.length === 0) {
+    if (hasFilters) {
+      return <EmptyState title="Nenhum resultado" description="Tente outro nome ou categoria." />;
+    }
+
     return <EmptyState title="Catálogo vazio" description="Toque no botão central para cadastrar seu primeiro produto." />;
   }
 
@@ -746,11 +760,29 @@ function EmptyState({ title, description }: { title: string; description: string
   );
 }
 
-function SearchBox({ placeholder }: { placeholder: string }) {
+function SearchBox({
+  placeholder,
+  value,
+  onChangeText,
+}: {
+  placeholder: string;
+  value?: string;
+  onChangeText?: (value: string) => void;
+}) {
   return (
     <View style={styles.searchBox}>
       <MaterialCommunityIcons name="magnify" size={20} color={colors.ink3} />
-      <Text style={styles.searchPlaceholder}>{placeholder}</Text>
+      {onChangeText ? (
+        <TextInput
+          value={value ?? ''}
+          onChangeText={onChangeText}
+          style={styles.searchInput}
+          placeholder={placeholder}
+          placeholderTextColor={colors.ink3}
+        />
+      ) : (
+        <Text style={styles.searchPlaceholder}>{placeholder}</Text>
+      )}
     </View>
   );
 }
@@ -1196,6 +1228,19 @@ function groupShoppingItems(items: ShoppingItem[]) {
   }, []);
 }
 
+function filterProducts(products: Product[], searchTerm: string, selectedCategory: string) {
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
+
+  return products.filter((product) => {
+    const matchesCategory = selectedCategory === 'Todos' || product.category === selectedCategory;
+    const matchesSearch = !normalizedSearch
+      || product.name.toLocaleLowerCase('pt-BR').includes(normalizedSearch)
+      || (product.barcode?.includes(normalizedSearch) ?? false);
+
+    return matchesCategory && matchesSearch;
+  });
+}
+
 function getProductErrorMessage(error: unknown) {
   if (error instanceof Error) {
     if (error.message === 'PRODUCT_NAME_REQUIRED') {
@@ -1549,6 +1594,12 @@ const styles = StyleSheet.create({
   searchPlaceholder: {
     ...typography.body,
     color: colors.ink3,
+  },
+  searchInput: {
+    flex: 1,
+    ...typography.body,
+    color: colors.ink,
+    paddingVertical: 0,
   },
   chipRow: {
     gap: 8,
