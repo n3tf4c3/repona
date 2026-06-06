@@ -154,6 +154,42 @@ export async function addProductToActiveShoppingList(productId: number) {
   );
 }
 
+export async function createNewActiveShoppingList(): Promise<ShoppingListRecord> {
+  const database = await initializeDatabase();
+  const listCount = await database.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM shopping_lists');
+  const name = `Lista ${(listCount?.count ?? 0) + 1}`;
+  const now = new Date().toISOString();
+  let createdListId = 0;
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `UPDATE shopping_lists
+       SET status = 'archived',
+           updated_at = ?
+       WHERE status = 'active'`,
+      now,
+    );
+
+    const result = await database.runAsync(
+      `INSERT INTO shopping_lists (name, status, created_at, updated_at)
+       VALUES (?, 'active', ?, ?)`,
+      name,
+      now,
+      now,
+    );
+
+    createdListId = result.lastInsertRowId;
+  });
+
+  return {
+    id: createdListId,
+    name,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export async function toggleShoppingListItem(itemId: number) {
   const database = await initializeDatabase();
   const now = new Date().toISOString();

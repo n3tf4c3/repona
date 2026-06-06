@@ -21,6 +21,8 @@ import type { PurchaseHistoryGroup, PurchaseHistoryItem } from './src/purchaseHi
 import { shoppingListRecordToItem } from './src/shoppingListPresentation';
 import {
   addProductToActiveShoppingList,
+  createNewActiveShoppingList,
+  ensureActiveShoppingList,
   finalizeActiveShoppingList,
   listActiveShoppingItems,
   removeShoppingListItem,
@@ -44,6 +46,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [activeShoppingListName, setActiveShoppingListName] = useState('Compra da Semana');
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
   const [isShoppingListReady, setIsShoppingListReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -61,11 +64,13 @@ export default function App() {
       try {
         await seedInitialProducts();
         await seedActiveShoppingList();
+        const activeList = await ensureActiveShoppingList();
         const records = await listProducts();
         const listRecords = await listActiveShoppingItems();
         const historyRecords = await listPurchaseHistoryRecords();
 
         if (isMounted) {
+          setActiveShoppingListName(activeList.name);
           setProducts(records.map(productRecordToProduct));
           setShoppingItems(listRecords.map(shoppingListRecordToItem));
           setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
@@ -89,7 +94,9 @@ export default function App() {
   }, []);
 
   async function refreshShoppingItems() {
+    const activeList = await ensureActiveShoppingList();
     const listRecords = await listActiveShoppingItems();
+    setActiveShoppingListName(activeList.name);
     setShoppingItems(listRecords.map(shoppingListRecordToItem));
   }
 
@@ -179,6 +186,23 @@ export default function App() {
     );
   }
 
+  async function handleCreateNewShoppingList() {
+    await createNewActiveShoppingList();
+    await refreshShoppingItems();
+    setActiveTab('list');
+  }
+
+  function confirmCreateNewShoppingList() {
+    Alert.alert(
+      'Nova lista',
+      'A lista atual será preservada e uma nova lista vazia ficará ativa.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Criar lista', onPress: () => { void handleCreateNewShoppingList(); } },
+      ],
+    );
+  }
+
   async function handleAddProductToList(product: Product) {
     if (!product.id) {
       return;
@@ -222,9 +246,11 @@ export default function App() {
               onOpenList={() => setActiveTab('list')}
               onOpenHistory={() => setActiveTab('history')}
               onNewProduct={openNewProduct}
+              onNewList={confirmCreateNewShoppingList}
               onAddProductToList={handleAddProductToList}
               products={products.slice(0, 2)}
               isProductsReady={isProductsReady}
+              activeListName={activeShoppingListName}
               checkedCount={checkedCount}
               totalCount={shoppingItems.length}
             />
@@ -233,6 +259,7 @@ export default function App() {
             <ShoppingListScreen
               items={shoppingItems}
               isReady={isShoppingListReady}
+              listName={activeShoppingListName}
               onBack={() => setActiveTab('home')}
               onToggleItem={toggleItem}
               onChangeQuantity={changeItemQuantity}
@@ -283,18 +310,22 @@ function HomeScreen({
   onOpenList,
   onOpenHistory,
   onNewProduct,
+  onNewList,
   onAddProductToList,
   products,
   isProductsReady,
+  activeListName,
   checkedCount,
   totalCount,
 }: {
   onOpenList: () => void;
   onOpenHistory: () => void;
   onNewProduct: () => void;
+  onNewList: () => void;
   onAddProductToList: (product: Product) => void;
   products: Product[];
   isProductsReady: boolean;
+  activeListName: string;
   checkedCount: number;
   totalCount: number;
 }) {
@@ -310,8 +341,8 @@ function HomeScreen({
           </>
         }
       />
-      <ActiveListCard checkedCount={checkedCount} totalCount={totalCount} onOpen={onOpenList} />
-      <QuickActions onNewProduct={onNewProduct} onNewList={onOpenList} onHistory={onOpenHistory} />
+      <ActiveListCard title={activeListName} checkedCount={checkedCount} totalCount={totalCount} onOpen={onOpenList} />
+      <QuickActions onNewProduct={onNewProduct} onNewList={onNewList} onHistory={onOpenHistory} />
       <SuggestionCard />
       <SectionTitle title="Você costuma comprar" action="Ver tudo" />
       <ProductListPreview products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
@@ -322,6 +353,7 @@ function HomeScreen({
 function ShoppingListScreen({
   items,
   isReady,
+  listName,
   onBack,
   onToggleItem,
   onChangeQuantity,
@@ -329,6 +361,7 @@ function ShoppingListScreen({
 }: {
   items: ShoppingItem[];
   isReady: boolean;
+  listName: string;
   onBack: () => void;
   onToggleItem: (id: number) => void;
   onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
@@ -345,7 +378,7 @@ function ShoppingListScreen({
           <IconButton icon="arrow-left" onPress={onBack} />
           <View style={styles.listTitleBlock}>
             <Text style={styles.eyebrowText}>{checkedCount} de {items.length} comprados</Text>
-            <Text style={styles.titleText}>Compra da Semana</Text>
+            <Text style={styles.titleText}>{listName}</Text>
           </View>
         </View>
         <IconButton icon="dots-vertical" />
@@ -505,10 +538,12 @@ function IconButton({
 }
 
 function ActiveListCard({
+  title,
   checkedCount,
   totalCount,
   onOpen,
 }: {
+  title: string;
   checkedCount: number;
   totalCount: number;
   onOpen: () => void;
@@ -521,7 +556,7 @@ function ActiveListCard({
       <View style={styles.activeTop}>
         <View>
           <StatusPill label="Lista ativa" background={colors.primarySoft} tint={colors.primaryStrong} />
-          <Text style={styles.activeTitle}>Compra da Semana</Text>
+          <Text style={styles.activeTitle}>{title}</Text>
           <Text style={styles.subtleText}>{checkedCount} de {totalCount} itens comprados</Text>
         </View>
         <View style={styles.ring}>
