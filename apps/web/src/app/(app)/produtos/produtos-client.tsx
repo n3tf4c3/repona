@@ -1,8 +1,21 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import {
+  Search,
+  Plus,
+  Minus,
+  Pencil,
+  Trash2,
+  ShoppingCart,
+  Utensils,
+  PackageX,
+  AlertCircle,
+  PackageOpen,
+} from "lucide-react";
 import { getNextInventoryQuantity, type ProductDTO, type NewProductInput } from "@repona/core";
-import { corDaCategoria, CATEGORIAS } from "@/lib/categorias";
+import { CATEGORIAS } from "@/lib/categorias";
+import { CategoriaBolha } from "@/components/categoria-icone";
 import {
   criarProdutoAction,
   atualizarProdutoAction,
@@ -44,9 +57,9 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#8E9180]">Catálogo da casa</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-ink-faint">Catálogo da casa</p>
           <h1 className="text-2xl font-black tracking-tight">Produtos</h1>
         </div>
         <button
@@ -54,18 +67,22 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
             setCriando(true);
             setEditando(null);
           }}
-          className="rounded-xl bg-[#212418] px-4 py-2 text-sm font-semibold text-white"
+          className="flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
         >
-          + Novo produto
+          <Plus size={16} strokeWidth={2.6} />
+          Novo
         </button>
       </div>
 
-      <input
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        placeholder="Buscar produto..."
-        className="w-full rounded-xl border border-[#E7E5D9] bg-white px-4 py-3 text-sm outline-none focus:border-[#2E8B57]"
-      />
+      <div className="relative">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
+        <input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar produto..."
+          className="w-full rounded-xl border border-line bg-surface py-3 pl-10 pr-4 text-sm outline-none transition focus:border-primary"
+        />
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => (
@@ -74,8 +91,8 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
             onClick={() => setCategoria(chip)}
             className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
               categoria === chip
-                ? "bg-[#2E8B57] text-white"
-                : "bg-white text-[#5C604F] border border-[#E7E5D9]"
+                ? "bg-primary text-white"
+                : "border border-line bg-surface text-ink-soft hover:border-primary"
             }`}
           >
             {chip}
@@ -84,14 +101,18 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
       </div>
 
       {erro && (
-        <div className="rounded-xl bg-[#FAE1DB] px-4 py-3 text-sm font-medium text-[#B23A2A]">
+        <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+          <AlertCircle size={16} />
           {erro}
         </div>
       )}
 
       <div className="space-y-3">
         {filtrados.length === 0 && (
-          <p className="py-8 text-center text-sm text-[#8E9180]">Nenhum produto encontrado.</p>
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line py-12 text-center text-ink-faint">
+            <PackageOpen size={32} strokeWidth={1.6} />
+            <p className="text-sm">Nenhum produto encontrado.</p>
+          </div>
         )}
         {filtrados.map((produto) => (
           <ProductCard
@@ -163,23 +184,20 @@ function ProductCard({
 }) {
   const emFalta = produto.inventoryStatus === "missing";
   return (
-    <div className="rounded-2xl border border-[#E7E5D9] bg-white p-4 shadow-sm">
+    <div className="rounded-card border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <span
-            className="mt-1 inline-block h-2.5 w-2.5 rounded-full"
-            style={{ backgroundColor: corDaCategoria(produto.category) }}
-          />
+          <CategoriaBolha category={produto.category} />
           <div>
-            <p className="font-bold">{produto.name}</p>
-            <p className="text-xs text-[#8E9180]">
+            <p className="font-bold leading-tight">{produto.name}</p>
+            <p className="text-xs text-ink-faint">
               {produto.category} · comprado {produto.purchaseCount}x
             </p>
           </div>
         </div>
         <span
-          className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-            emFalta ? "bg-[#FAE1DB] text-[#B23A2A]" : "bg-[#E2F0E5] text-[#236B43]"
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
+            emFalta ? "bg-coral-soft text-danger" : "bg-primary-soft text-primary-strong"
           }`}
         >
           {emFalta ? "Em falta" : "Em estoque"}
@@ -187,63 +205,90 @@ function ProductCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-[#E7E5D9] p-1">
-          <button
-            disabled={pending}
-            onClick={() => onStock(-1)}
-            className="h-7 w-7 rounded-md text-lg leading-none text-[#5C604F] hover:bg-[#F6F5EF] disabled:opacity-40"
-          >
-            −
-          </button>
-          <span className="min-w-16 text-center text-sm font-semibold">{produto.inventoryQuantity}</span>
-          <button
-            disabled={pending}
-            onClick={() => onStock(1)}
-            className="h-7 w-7 rounded-md text-lg leading-none text-[#5C604F] hover:bg-[#F6F5EF] disabled:opacity-40"
-          >
-            +
-          </button>
-        </div>
+        <Stepper value={produto.inventoryQuantity} pending={pending} onStep={onStock} />
 
-        <button
-          disabled={pending}
-          onClick={onAddLista}
-          className="rounded-lg bg-[#2E8B57] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-        >
-          + Lista
-        </button>
-        <button
-          disabled={pending || emFalta}
-          onClick={onConsumir}
-          className="rounded-lg border border-[#E7E5D9] px-3 py-1.5 text-xs font-semibold text-[#5C604F] disabled:opacity-40"
-        >
-          Consumir
-        </button>
-        <button
-          disabled={pending || emFalta}
-          onClick={onFalta}
-          className="rounded-lg border border-[#E7E5D9] px-3 py-1.5 text-xs font-semibold text-[#5C604F] disabled:opacity-40"
-        >
-          Em falta
-        </button>
+        <IconButton label="Adicionar à lista" pending={pending} onClick={onAddLista} variant="primary">
+          <ShoppingCart size={15} strokeWidth={2.4} />
+        </IconButton>
+        <IconButton label="Consumir" pending={pending || emFalta} onClick={onConsumir}>
+          <Utensils size={15} strokeWidth={2.2} />
+        </IconButton>
+        <IconButton label="Marcar em falta" pending={pending || emFalta} onClick={onFalta}>
+          <PackageX size={15} strokeWidth={2.2} />
+        </IconButton>
         <div className="ml-auto flex gap-2">
-          <button
-            disabled={pending}
-            onClick={onEditar}
-            className="rounded-lg border border-[#E7E5D9] px-3 py-1.5 text-xs font-semibold text-[#5C604F]"
-          >
-            Editar
-          </button>
-          <button
-            disabled={pending}
-            onClick={onExcluir}
-            className="rounded-lg border border-[#FAE1DB] px-3 py-1.5 text-xs font-semibold text-[#B23A2A]"
-          >
-            Excluir
-          </button>
+          <IconButton label="Editar" pending={pending} onClick={onEditar}>
+            <Pencil size={15} strokeWidth={2.2} />
+          </IconButton>
+          <IconButton label="Excluir" pending={pending} onClick={onExcluir} variant="danger">
+            <Trash2 size={15} strokeWidth={2.2} />
+          </IconButton>
         </div>
       </div>
     </div>
+  );
+}
+
+function Stepper({
+  value,
+  pending,
+  onStep,
+}: {
+  value: string;
+  pending: boolean;
+  onStep: (dir: 1 | -1) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-line p-1">
+      <button
+        disabled={pending}
+        onClick={() => onStep(-1)}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+        aria-label="Diminuir"
+      >
+        <Minus size={16} />
+      </button>
+      <span className="min-w-16 text-center text-sm font-semibold tabular-nums">{value}</span>
+      <button
+        disabled={pending}
+        onClick={() => onStep(1)}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+        aria-label="Aumentar"
+      >
+        <Plus size={16} />
+      </button>
+    </div>
+  );
+}
+
+function IconButton({
+  children,
+  label,
+  pending,
+  onClick,
+  variant = "neutral",
+}: {
+  children: React.ReactNode;
+  label: string;
+  pending: boolean;
+  onClick: () => void;
+  variant?: "neutral" | "primary" | "danger";
+}) {
+  const estilos = {
+    neutral: "border border-line text-ink-soft hover:bg-bg",
+    primary: "bg-primary text-white hover:opacity-90",
+    danger: "border border-coral-soft text-danger hover:bg-coral-soft",
+  }[variant];
+  return (
+    <button
+      disabled={pending}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`flex h-8 w-8 items-center justify-center rounded-lg transition disabled:opacity-40 ${estilos}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -263,24 +308,25 @@ function ProdutoModal({
   const [alertThreshold, setAlertThreshold] = useState(produto?.alertThreshold ?? "");
 
   return (
-    <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/30 p-4 sm:items-center">
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
+      <div className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl">
         <h2 className="text-lg font-black">{produto ? "Editar produto" : "Novo produto"}</h2>
         <div className="mt-4 space-y-3">
           <label className="block">
-            <span className="text-sm font-semibold text-[#5C604F]">Nome</span>
+            <span className="text-sm font-semibold text-ink-soft">Nome</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-[#E7E5D9] px-4 py-2.5 text-sm outline-none focus:border-[#2E8B57]"
+              autoFocus
+              className="mt-1 w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
             />
           </label>
           <label className="block">
-            <span className="text-sm font-semibold text-[#5C604F]">Categoria</span>
+            <span className="text-sm font-semibold text-ink-soft">Categoria</span>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-[#E7E5D9] bg-white px-4 py-2.5 text-sm outline-none focus:border-[#2E8B57]"
+              className="mt-1 w-full rounded-xl border border-line bg-surface px-4 py-2.5 text-sm outline-none transition focus:border-primary"
             >
               {CATEGORIAS.map((c) => (
                 <option key={c} value={c}>
@@ -290,26 +336,26 @@ function ProdutoModal({
             </select>
           </label>
           <label className="block">
-            <span className="text-sm font-semibold text-[#5C604F]">Alerta de estoque baixo (opcional)</span>
+            <span className="text-sm font-semibold text-ink-soft">Alerta de estoque baixo (opcional)</span>
             <input
               value={alertThreshold}
               onChange={(e) => setAlertThreshold(e.target.value)}
               placeholder="ex.: 1 un"
-              className="mt-1 w-full rounded-xl border border-[#E7E5D9] px-4 py-2.5 text-sm outline-none focus:border-[#2E8B57]"
+              className="mt-1 w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
             />
           </label>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button
             onClick={onFechar}
-            className="rounded-xl border border-[#E7E5D9] px-4 py-2 text-sm font-semibold text-[#5C604F]"
+            className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink-soft transition hover:bg-bg"
           >
             Cancelar
           </button>
           <button
             disabled={pending}
             onClick={() => onSalvar({ name, category, alertThreshold })}
-            className="rounded-xl bg-[#2E8B57] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
             {pending ? "Salvando..." : "Salvar"}
           </button>

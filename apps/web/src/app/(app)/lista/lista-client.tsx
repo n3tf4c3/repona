@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Check, Plus, Minus, Trash2, ShoppingBag, CheckCircle2, AlertCircle, ClipboardList } from "lucide-react";
 import { getNextInventoryQuantity, type ShoppingListItemDTO } from "@repona/core";
 import type { GrupoItens } from "@/lib/categorias";
+import { CategoriaBolha } from "@/components/categoria-icone";
 import {
   alternarItemAction,
   atualizarQuantidadeAction,
@@ -53,9 +55,9 @@ export function ListaClient({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between">
+      <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#8E9180]">
+          <p className="text-xs font-bold uppercase tracking-wider text-ink-faint">
             {comprados} de {total} comprados
           </p>
           <h1 className="text-2xl font-black tracking-tight">{listName}</h1>
@@ -63,35 +65,45 @@ export function ListaClient({
         <button
           disabled={pending || total === 0}
           onClick={finalizar}
-          className="rounded-xl bg-[#212418] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
         >
-          Finalizar compra
+          <ShoppingBag size={16} strokeWidth={2.4} />
+          Finalizar
         </button>
       </div>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-[#E7E5D9]">
-        <div className="h-full rounded-full bg-[#2E8B57] transition-all" style={{ width: `${progresso}%` }} />
+      <div className="h-2 w-full overflow-hidden rounded-full bg-line">
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progresso}%` }} />
       </div>
 
       {erro && (
-        <div className="rounded-xl bg-[#FAE1DB] px-4 py-3 text-sm font-medium text-[#B23A2A]">{erro}</div>
+        <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+          <AlertCircle size={16} />
+          {erro}
+        </div>
       )}
       {aviso && (
-        <div className="rounded-xl bg-[#E2F0E5] px-4 py-3 text-sm font-medium text-[#236B43]">{aviso}</div>
+        <div className="flex items-center gap-2 rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-strong">
+          <CheckCircle2 size={16} />
+          {aviso}
+        </div>
       )}
 
       {total === 0 && (
-        <p className="py-10 text-center text-sm text-[#8E9180]">
-          Lista vazia. Adicione produtos pela aba <span className="font-semibold">Produtos</span>.
-        </p>
+        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line py-12 text-center text-ink-faint">
+          <ClipboardList size={32} strokeWidth={1.6} />
+          <p className="text-sm">
+            Lista vazia. Adicione produtos pela aba <span className="font-semibold">Produtos</span>.
+          </p>
+        </div>
       )}
 
       {grupos.map((grupo) => (
         <div key={grupo.category} className="space-y-2">
           <div className="flex items-center gap-2 pt-2">
-            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: grupo.color }} />
-            <span className="text-sm font-bold text-[#5C604F]">{grupo.category}</span>
-            <span className="text-xs text-[#8E9180]">{grupo.items.length}</span>
+            <CategoriaBolha category={grupo.category} size={26} />
+            <span className="text-sm font-bold text-ink-soft">{grupo.category}</span>
+            <span className="text-xs text-ink-faint">{grupo.items.length}</span>
           </div>
           {grupo.items.map((item) => (
             <ItemRow
@@ -127,49 +139,51 @@ function ItemRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-[#E7E5D9] bg-white p-3">
+    <div className="flex items-center gap-3 rounded-card border border-line bg-surface p-3">
       <button
         disabled={pending}
         onClick={onToggle}
         aria-label={item.checked ? "Desmarcar" : "Marcar"}
-        className={`flex h-6 w-6 items-center justify-center rounded-md border text-sm ${
-          item.checked ? "border-[#2E8B57] bg-[#2E8B57] text-white" : "border-[#C9CDBC] bg-white"
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition ${
+          item.checked ? "border-primary bg-primary text-white" : "border-ink-faint/50 bg-surface"
         }`}
       >
-        {item.checked ? "✓" : ""}
+        {item.checked && <Check size={15} strokeWidth={3} />}
       </button>
-      <div className="flex-1">
-        <p className={`font-semibold ${item.checked ? "text-[#8E9180] line-through" : ""}`}>
+      <div className="min-w-0 flex-1">
+        <p className={`truncate font-semibold ${item.checked ? "text-ink-faint line-through" : ""}`}>
           {item.productName}
         </p>
         {item.productStatus === "missing" && (
-          <span className="text-xs font-semibold text-[#B23A2A]">Em falta no estoque</span>
+          <span className="text-xs font-semibold text-danger">Em falta no estoque</span>
         )}
       </div>
-      <div className="flex items-center gap-1 rounded-lg border border-[#E7E5D9] p-1">
+      <div className="flex items-center gap-1 rounded-lg border border-line p-1">
         <button
           disabled={pending}
           onClick={() => onQty(-1)}
-          className="h-7 w-7 rounded-md text-lg leading-none text-[#5C604F] hover:bg-[#F6F5EF] disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+          aria-label="Diminuir"
         >
-          −
+          <Minus size={16} />
         </button>
-        <span className="min-w-14 text-center text-sm font-semibold">{item.quantity}</span>
+        <span className="min-w-14 text-center text-sm font-semibold tabular-nums">{item.quantity}</span>
         <button
           disabled={pending}
           onClick={() => onQty(1)}
-          className="h-7 w-7 rounded-md text-lg leading-none text-[#5C604F] hover:bg-[#F6F5EF] disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+          aria-label="Aumentar"
         >
-          +
+          <Plus size={16} />
         </button>
       </div>
       <button
         disabled={pending}
         onClick={onRemove}
         aria-label="Remover"
-        className="rounded-lg border border-[#FAE1DB] px-2.5 py-1.5 text-xs font-semibold text-[#B23A2A]"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-coral-soft text-danger transition hover:bg-coral-soft disabled:opacity-40"
       >
-        ✕
+        <Trash2 size={15} strokeWidth={2.2} />
       </button>
     </div>
   );

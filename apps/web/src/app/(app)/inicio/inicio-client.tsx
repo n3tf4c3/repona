@@ -2,8 +2,18 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import {
+  ArrowRight,
+  Plus,
+  Package,
+  ListChecks,
+  History,
+  Sparkles,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
 import type { InventoryAlert, RebuySuggestion, ProductDTO } from "@repona/core";
-import { corDaCategoria } from "@/lib/categorias";
+import { CategoriaBolha } from "@/components/categoria-icone";
 import { adicionarAListaAction } from "../produtos/actions";
 
 export function InicioClient({
@@ -34,74 +44,83 @@ export function InicioClient({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-[#8E9180]">Sua casa</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-ink-faint">Sua casa</p>
         <h1 className="text-2xl font-black tracking-tight">Início</h1>
       </div>
 
       {erro && (
-        <div className="rounded-xl bg-[#FAE1DB] px-4 py-3 text-sm font-medium text-[#B23A2A]">{erro}</div>
+        <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+          <AlertCircle size={16} />
+          {erro}
+        </div>
       )}
 
       {/* Lista ativa */}
       <Link
         href="/lista"
-        className="block rounded-2xl border border-[#E7E5D9] bg-white p-5 shadow-sm transition hover:border-[#2E8B57]"
+        className="group block rounded-card border border-line bg-surface p-5 shadow-sm transition hover:border-primary"
       >
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="rounded-full bg-[#E2F0E5] px-2 py-0.5 text-xs font-bold text-[#236B43]">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <span className="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-bold text-primary-strong">
               Lista ativa
             </span>
-            <p className="mt-2 text-lg font-black">{listName}</p>
-            <p className="text-sm text-[#8E9180]">
+            <p className="mt-2 truncate text-lg font-black">{listName}</p>
+            <p className="text-sm text-ink-faint">
               {comprados} de {total} itens comprados
             </p>
           </div>
-          <div className="flex h-14 w-14 items-center justify-center rounded-full border-4 border-[#E2F0E5] text-sm font-black text-[#236B43]">
-            {progresso}%
+          <div className="relative flex h-16 w-16 shrink-0 items-center justify-center">
+            <svg className="h-16 w-16 -rotate-90" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="16" fill="none" className="stroke-line" strokeWidth="3" />
+              <circle
+                cx="18"
+                cy="18"
+                r="16"
+                fill="none"
+                className="stroke-primary"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeDasharray={`${(progresso / 100) * 100.5} 100.5`}
+              />
+            </svg>
+            <span className="absolute text-sm font-black text-primary-strong">{progresso}%</span>
           </div>
         </div>
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#E7E5D9]">
-          <div className="h-full rounded-full bg-[#2E8B57]" style={{ width: `${progresso}%` }} />
+        <div className="mt-3 flex items-center justify-end text-sm font-semibold text-primary-strong">
+          Abrir lista <ArrowRight size={16} className="ml-1 transition group-hover:translate-x-0.5" />
         </div>
       </Link>
 
       {/* Ações rápidas */}
       <div className="grid grid-cols-3 gap-3">
-        <QuickAction href="/produtos" label="Produtos" />
-        <QuickAction href="/lista" label="Lista" />
-        <QuickAction href="/historico" label="Histórico" />
+        <QuickAction href="/produtos" label="Produtos" Icon={Package} />
+        <QuickAction href="/lista" label="Lista" Icon={ListChecks} />
+        <QuickAction href="/historico" label="Histórico" Icon={History} />
       </div>
 
       {/* Alertas de estoque */}
       <section>
-        <h2 className="mb-2 text-sm font-bold text-[#5C604F]">Alertas de estoque</h2>
+        <h2 className="mb-2 text-sm font-bold text-ink-soft">Alertas de estoque</h2>
         {alertas.length === 0 ? (
-          <p className="rounded-2xl border border-[#E7E5D9] bg-white p-4 text-sm text-[#8E9180]">
-            Tudo certo por aqui — nenhum produto em falta ou com estoque baixo.
-          </p>
+          <div className="flex items-center gap-3 rounded-card border border-line bg-surface p-4 text-sm text-ink-faint">
+            <CheckCircle2 size={20} className="text-primary" />
+            Tudo certo — nenhum produto em falta ou com estoque baixo.
+          </div>
         ) : (
           <div className="space-y-2">
             {alertas.map((alerta) => (
-              <div
-                key={alerta.id}
-                className="flex items-center gap-3 rounded-2xl border border-[#E7E5D9] bg-white p-4"
-              >
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: corDaCategoria(alerta.product.category) }}
-                />
-                <div className="flex-1">
-                  <p className="font-bold">{alerta.product.name}</p>
-                  <p className="text-xs text-[#8E9180]">{alerta.description}</p>
+              <div key={alerta.id} className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
+                <CategoriaBolha category={alerta.product.category} size={40} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-bold">{alerta.product.name}</p>
+                  <p className="truncate text-xs text-ink-faint">{alerta.description}</p>
                 </div>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                    alerta.level === "missing"
-                      ? "bg-[#FAE1DB] text-[#B23A2A]"
-                      : "bg-[#FBEAD4] text-[#9A6314]"
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
+                    alerta.level === "missing" ? "bg-coral-soft text-danger" : "bg-amber-soft text-amber-ink"
                   }`}
                 >
                   {alerta.label}
@@ -109,9 +128,10 @@ export function InicioClient({
                 <button
                   disabled={pending}
                   onClick={() => adicionar(alerta.product.id)}
-                  className="rounded-lg bg-[#2E8B57] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  aria-label="Adicionar à lista"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-white transition hover:opacity-90 disabled:opacity-50"
                 >
-                  + Lista
+                  <Plus size={16} strokeWidth={2.6} />
                 </button>
               </div>
             ))}
@@ -122,19 +142,21 @@ export function InicioClient({
       {/* Sugestão de recompra */}
       {sugestao && (
         <section>
-          <h2 className="mb-2 text-sm font-bold text-[#5C604F]">Sugestão para você</h2>
-          <div className="rounded-2xl border border-[#E7E5D9] bg-[#F0F7F0] p-5">
-            <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-[#236B43]">
+          <h2 className="mb-2 text-sm font-bold text-ink-soft">Sugestão para você</h2>
+          <div className="rounded-card border border-line bg-primary-tint p-5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-xs font-bold text-primary-strong">
+              <Sparkles size={12} />
               {sugestao.badge}
             </span>
             <p className="mt-2 text-lg font-black">{sugestao.title}</p>
-            <p className="text-sm text-[#5C604F]">{sugestao.description}</p>
+            <p className="text-sm text-ink-soft">{sugestao.description}</p>
             <button
               disabled={pending}
               onClick={() => adicionar(sugestao.product.id)}
-              className="mt-3 rounded-xl bg-[#212418] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="mt-3 flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
             >
-              + Adicionar à lista
+              <Plus size={16} strokeWidth={2.6} />
+              Adicionar à lista
             </button>
           </div>
         </section>
@@ -143,25 +165,19 @@ export function InicioClient({
       {/* Você costuma comprar */}
       {costuma.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-bold text-[#5C604F]">Você costuma comprar</h2>
+          <h2 className="mb-2 text-sm font-bold text-ink-soft">Você costuma comprar</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {costuma.map((produto) => (
-              <div
-                key={produto.id}
-                className="flex flex-col gap-2 rounded-2xl border border-[#E7E5D9] bg-white p-4"
-              >
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: corDaCategoria(produto.category) }}
-                />
+              <div key={produto.id} className="flex flex-col gap-2 rounded-card border border-line bg-surface p-4">
+                <CategoriaBolha category={produto.category} size={36} />
                 <p className="text-sm font-bold leading-tight">{produto.name}</p>
-                <p className="text-xs text-[#8E9180]">comprado {produto.purchaseCount}x</p>
+                <p className="text-xs text-ink-faint">comprado {produto.purchaseCount}x</p>
                 <button
                   disabled={pending}
                   onClick={() => adicionar(produto.id)}
-                  className="mt-auto rounded-lg border border-[#2E8B57] px-3 py-1.5 text-xs font-semibold text-[#236B43] disabled:opacity-50"
+                  className="mt-auto flex items-center justify-center gap-1 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary-strong transition hover:bg-primary-soft disabled:opacity-50"
                 >
-                  + Lista
+                  <Plus size={14} strokeWidth={2.6} /> Lista
                 </button>
               </div>
             ))}
@@ -172,12 +188,21 @@ export function InicioClient({
   );
 }
 
-function QuickAction({ href, label }: { href: string; label: string }) {
+function QuickAction({
+  href,
+  label,
+  Icon,
+}: {
+  href: string;
+  label: string;
+  Icon: typeof Package;
+}) {
   return (
     <Link
       href={href}
-      className="rounded-2xl border border-[#E7E5D9] bg-white p-4 text-center text-sm font-semibold text-[#5C604F] transition hover:border-[#2E8B57]"
+      className="flex flex-col items-center gap-2 rounded-card border border-line bg-surface p-4 text-sm font-semibold text-ink-soft transition hover:border-primary hover:text-primary-strong"
     >
+      <Icon size={22} strokeWidth={2.2} />
       {label}
     </Link>
   );
