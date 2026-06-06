@@ -45,7 +45,8 @@ Status: iniciado.
 - Alertar estoque baixo ou ruptura na tela inicial. (implementado inicial)
 - Refinar regras de alerta com historico de consumo. (implementado inicial)
 - Definir limiares de alerta por produto. (implementado inicial)
-- Preparar sugestoes de recompra com base em estoque e historico. (pendente)
+- Preparar sugestoes de recompra com base em estoque e historico. (implementado inicial)
+- Melhorar explicacao e configuracao das sugestoes. (pendente)
 
 ## Fase 4: Compartilhamento Familiar
 

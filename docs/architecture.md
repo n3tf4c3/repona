@@ -52,11 +52,11 @@ As cores do handoff foram convertidas para tokens React Native em `src/theme.ts`
 
 ## Decisao de Escopo Atual
 
-A implementacao atual usa SQLite para produtos, lista ativa, itens da lista, historico e estoque domestico. A finalizacao da lista registra os itens comprados em `purchase_history`, incrementa a contagem de compra do produto, atualiza `inventory_items` e remove os itens comprados da lista ativa. O consumo manual registra eventos em `inventory_events`, reduz a quantidade local e alimenta a priorizacao dos alertas. Cada produto pode definir um limiar local para disparar alerta de estoque baixo.
+A implementacao atual usa SQLite para produtos, lista ativa, itens da lista, historico e estoque domestico. A finalizacao da lista registra os itens comprados em `purchase_history`, incrementa a contagem de compra do produto, atualiza `inventory_items` e remove os itens comprados da lista ativa. O consumo manual registra eventos em `inventory_events`, reduz a quantidade local e alimenta a priorizacao dos alertas. Cada produto pode definir um limiar local para disparar alerta de estoque baixo. A tela inicial tambem deriva uma sugestao local de recompra a partir de estoque, consumo, compras e itens ja presentes na lista ativa.
 
 Com o MVP local concluido, a recomendacao e evoluir gradualmente:
 
-- sugestoes de recompra com base em estoque e historico;
+- melhoria da explicacao e configuracao das sugestoes de recompra;
 - regras de produto/lista/estoque para hooks ou stores quando a tela crescer;
 - acesso a dados para repositorios locais.
 

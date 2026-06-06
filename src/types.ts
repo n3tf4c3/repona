@@ -11,6 +11,7 @@ export type Product = {
   category?: string;
   barcode?: string | null;
   photoUri?: string | null;
+  purchaseCount?: number;
   alertThreshold?: string | null;
   inventoryQuantity?: string;
   inventoryStatus?: 'in_stock' | 'missing';

@@ -54,6 +54,14 @@ type InventoryAlert = {
   description: string;
 };
 
+type RebuySuggestion = {
+  product: Product;
+  title: string;
+  description: string;
+  badge: string;
+  score: number;
+};
+
 type ParsedInventoryQuantity = {
   value: number;
   unit: string;
@@ -304,6 +312,7 @@ export default function App() {
 
   const checkedCount = shoppingItems.filter((item) => item.checked).length;
   const inventoryAlerts = useMemo(() => buildInventoryAlerts(products), [products]);
+  const rebuySuggestion = useMemo(() => buildRebuySuggestion(products, shoppingItems), [products, shoppingItems]);
 
   return (
     <SafeAreaProvider>
@@ -318,9 +327,11 @@ export default function App() {
               onNewProduct={openNewProduct}
               onNewList={confirmCreateNewShoppingList}
               onAddProductToList={handleAddProductToList}
+              onAddSuggestionToList={handleAddProductToList}
               products={products.slice(0, 2)}
               isProductsReady={isProductsReady}
               inventoryAlerts={inventoryAlerts}
+              rebuySuggestion={rebuySuggestion}
               activeListName={activeShoppingListName}
               checkedCount={checkedCount}
               totalCount={shoppingItems.length}
@@ -387,9 +398,11 @@ function HomeScreen({
   onNewProduct,
   onNewList,
   onAddProductToList,
+  onAddSuggestionToList,
   products,
   isProductsReady,
   inventoryAlerts,
+  rebuySuggestion,
   activeListName,
   checkedCount,
   totalCount,
@@ -400,9 +413,11 @@ function HomeScreen({
   onNewProduct: () => void;
   onNewList: () => void;
   onAddProductToList: (product: Product) => void;
+  onAddSuggestionToList: (product: Product) => void;
   products: Product[];
   isProductsReady: boolean;
   inventoryAlerts: InventoryAlert[];
+  rebuySuggestion: RebuySuggestion | null;
   activeListName: string;
   checkedCount: number;
   totalCount: number;
@@ -422,7 +437,7 @@ function HomeScreen({
       <ActiveListCard title={activeListName} checkedCount={checkedCount} totalCount={totalCount} onOpen={onOpenList} />
       <QuickActions onNewProduct={onNewProduct} onNewList={onNewList} onHistory={onOpenHistory} />
       <InventoryAlertsCard alerts={inventoryAlerts} isReady={isProductsReady} onOpenProducts={onOpenProducts} />
-      <SuggestionCard />
+      <SuggestionCard suggestion={rebuySuggestion} onAdd={onAddSuggestionToList} />
       <SectionTitle title="Você costuma comprar" action="Ver tudo" />
       <ProductListPreview products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
     </ScreenScroll>
@@ -771,18 +786,29 @@ function InventoryAlertsCard({
   );
 }
 
-function SuggestionCard() {
+function SuggestionCard({ suggestion, onAdd }: { suggestion: RebuySuggestion | null; onAdd: (product: Product) => void }) {
+  const disabled = !suggestion;
+
   return (
     <View style={styles.suggestionCard}>
-      <IconBubble icon="auto-fix" background={colors.indigoSoft} tint={colors.indigo} size={44} />
+      <IconBubble
+        icon={suggestion?.product.icon ?? 'auto-fix'}
+        background={suggestion?.product.background ?? colors.indigoSoft}
+        tint={suggestion?.product.tint ?? colors.indigo}
+        size={44}
+      />
       <View style={styles.suggestionText}>
-        <Text style={styles.suggestionLabel}>Sugestão de recompra</Text>
-        <Text style={styles.suggestionTitle}>Café costuma acabar agora</Text>
-        <Text style={styles.subtleText}>comprado há 3 semanas</Text>
+        <Text style={styles.suggestionLabel}>{suggestion?.badge ?? 'Sugestão de recompra'}</Text>
+        <Text style={styles.suggestionTitle}>{suggestion?.title ?? 'Sem recompra sugerida agora'}</Text>
+        <Text style={styles.subtleText}>{suggestion?.description ?? 'Estoque e lista ativa não indicam reposição imediata.'}</Text>
       </View>
-      <View style={styles.suggestionAdd}>
+      <Pressable
+        style={[styles.suggestionAdd, disabled ? styles.suggestionAddDisabled : null]}
+        disabled={disabled}
+        onPress={suggestion ? () => onAdd(suggestion.product) : undefined}
+      >
         <MaterialCommunityIcons name="plus" size={20} color={colors.surface} />
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -1465,6 +1491,95 @@ function filterProducts(products: Product[], searchTerm: string, selectedCategor
   });
 }
 
+function buildRebuySuggestion(products: Product[], shoppingItems: ShoppingItem[]): RebuySuggestion | null {
+  const listedProductIds = new Set(shoppingItems.map((item) => item.productId).filter((id): id is number => typeof id === 'number'));
+  const suggestions = products.reduce<RebuySuggestion[]>((items, product) => {
+    if (!product.id || listedProductIds.has(product.id)) {
+      return items;
+    }
+
+    const suggestion = getProductRebuySuggestion(product);
+
+    if (suggestion) {
+      items.push(suggestion);
+    }
+
+    return items;
+  }, []);
+
+  suggestions.sort((first, second) => second.score - first.score);
+
+  return suggestions[0] ?? null;
+}
+
+function getProductRebuySuggestion(product: Product): RebuySuggestion | null {
+  const purchaseCount = product.purchaseCount ?? 0;
+  const consumptionCount = product.consumptionCount ?? 0;
+  const quantity = parseInventoryQuantity(product.inventoryQuantity);
+  const threshold = parseInventoryQuantity(product.alertThreshold ?? undefined);
+  const isLowStock = Boolean(quantity && isLowInventoryQuantity(quantity, threshold));
+
+  if (product.inventoryStatus === 'missing') {
+    return {
+      product,
+      title: `Repor ${product.name}`,
+      description: buildRebuyDescription(product, 'Está em falta no estoque da casa.'),
+      badge: 'Reposição urgente',
+      score: 120 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
+    };
+  }
+
+  if (isLowStock) {
+    return {
+      product,
+      title: `Comprar ${product.name}`,
+      description: buildRebuyDescription(product, `Estoque baixo: ${product.inventoryQuantity}.`),
+      badge: 'Estoque baixo',
+      score: 90 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
+    };
+  }
+
+  if (purchaseCount >= 5 || consumptionCount >= 2) {
+    return {
+      product,
+      title: `${product.name} costuma voltar para a lista`,
+      description: buildRebuyDescription(product, `${purchaseCount} compras registradas.`),
+      badge: 'Recorrente',
+      score: 40 + purchaseCount + consumptionCount * 2 + getRecentConsumptionScore(product.lastConsumedAt),
+    };
+  }
+
+  return null;
+}
+
+function buildRebuyDescription(product: Product, baseDescription: string) {
+  if (product.lastConsumedAt) {
+    return `${baseDescription} Último consumo: ${formatRelativeConsumptionDate(product.lastConsumedAt)}.`;
+  }
+
+  return baseDescription;
+}
+
+function getRecentConsumptionScore(value?: string | null) {
+  const consumedAt = getDateTime(value);
+
+  if (consumedAt === 0) {
+    return 0;
+  }
+
+  const diffDays = getDayDifference(new Date(consumedAt), new Date());
+
+  if (diffDays <= 1) {
+    return 8;
+  }
+
+  if (diffDays <= 7) {
+    return 4;
+  }
+
+  return 1;
+}
+
 function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
   const alerts = products.reduce<InventoryAlert[]>((items, product) => {
     if (product.inventoryStatus === 'missing') {
@@ -1951,6 +2066,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.indigo,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  suggestionAddDisabled: {
+    opacity: 0.45,
   },
   sectionTitle: {
     flexDirection: 'row',

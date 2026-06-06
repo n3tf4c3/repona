@@ -69,13 +69,14 @@ Implementado nesta etapa:
 - Alertas simples de estoque baixo ou em falta na tela inicial.
 - Alertas priorizados e descritos com base no ultimo consumo local.
 - Limiar de alerta configuravel por produto.
+- Sugestao local de recompra com base em estoque, consumo, compras e lista ativa.
 - Validacao do app em Expo Go, emulador ou build Android feita pelo usuario.
 
 Com isso a Fase 1 (MVP local) e a Fase 2 (captura rapida) do roadmap estao implementadas, e a Fase 3 (estoque domestico) foi iniciada.
 
 Ainda pendente:
 
-- Fase 3: sugestoes de recompra com base em estoque e historico.
+- Fase 3: melhoria das sugestoes de recompra e preparacao para compartilhamento familiar.
 
 ## Estrutura Inicial
 

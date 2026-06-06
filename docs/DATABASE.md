@@ -107,6 +107,7 @@ Implementado:
 - Alertas simples derivados de `InventoryItem` na UI.
 - Priorizacao e descricao de alertas com base em `InventoryEvent`.
 - Limiar de alerta por produto em `Product`.
+- Sugestao local de recompra derivada de estoque, historico, consumo e lista ativa.
 - Seed inicial de produtos recorrentes.
 - Seed inicial da lista ativa.
 - Validacao simples de duplicidade por nome.
@@ -114,4 +115,4 @@ Implementado:
 
 Ainda pendente:
 
-- Preparar sugestoes de recompra com base em estoque e historico.
+- Melhorar explicacao e configuracao das sugestoes de recompra.
