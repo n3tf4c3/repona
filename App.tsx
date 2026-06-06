@@ -1447,32 +1447,34 @@ function filterProducts(products: Product[], searchTerm: string, selectedCategor
 }
 
 function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
-  return products.reduce<InventoryAlert[]>((alerts, product) => {
+  const alerts = products.reduce<InventoryAlert[]>((items, product) => {
     if (product.inventoryStatus === 'missing') {
-      alerts.push({
+      items.push({
         id: `${product.id ?? product.name}-missing`,
         product,
         level: 'missing',
         label: 'Falta',
-        description: 'Sem estoque registrado em casa.',
+        description: buildInventoryAlertDescription(product, 'Sem estoque registrado em casa.'),
       });
-      return alerts;
+      return items;
     }
 
     const quantity = parseInventoryQuantity(product.inventoryQuantity);
 
     if (quantity && isLowInventoryQuantity(quantity.value, quantity.unit)) {
-      alerts.push({
+      items.push({
         id: `${product.id ?? product.name}-low`,
         product,
         level: 'low',
         label: 'Baixo',
-        description: `Restam ${product.inventoryQuantity} em casa.`,
+        description: buildInventoryAlertDescription(product, `Restam ${product.inventoryQuantity} em casa.`),
       });
     }
 
-    return alerts;
+    return items;
   }, []);
+
+  return alerts.sort(compareInventoryAlerts);
 }
 
 function parseInventoryQuantity(quantity?: string) {
@@ -1502,6 +1504,81 @@ function isLowInventoryQuantity(value: number, unit: string) {
   }
 
   return value <= 1;
+}
+
+function buildInventoryAlertDescription(product: Product, baseDescription: string) {
+  if (!product.lastConsumedAt) {
+    return baseDescription;
+  }
+
+  return `${baseDescription} Último consumo: ${formatRelativeConsumptionDate(product.lastConsumedAt)}.`;
+}
+
+function compareInventoryAlerts(first: InventoryAlert, second: InventoryAlert) {
+  const levelDifference = getInventoryAlertLevelRank(first.level) - getInventoryAlertLevelRank(second.level);
+
+  if (levelDifference !== 0) {
+    return levelDifference;
+  }
+
+  const firstConsumedAt = getDateTime(first.product.lastConsumedAt);
+  const secondConsumedAt = getDateTime(second.product.lastConsumedAt);
+
+  if (firstConsumedAt !== secondConsumedAt) {
+    return secondConsumedAt - firstConsumedAt;
+  }
+
+  return (second.product.consumptionCount ?? 0) - (first.product.consumptionCount ?? 0);
+}
+
+function getInventoryAlertLevelRank(level: InventoryAlert['level']) {
+  return level === 'missing' ? 0 : 1;
+}
+
+function getDateTime(value?: string | null) {
+  if (!value) {
+    return 0;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function formatRelativeConsumptionDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'registrado';
+  }
+
+  const today = new Date();
+  const diffDays = getDayDifference(date, today);
+
+  if (diffDays === 0) {
+    return 'hoje';
+  }
+
+  if (diffDays === 1) {
+    return 'ontem';
+  }
+
+  if (diffDays > 1 && diffDays <= 6) {
+    return `há ${diffDays} dias`;
+  }
+
+  return `${date.getDate()} ${getShortMonth(date.getMonth())}`;
+}
+
+function getDayDifference(date: Date, otherDate: Date) {
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const otherStart = new Date(otherDate.getFullYear(), otherDate.getMonth(), otherDate.getDate()).getTime();
+
+  return Math.round((otherStart - dateStart) / 86400000);
+}
+
+function getShortMonth(month: number) {
+  return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][month] ?? 'data salva';
 }
 
 function getProductErrorMessage(error: unknown) {

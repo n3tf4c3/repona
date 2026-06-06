@@ -43,7 +43,8 @@ Status: iniciado.
 - Relacionar historico de compras com estoque atual. (parcial: finalizacao da lista atualiza estoque)
 - Registrar consumo de itens em casa. (implementado inicial)
 - Alertar estoque baixo ou ruptura na tela inicial. (implementado inicial)
-- Refinar regras de alerta com historico de consumo. (pendente)
+- Refinar regras de alerta com historico de consumo. (implementado inicial)
+- Definir limiares de alerta por produto. (pendente)
 
 ## Fase 4: Compartilhamento Familiar
 

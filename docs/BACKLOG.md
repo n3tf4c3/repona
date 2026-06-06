@@ -41,6 +41,7 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 - Atualizar estoque ao finalizar compra.
 - Registrar consumo local de estoque pela tela de produtos.
 - Exibir alertas simples de estoque baixo ou em falta na tela inicial.
+- Priorizar e descrever alertas com base no ultimo consumo local.
 - Validar o app com Expo Go ou emulador.
 
 ## MVP Funcional
@@ -52,7 +53,7 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 - Definir fluxo principal de uso familiar.
 - Definir categorias iniciais de produtos.
 - Definir estados de um item: planejado, comprado, consumido e em falta.
-- Refinar alertas de estoque com historico de consumo.
+- Definir limiares de alerta por produto.
 - Avaliar modelo de organizacao por casa ou familia.
 
 ## Integracoes Futuras

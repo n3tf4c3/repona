@@ -14,6 +14,8 @@ export type ProductRecord = {
   status: ProductStatus;
   inventoryQuantity: string;
   inventoryStatus: InventoryStatus;
+  consumptionCount: number;
+  lastConsumedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -28,6 +30,8 @@ type ProductRow = {
   status: ProductStatus;
   inventory_quantity: string;
   inventory_status: InventoryStatus;
+  consumption_count: number;
+  last_consumed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -98,10 +102,18 @@ export async function listProducts(): Promise<ProductRecord[]> {
       p.status,
       COALESCE(ii.quantity, '0 un') as inventory_quantity,
       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+      COALESCE(ie.consumption_count, 0) as consumption_count,
+      ie.last_consumed_at,
       p.created_at,
       p.updated_at
     FROM products p
     LEFT JOIN inventory_items ii ON ii.product_id = p.id
+    LEFT JOIN (
+      SELECT product_id, COUNT(*) as consumption_count, MAX(occurred_at) as last_consumed_at
+      FROM inventory_events
+      WHERE event_type = 'consumed'
+      GROUP BY product_id
+    ) ie ON ie.product_id = p.id
     ORDER BY p.created_at DESC, p.name ASC
   `);
 
@@ -149,10 +161,18 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        p.status,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
        COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       COALESCE(ie.consumption_count, 0) as consumption_count,
+       ie.last_consumed_at,
        p.created_at,
        p.updated_at
      FROM products p
      LEFT JOIN inventory_items ii ON ii.product_id = p.id
+     LEFT JOIN (
+       SELECT product_id, COUNT(*) as consumption_count, MAX(occurred_at) as last_consumed_at
+       FROM inventory_events
+       WHERE event_type = 'consumed'
+       GROUP BY product_id
+     ) ie ON ie.product_id = p.id
      WHERE p.id = ?`,
     result.lastInsertRowId,
   );
@@ -212,10 +232,18 @@ export async function updateProduct(productId: number, input: NewProductInput): 
        p.status,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
        COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
+       COALESCE(ie.consumption_count, 0) as consumption_count,
+       ie.last_consumed_at,
        p.created_at,
        p.updated_at
      FROM products p
      LEFT JOIN inventory_items ii ON ii.product_id = p.id
+     LEFT JOIN (
+       SELECT product_id, COUNT(*) as consumption_count, MAX(occurred_at) as last_consumed_at
+       FROM inventory_events
+       WHERE event_type = 'consumed'
+       GROUP BY product_id
+     ) ie ON ie.product_id = p.id
      WHERE p.id = ?`,
     productId,
   );
@@ -257,6 +285,8 @@ function mapProductRow(row: ProductRow): ProductRecord {
     status: row.status,
     inventoryQuantity: row.inventory_quantity,
     inventoryStatus: row.inventory_status,
+    consumptionCount: row.consumption_count,
+    lastConsumedAt: row.last_consumed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

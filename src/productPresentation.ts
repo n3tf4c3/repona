@@ -56,6 +56,8 @@ export function productRecordToProduct(record: ProductRecord): Product {
     photoUri: record.photoUri,
     inventoryQuantity: record.inventoryQuantity,
     inventoryStatus: record.inventoryStatus,
+    consumptionCount: record.consumptionCount,
+    lastConsumedAt: record.lastConsumedAt,
     meta: buildProductMeta(record),
     ...visual,
   };

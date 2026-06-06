@@ -13,6 +13,8 @@ export type Product = {
   photoUri?: string | null;
   inventoryQuantity?: string;
   inventoryStatus?: 'in_stock' | 'missing';
+  consumptionCount?: number;
+  lastConsumedAt?: string | null;
   meta: string;
   icon: IconName;
   background: string;
