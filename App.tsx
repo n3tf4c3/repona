@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -28,7 +29,7 @@ import {
   updateShoppingListItemQuantity,
 } from './src/storage/shoppingLists';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
-import { createProduct, listProducts, seedInitialProducts } from './src/storage/products';
+import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
 import { IconName, NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
 import { colors, radius, shadow, spacing, typography } from './src/theme';
 
@@ -42,6 +43,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [showNewProduct, setShowNewProduct] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
   const [isShoppingListReady, setIsShoppingListReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -50,6 +52,7 @@ export default function App() {
   const [isHistoryReady, setIsHistoryReady] = useState(false);
   const [isFinalizingPurchase, setIsFinalizingPurchase] = useState(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
+  const [productActionError, setProductActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -118,19 +121,62 @@ export default function App() {
 
   function openNewProduct() {
     setProductFormError(null);
+    setProductActionError(null);
+    setEditingProduct(null);
     setShowNewProduct(true);
   }
 
-  async function handleCreateProduct(input: NewProductInput) {
+  function openEditProduct(product: Product) {
+    setProductFormError(null);
+    setProductActionError(null);
+    setEditingProduct(product);
+    setShowNewProduct(true);
+  }
+
+  async function handleSaveProduct(input: NewProductInput) {
     try {
       setProductFormError(null);
-      await createProduct(input);
-      await refreshProducts();
+      setProductActionError(null);
+
+      if (editingProduct?.id) {
+        await updateProduct(editingProduct.id, input);
+        await Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory()]);
+      } else {
+        await createProduct(input);
+        await refreshProducts();
+      }
+
       setShowNewProduct(false);
+      setEditingProduct(null);
       setActiveTab('products');
     } catch (error) {
       setProductFormError(getProductErrorMessage(error));
     }
+  }
+
+  async function handleRemoveProduct(product: Product) {
+    if (!product.id) {
+      return;
+    }
+
+    try {
+      setProductActionError(null);
+      await deleteProduct(product.id);
+      await Promise.all([refreshProducts(), refreshShoppingItems()]);
+    } catch (error) {
+      setProductActionError(getProductErrorMessage(error));
+    }
+  }
+
+  function confirmRemoveProduct(product: Product) {
+    Alert.alert(
+      'Remover produto',
+      `Remover ${product.name} do catálogo?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Remover', style: 'destructive', onPress: () => { void handleRemoveProduct(product); } },
+      ],
+    );
   }
 
   async function handleAddProductToList(product: Product) {
@@ -194,7 +240,14 @@ export default function App() {
             />
           ) : null}
           {activeTab === 'products' ? (
-            <ProductsScreen products={products} isProductsReady={isProductsReady} onAddProductToList={handleAddProductToList} />
+            <ProductsScreen
+              products={products}
+              isProductsReady={isProductsReady}
+              errorMessage={productActionError}
+              onAddProductToList={handleAddProductToList}
+              onEditProduct={openEditProduct}
+              onRemoveProduct={confirmRemoveProduct}
+            />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
           {activeTab === 'future' ? <FutureScreen /> : null}
@@ -213,9 +266,13 @@ export default function App() {
 
         <NewProductSheet
           visible={showNewProduct}
+          product={editingProduct}
           errorMessage={productFormError}
-          onClose={() => setShowNewProduct(false)}
-          onSave={handleCreateProduct}
+          onClose={() => {
+            setShowNewProduct(false);
+            setEditingProduct(null);
+          }}
+          onSave={handleSaveProduct}
         />
       </View>
     </SafeAreaProvider>
@@ -317,11 +374,17 @@ function ShoppingListScreen({
 function ProductsScreen({
   products,
   isProductsReady,
+  errorMessage,
   onAddProductToList,
+  onEditProduct,
+  onRemoveProduct,
 }: {
   products: Product[];
   isProductsReady: boolean;
+  errorMessage: string | null;
   onAddProductToList: (product: Product) => void;
+  onEditProduct: (product: Product) => void;
+  onRemoveProduct: (product: Product) => void;
 }) {
   return (
     <ScreenScroll>
@@ -331,8 +394,15 @@ function ProductsScreen({
         actions={<IconButton icon="tune-variant" />}
       />
       <SearchBox placeholder="Buscar produto..." />
+      {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
       <ChipRow chips={['Todos', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected="Todos" />
-      <ProductList products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
+      <ProductList
+        products={products}
+        isReady={isProductsReady}
+        onAdd={onAddProductToList}
+        onEdit={onEditProduct}
+        onRemove={onRemoveProduct}
+      />
     </ScreenScroll>
   );
 }
@@ -537,7 +607,17 @@ function SectionTitle({ title, action }: { title: string; action?: string }) {
   );
 }
 
-function ProductRow({ product, onAdd }: { product: Product; onAdd: (product: Product) => void }) {
+function ProductRow({
+  product,
+  onAdd,
+  onEdit,
+  onRemove,
+}: {
+  product: Product;
+  onAdd: (product: Product) => void;
+  onEdit?: (product: Product) => void;
+  onRemove?: (product: Product) => void;
+}) {
   return (
     <View style={styles.productRow}>
       <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
@@ -545,9 +625,21 @@ function ProductRow({ product, onAdd }: { product: Product; onAdd: (product: Pro
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
         <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
       </View>
-      <Pressable style={styles.addMini} onPress={() => onAdd(product)}>
-        <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
-      </Pressable>
+      <View style={styles.productActions}>
+        {onEdit ? (
+          <Pressable style={styles.productActionButton} onPress={() => onEdit(product)}>
+            <MaterialCommunityIcons name="pencil-outline" size={17} color={colors.ink2} />
+          </Pressable>
+        ) : null}
+        {onRemove ? (
+          <Pressable style={[styles.productActionButton, styles.productDeleteButton]} onPress={() => onRemove(product)}>
+            <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.coral} />
+          </Pressable>
+        ) : null}
+        <Pressable style={styles.addMini} onPress={() => onAdd(product)}>
+          <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -578,10 +670,14 @@ function ProductList({
   products,
   isReady,
   onAdd,
+  onEdit,
+  onRemove,
 }: {
   products: Product[];
   isReady: boolean;
   onAdd: (product: Product) => void;
+  onEdit: (product: Product) => void;
+  onRemove: (product: Product) => void;
 }) {
   if (!isReady) {
     return <EmptyState title="Carregando produtos" description="Buscando o catálogo salvo localmente." />;
@@ -592,7 +688,7 @@ function ProductList({
   }
 
   return products.map((product) => (
-    <ProductRow key={product.id ?? product.name} product={product} onAdd={onAdd} />
+    <ProductRow key={product.id ?? product.name} product={product} onAdd={onAdd} onEdit={onEdit} onRemove={onRemove} />
   ));
 }
 
@@ -836,11 +932,13 @@ function TabButton({
 
 function NewProductSheet({
   visible,
+  product,
   errorMessage,
   onClose,
   onSave,
 }: {
   visible: boolean;
+  product: Product | null;
   errorMessage: string | null;
   onClose: () => void;
   onSave: (input: NewProductInput) => Promise<void>;
@@ -851,11 +949,11 @@ function NewProductSheet({
 
   useEffect(() => {
     if (visible) {
-      setName('');
-      setCategory('Mercearia');
+      setName(product?.name ?? '');
+      setCategory(product?.category ?? 'Mercearia');
       setIsSaving(false);
     }
-  }, [visible]);
+  }, [product, visible]);
 
   async function handleSave() {
     if (isSaving) {
@@ -872,8 +970,8 @@ function NewProductSheet({
       <Pressable style={styles.modalScrim} onPress={onClose} />
       <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
         <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>Novo produto</Text>
-        <Text style={styles.sheetSubtitle}>Só o nome já basta. O resto é opcional.</Text>
+        <Text style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
+        <Text style={styles.sheetSubtitle}>{product ? 'Ajuste nome e categoria do produto cadastrado.' : 'Só o nome já basta. O resto é opcional.'}</Text>
         <Text style={styles.fieldLabel}>Nome do produto</Text>
         <View style={styles.inputBox}>
           <MaterialCommunityIcons name="tag-outline" size={20} color={colors.primaryStrong} />
@@ -894,7 +992,7 @@ function NewProductSheet({
         </View>
         <Pressable style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]} onPress={handleSave}>
           <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
-          <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : 'Salvar produto'}</Text>
+          <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
         </Pressable>
       </SafeAreaView>
     </Modal>
@@ -930,6 +1028,14 @@ function getProductErrorMessage(error: unknown) {
 
     if (error.message === 'PRODUCT_ALREADY_EXISTS') {
       return 'Esse produto já está cadastrado.';
+    }
+
+    if (error.message === 'PRODUCT_HAS_HISTORY') {
+      return 'Não é possível remover produto com histórico de compras.';
+    }
+
+    if (error.message === 'PRODUCT_NOT_FOUND') {
+      return 'Produto não encontrado.';
     }
   }
 
@@ -1181,6 +1287,7 @@ const styles = StyleSheet.create({
   },
   productText: {
     flex: 1,
+    minWidth: 0,
   },
   productName: {
     ...typography.labelStrong,
@@ -1189,6 +1296,30 @@ const styles = StyleSheet.create({
   productMeta: {
     ...typography.bodySmall,
     color: colors.ink3,
+  },
+  productActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  productActionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 11,
+    backgroundColor: colors.bg2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  productDeleteButton: {
+    backgroundColor: colors.coralSoft,
+  },
+  productError: {
+    ...typography.labelStrong,
+    color: colors.coral,
+    backgroundColor: colors.coralSoft,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   addMini: {
     width: 32,

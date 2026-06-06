@@ -124,6 +124,70 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   return mapProductRow(created);
 }
 
+export async function updateProduct(productId: number, input: NewProductInput): Promise<ProductRecord> {
+  const database = await initializeDatabase();
+  const name = input.name.trim();
+  const category = input.category.trim();
+
+  if (!name) {
+    throw new Error('PRODUCT_NAME_REQUIRED');
+  }
+
+  const existing = await database.getFirstAsync<{ id: number }>(
+    'SELECT id FROM products WHERE lower(name) = lower(?) AND id <> ? LIMIT 1',
+    name,
+    productId,
+  );
+
+  if (existing) {
+    throw new Error('PRODUCT_ALREADY_EXISTS');
+  }
+
+  const now = new Date().toISOString();
+
+  await database.runAsync(
+    `UPDATE products
+     SET name = ?,
+         category = ?,
+         updated_at = ?
+     WHERE id = ?`,
+    name,
+    category || 'Mercearia',
+    now,
+    productId,
+  );
+
+  const updated = await database.getFirstAsync<ProductRow>(
+    `SELECT id, name, category, barcode, photo_uri, purchase_count, status, created_at, updated_at
+     FROM products
+     WHERE id = ?`,
+    productId,
+  );
+
+  if (!updated) {
+    throw new Error('PRODUCT_NOT_FOUND');
+  }
+
+  return mapProductRow(updated);
+}
+
+export async function deleteProduct(productId: number) {
+  const database = await initializeDatabase();
+  const historyCount = await database.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM purchase_history WHERE product_id = ?',
+    productId,
+  );
+
+  if ((historyCount?.count ?? 0) > 0) {
+    throw new Error('PRODUCT_HAS_HISTORY');
+  }
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync('DELETE FROM shopping_list_items WHERE product_id = ?', productId);
+    await database.runAsync('DELETE FROM products WHERE id = ?', productId);
+  });
+}
+
 function mapProductRow(row: ProductRow): ProductRecord {
   return {
     id: row.id,
