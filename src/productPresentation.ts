@@ -54,6 +54,7 @@ export function productRecordToProduct(record: ProductRecord): Product {
     category: record.category,
     barcode: record.barcode,
     photoUri: record.photoUri,
+    alertThreshold: record.alertThreshold,
     inventoryQuantity: record.inventoryQuantity,
     inventoryStatus: record.inventoryStatus,
     consumptionCount: record.consumptionCount,

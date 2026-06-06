@@ -15,6 +15,7 @@ Representa um produto cadastrado pela familia.
 - `photoUri`
 - `purchaseCount`
 - `status`
+- `alertThreshold`
 - `createdAt`
 - `updatedAt`
 
@@ -105,6 +106,7 @@ Implementado:
 - Registro local de consumo em `InventoryEvent`.
 - Alertas simples derivados de `InventoryItem` na UI.
 - Priorizacao e descricao de alertas com base em `InventoryEvent`.
+- Limiar de alerta por produto em `Product`.
 - Seed inicial de produtos recorrentes.
 - Seed inicial da lista ativa.
 - Validacao simples de duplicidade por nome.
@@ -112,4 +114,4 @@ Implementado:
 
 Ainda pendente:
 
-- Definir limiares de alerta por produto e sugestoes de recompra.
+- Preparar sugestoes de recompra com base em estoque e historico.

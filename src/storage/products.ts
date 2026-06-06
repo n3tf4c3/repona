@@ -12,6 +12,7 @@ export type ProductRecord = {
   photoUri: string | null;
   purchaseCount: number;
   status: ProductStatus;
+  alertThreshold: string | null;
   inventoryQuantity: string;
   inventoryStatus: InventoryStatus;
   consumptionCount: number;
@@ -28,6 +29,7 @@ type ProductRow = {
   photo_uri: string | null;
   purchase_count: number;
   status: ProductStatus;
+  alert_threshold: string | null;
   inventory_quantity: string;
   inventory_status: InventoryStatus;
   consumption_count: number;
@@ -100,6 +102,7 @@ export async function listProducts(): Promise<ProductRecord[]> {
       p.photo_uri,
       p.purchase_count,
       p.status,
+      p.alert_threshold,
       COALESCE(ii.quantity, '0 un') as inventory_quantity,
       COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
       COALESCE(ie.consumption_count, 0) as consumption_count,
@@ -140,12 +143,13 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
 
   const now = new Date().toISOString();
   const result = await database.runAsync(
-    `INSERT INTO products (name, category, barcode, photo_uri, purchase_count, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 0, 'active', ?, ?)`,
+    `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, purchase_count, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, 'active', ?, ?)`,
     name,
     category || 'Mercearia',
     input.barcode ?? null,
     input.photoUri ?? null,
+    input.alertThreshold?.trim() || null,
     now,
     now,
   );
@@ -159,6 +163,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        p.photo_uri,
        p.purchase_count,
        p.status,
+       p.alert_threshold,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
        COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
@@ -208,15 +213,17 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   await database.runAsync(
     `UPDATE products
      SET name = ?,
-         category = ?,
-         barcode = ?,
-         photo_uri = ?,
-         updated_at = ?
-     WHERE id = ?`,
+          category = ?,
+          barcode = ?,
+          photo_uri = ?,
+          alert_threshold = ?,
+          updated_at = ?
+      WHERE id = ?`,
     name,
     category || 'Mercearia',
     input.barcode ?? null,
     input.photoUri ?? null,
+    input.alertThreshold?.trim() || null,
     now,
     productId,
   );
@@ -230,6 +237,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
        p.photo_uri,
        p.purchase_count,
        p.status,
+       p.alert_threshold,
        COALESCE(ii.quantity, '0 un') as inventory_quantity,
        COALESCE(ii.status, CASE p.status WHEN 'missing' THEN 'missing' ELSE 'in_stock' END) as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
@@ -283,6 +291,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
     photoUri: row.photo_uri,
     purchaseCount: row.purchase_count,
     status: row.status,
+    alertThreshold: row.alert_threshold,
     inventoryQuantity: row.inventory_quantity,
     inventoryStatus: row.inventory_status,
     consumptionCount: row.consumption_count,

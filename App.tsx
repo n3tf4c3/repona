@@ -54,6 +54,11 @@ type InventoryAlert = {
   description: string;
 };
 
+type ParsedInventoryQuantity = {
+  value: number;
+  unit: string;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [showNewProduct, setShowNewProduct] = useState(false);
@@ -880,6 +885,7 @@ function InventoryControls({
       >
         <Text style={styles.inventoryConsumeButtonText}>{isMissing ? 'Sem estoque' : 'Consumir'}</Text>
       </Pressable>
+      {product.alertThreshold ? <Text style={styles.inventoryThresholdText}>Alerta {product.alertThreshold}</Text> : null}
     </View>
   );
 }
@@ -1225,6 +1231,7 @@ function NewProductSheet({
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Mercearia');
   const [barcode, setBarcode] = useState<string | null>(null);
+  const [alertThreshold, setAlertThreshold] = useState('');
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -1241,6 +1248,7 @@ function NewProductSheet({
       setName(product?.name ?? '');
       setCategory(product?.category ?? 'Mercearia');
       setBarcode(product?.barcode ?? null);
+      setAlertThreshold(product?.alertThreshold ?? '');
       setBarcodeError(null);
       setPhotoUri(product?.photoUri ?? null);
       setPhotoError(null);
@@ -1314,7 +1322,7 @@ function NewProductSheet({
     }
 
     setIsSaving(true);
-    await onSave({ name, category, barcode, photoUri });
+    await onSave({ name, category, barcode, photoUri, alertThreshold: alertThreshold.trim() || null });
     setIsSaving(false);
   }
 
@@ -1340,6 +1348,17 @@ function NewProductSheet({
           {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
           <Text style={styles.fieldLabel}>Categoria</Text>
           <ChipRow chips={['Mercearia', 'Hortifrúti', 'Laticínios', 'Bebidas', 'Limpeza']} selected={category} onSelect={setCategory} />
+          <Text style={styles.fieldLabel}>Alerta de estoque (opcional)</Text>
+          <View style={styles.inputBox}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={20} color={colors.primaryStrong} />
+            <TextInput
+              value={alertThreshold}
+              onChangeText={setAlertThreshold}
+              style={styles.input}
+              placeholder="Ex.: 2 un ou 500 g"
+              placeholderTextColor={colors.ink3}
+            />
+          </View>
           {photoUri ? <Image source={{ uri: photoUri }} style={styles.sheetPhotoPreview} /> : null}
           <View style={styles.optionalRow}>
             <OptionalCapture icon="camera-outline" label={photoUri ? 'Foto anexada' : 'Foto (opcional)'} onPress={openPhotoCamera} />
@@ -1460,14 +1479,19 @@ function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
     }
 
     const quantity = parseInventoryQuantity(product.inventoryQuantity);
+    const threshold = parseInventoryQuantity(product.alertThreshold ?? undefined);
 
-    if (quantity && isLowInventoryQuantity(quantity.value, quantity.unit)) {
+    if (quantity && isLowInventoryQuantity(quantity, threshold)) {
+      const baseDescription = threshold && threshold.unit === quantity.unit
+        ? `Restam ${product.inventoryQuantity} em casa. Limiar: ${product.alertThreshold}.`
+        : `Restam ${product.inventoryQuantity} em casa.`;
+
       items.push({
         id: `${product.id ?? product.name}-low`,
         product,
         level: 'low',
         label: 'Baixo',
-        description: buildInventoryAlertDescription(product, `Restam ${product.inventoryQuantity} em casa.`),
+        description: buildInventoryAlertDescription(product, baseDescription),
       });
     }
 
@@ -1477,7 +1501,7 @@ function buildInventoryAlerts(products: Product[]): InventoryAlert[] {
   return alerts.sort(compareInventoryAlerts);
 }
 
-function parseInventoryQuantity(quantity?: string) {
+function parseInventoryQuantity(quantity?: string): ParsedInventoryQuantity | null {
   const match = quantity?.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
 
   if (!match) {
@@ -1490,20 +1514,24 @@ function parseInventoryQuantity(quantity?: string) {
   };
 }
 
-function isLowInventoryQuantity(value: number, unit: string) {
-  if (value <= 0) {
+function isLowInventoryQuantity(quantity: ParsedInventoryQuantity, threshold: ParsedInventoryQuantity | null) {
+  if (quantity.value <= 0) {
     return false;
   }
 
-  if (unit === 'g') {
-    return value <= 500;
+  if (threshold && threshold.unit === quantity.unit) {
+    return quantity.value <= threshold.value;
   }
 
-  if (unit === 'kg') {
-    return value <= 1;
+  if (quantity.unit === 'g') {
+    return quantity.value <= 500;
   }
 
-  return value <= 1;
+  if (quantity.unit === 'kg') {
+    return quantity.value <= 1;
+  }
+
+  return quantity.value <= 1;
 }
 
 function buildInventoryAlertDescription(product: Product, baseDescription: string) {
@@ -2034,6 +2062,11 @@ const styles = StyleSheet.create({
   inventoryConsumeButtonText: {
     ...typography.badge,
     color: colors.primaryStrong,
+  },
+  inventoryThresholdText: {
+    ...typography.badge,
+    alignSelf: 'center',
+    color: colors.ink3,
   },
   productActions: {
     flexDirection: 'row',

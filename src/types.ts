@@ -11,6 +11,7 @@ export type Product = {
   category?: string;
   barcode?: string | null;
   photoUri?: string | null;
+  alertThreshold?: string | null;
   inventoryQuantity?: string;
   inventoryStatus?: 'in_stock' | 'missing';
   consumptionCount?: number;
@@ -26,6 +27,7 @@ export type NewProductInput = {
   category: string;
   barcode?: string | null;
   photoUri?: string | null;
+  alertThreshold?: string | null;
 };
 
 export type ShoppingItem = {

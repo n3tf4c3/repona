@@ -24,6 +24,7 @@ export async function initializeDatabase() {
       photo_uri TEXT,
       purchase_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
+      alert_threshold TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -80,6 +81,12 @@ export async function initializeDatabase() {
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     );
   `);
+
+  const productColumns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
+
+  if (!productColumns.some((column) => column.name === 'alert_threshold')) {
+    await database.execAsync('ALTER TABLE products ADD COLUMN alert_threshold TEXT;');
+  }
 
   return database;
 }

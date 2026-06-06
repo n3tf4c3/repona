@@ -44,7 +44,8 @@ Status: iniciado.
 - Registrar consumo de itens em casa. (implementado inicial)
 - Alertar estoque baixo ou ruptura na tela inicial. (implementado inicial)
 - Refinar regras de alerta com historico de consumo. (implementado inicial)
-- Definir limiares de alerta por produto. (pendente)
+- Definir limiares de alerta por produto. (implementado inicial)
+- Preparar sugestoes de recompra com base em estoque e historico. (pendente)
 
 ## Fase 4: Compartilhamento Familiar
 
