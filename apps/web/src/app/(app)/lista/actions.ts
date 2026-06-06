@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/server/auth/session";
+import { requireCasa } from "@/server/auth/session";
 import {
   alternarItem,
   atualizarQuantidade,
@@ -16,7 +16,7 @@ function tratar(): Resultado {
 }
 
 export async function alternarItemAction(itemId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await alternarItem(id, itemId);
     revalidatePath("/lista");
@@ -30,7 +30,7 @@ export async function atualizarQuantidadeAction(
   itemId: number,
   quantity: string
 ): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await atualizarQuantidade(id, itemId, quantity);
     revalidatePath("/lista");
@@ -41,7 +41,7 @@ export async function atualizarQuantidadeAction(
 }
 
 export async function removerItemAction(itemId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await removerItem(id, itemId);
     revalidatePath("/lista");
@@ -54,7 +54,7 @@ export async function removerItemAction(itemId: number): Promise<Resultado> {
 export async function finalizarCompraAction(): Promise<
   { ok: true; total: number } | { ok: false; error: string }
 > {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     const total = await finalizarCompra(id);
     revalidatePath("/lista");

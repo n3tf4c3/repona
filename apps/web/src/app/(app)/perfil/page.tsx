@@ -1,5 +1,7 @@
 import { ScanLine, Camera, Home, Users, Brain, RefreshCw, type LucideIcon } from "lucide-react";
-import { getAuthSession } from "@/server/auth/session";
+import { getAuthSession, requireUser } from "@/server/auth/session";
+import { obterCasa } from "@/server/modules/casa";
+import { CasaClient } from "./casa-client";
 
 const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
   { title: "Scanner de código", description: "Aponte a câmera e adicione produtos pelo código de barras.", Icon: ScanLine },
@@ -11,10 +13,12 @@ const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
 ];
 
 export default async function PerfilPage() {
+  const { id: userId } = await requireUser();
   const session = await getAuthSession();
   const nome = session?.user?.name ?? "Você";
   const email = session?.user?.email ?? "";
   const inicial = (nome || email || "?").trim().charAt(0).toUpperCase();
+  const casa = await obterCasa(userId);
 
   return (
     <div className="space-y-5">
@@ -33,6 +37,9 @@ export default async function PerfilPage() {
           {email && <p className="truncate text-sm text-ink-faint">{email}</p>}
         </div>
       </div>
+
+      {/* Casa (compartilhamento) */}
+      <CasaClient casa={casa} userId={userId} />
 
       {/* Hero */}
       <div className="rounded-card border border-line bg-primary-tint p-5">

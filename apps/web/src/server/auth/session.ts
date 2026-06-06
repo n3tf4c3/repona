@@ -2,6 +2,7 @@ import "server-only";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/server/auth/options";
+import { garantirCasa } from "@/server/modules/casa";
 
 export async function getAuthSession() {
   return getServerSession(authOptions);
@@ -16,4 +17,12 @@ export async function requireUser(): Promise<{ id: number }> {
     redirect("/login");
   }
   return { id: Number(id) };
+}
+
+// Garante usuário autenticado e resolve a casa dele (criando se necessário).
+// Os dados de domínio são escopados por casa.
+export async function requireCasa(): Promise<{ userId: number; casaId: number }> {
+  const { id } = await requireUser();
+  const casaId = await garantirCasa(id);
+  return { userId: id, casaId };
 }

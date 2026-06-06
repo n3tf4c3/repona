@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { NewProductInput } from "@repona/core";
-import { requireUser } from "@/server/auth/session";
+import { requireCasa } from "@/server/auth/session";
 import {
   createProduto,
   updateProduto,
@@ -27,7 +27,7 @@ function tratar(error: unknown): Resultado {
 }
 
 export async function criarProdutoAction(input: NewProductInput): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await createProduto(id, input);
     revalidatePath("/produtos");
@@ -41,7 +41,7 @@ export async function atualizarProdutoAction(
   produtoId: number,
   input: NewProductInput
 ): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await updateProduto(id, produtoId, input);
     revalidatePath("/produtos");
@@ -52,7 +52,7 @@ export async function atualizarProdutoAction(
 }
 
 export async function excluirProdutoAction(produtoId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await deleteProduto(id, produtoId);
     revalidatePath("/produtos");
@@ -66,7 +66,7 @@ export async function definirQuantidadeAction(
   produtoId: number,
   quantity: string
 ): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await definirQuantidade(id, produtoId, quantity);
     revalidatePath("/produtos");
@@ -77,7 +77,7 @@ export async function definirQuantidadeAction(
 }
 
 export async function marcarEmFaltaAction(produtoId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await marcarEmFalta(id, produtoId);
     revalidatePath("/produtos");
@@ -88,7 +88,7 @@ export async function marcarEmFaltaAction(produtoId: number): Promise<Resultado>
 }
 
 export async function consumirAction(produtoId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await consumir(id, produtoId);
     revalidatePath("/produtos");
@@ -99,7 +99,7 @@ export async function consumirAction(produtoId: number): Promise<Resultado> {
 }
 
 export async function adicionarAListaAction(produtoId: number): Promise<Resultado> {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   try {
     await adicionarProduto(id, produtoId);
     revalidatePath("/lista");

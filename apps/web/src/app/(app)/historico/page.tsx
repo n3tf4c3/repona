@@ -1,10 +1,10 @@
 import { Receipt, ShoppingBag } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { requireCasa } from "@/server/auth/session";
 import { listarHistorico } from "@/server/modules/historico";
 import { agruparHistorico } from "@/lib/historico";
 
 export default async function HistoricoPage() {
-  const { id } = await requireUser();
+  const { casaId: id } = await requireCasa();
   const registros = await listarHistorico(id);
   const grupos = agruparHistorico(registros);
 

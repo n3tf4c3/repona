@@ -10,11 +10,11 @@ import {
   inventoryItems,
 } from "@/server/db/schema";
 
-export async function garantirListaAtiva(userId: number): Promise<ShoppingListDTO> {
+export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDTO> {
   const [existente] = await db
     .select()
     .from(shoppingLists)
-    .where(and(eq(shoppingLists.usuarioId, userId), eq(shoppingLists.status, "active")))
+    .where(and(eq(shoppingLists.casaId, casaId), eq(shoppingLists.status, "active")))
     .orderBy(sql`${shoppingLists.createdAt} desc`)
     .limit(1);
 
@@ -30,7 +30,7 @@ export async function garantirListaAtiva(userId: number): Promise<ShoppingListDT
 
   const [criada] = await db
     .insert(shoppingLists)
-    .values({ usuarioId: userId, name: "Compra da Semana", status: "active" })
+    .values({ casaId: casaId, name: "Compra da Semana", status: "active" })
     .returning();
 
   return {
@@ -43,15 +43,15 @@ export async function garantirListaAtiva(userId: number): Promise<ShoppingListDT
 }
 
 // Subconsulta dos ids de lista do usuário (para validar posse de itens).
-function listasDoUsuario(userId: number) {
+function listasDaCasa(casaId: number) {
   return db
     .select({ id: shoppingLists.id })
     .from(shoppingLists)
-    .where(eq(shoppingLists.usuarioId, userId));
+    .where(eq(shoppingLists.casaId, casaId));
 }
 
-export async function listarItensAtivos(userId: number): Promise<ShoppingListItemDTO[]> {
-  const lista = await garantirListaAtiva(userId);
+export async function listarItensAtivos(casaId: number): Promise<ShoppingListItemDTO[]> {
+  const lista = await garantirListaAtiva(casaId);
   const rows = await db
     .select({
       id: shoppingListItems.id,
@@ -80,16 +80,16 @@ export async function listarItensAtivos(userId: number): Promise<ShoppingListIte
   }));
 }
 
-export async function adicionarProduto(userId: number, produtoId: number): Promise<void> {
+export async function adicionarProduto(casaId: number, produtoId: number): Promise<void> {
   // Valida posse do produto.
   const [produto] = await db
     .select({ id: products.id })
     .from(products)
-    .where(and(eq(products.usuarioId, userId), eq(products.id, produtoId)))
+    .where(and(eq(products.casaId, casaId), eq(products.id, produtoId)))
     .limit(1);
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
-  const lista = await garantirListaAtiva(userId);
+  const lista = await garantirListaAtiva(casaId);
   const now = new Date();
   await db
     .insert(shoppingListItems)
@@ -100,7 +100,7 @@ export async function adicionarProduto(userId: number, produtoId: number): Promi
     });
 }
 
-export async function alternarItem(userId: number, itemId: number): Promise<void> {
+export async function alternarItem(casaId: number, itemId: number): Promise<void> {
   await db
     .update(shoppingListItems)
     .set({
@@ -110,13 +110,13 @@ export async function alternarItem(userId: number, itemId: number): Promise<void
     .where(
       and(
         eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDoUsuario(userId))
+        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
       )
     );
 }
 
 export async function atualizarQuantidade(
-  userId: number,
+  casaId: number,
   itemId: number,
   quantity: string
 ): Promise<void> {
@@ -126,24 +126,24 @@ export async function atualizarQuantidade(
     .where(
       and(
         eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDoUsuario(userId))
+        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
       )
     );
 }
 
-export async function removerItem(userId: number, itemId: number): Promise<void> {
+export async function removerItem(casaId: number, itemId: number): Promise<void> {
   await db
     .delete(shoppingListItems)
     .where(
       and(
         eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDoUsuario(userId))
+        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
       )
     );
 }
 
-export async function finalizarCompra(userId: number): Promise<number> {
-  const lista = await garantirListaAtiva(userId);
+export async function finalizarCompra(casaId: number): Promise<number> {
+  const lista = await garantirListaAtiva(casaId);
   const marcados = await db
     .select({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity })
     .from(shoppingListItems)

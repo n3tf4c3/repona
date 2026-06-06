@@ -50,12 +50,12 @@ type ProdutoRow = {
   updatedAt: Date;
 };
 
-function selecionarProdutos(userId: number, id?: number) {
+function selecionarProdutos(casaId: number, id?: number) {
   const consumo = consumoSubquery();
   const filtro =
     id === undefined
-      ? eq(products.usuarioId, userId)
-      : and(eq(products.usuarioId, userId), eq(products.id, id));
+      ? eq(products.casaId, casaId)
+      : and(eq(products.casaId, casaId), eq(products.id, id));
   return db
     .select({
       id: products.id,
@@ -98,18 +98,18 @@ function mapProduto(row: ProdutoRow): ProductDTO {
   };
 }
 
-export async function listProdutos(userId: number): Promise<ProductDTO[]> {
-  const rows = await selecionarProdutos(userId).orderBy(desc(products.createdAt), asc(products.name));
+export async function listProdutos(casaId: number): Promise<ProductDTO[]> {
+  const rows = await selecionarProdutos(casaId).orderBy(desc(products.createdAt), asc(products.name));
   return rows.map(mapProduto);
 }
 
-async function getProdutoDTO(userId: number, id: number): Promise<ProductDTO | null> {
-  const [row] = await selecionarProdutos(userId, id);
+async function getProdutoDTO(casaId: number, id: number): Promise<ProductDTO | null> {
+  const [row] = await selecionarProdutos(casaId, id);
   return row ? mapProduto(row) : null;
 }
 
-async function nomeJaExiste(userId: number, name: string, exceptId?: number): Promise<boolean> {
-  const condicoes = [eq(products.usuarioId, userId), sql`lower(${products.name}) = lower(${name})`];
+async function nomeJaExiste(casaId: number, name: string, exceptId?: number): Promise<boolean> {
+  const condicoes = [eq(products.casaId, casaId), sql`lower(${products.name}) = lower(${name})`];
   if (exceptId !== undefined) condicoes.push(ne(products.id, exceptId));
   const [existente] = await db
     .select({ id: products.id })
@@ -119,16 +119,16 @@ async function nomeJaExiste(userId: number, name: string, exceptId?: number): Pr
   return Boolean(existente);
 }
 
-export async function createProduto(userId: number, input: NewProductInput): Promise<ProductDTO> {
+export async function createProduto(casaId: number, input: NewProductInput): Promise<ProductDTO> {
   const name = input.name.trim();
   const category = input.category.trim();
   if (!name) throw new Error("PRODUCT_NAME_REQUIRED");
-  if (await nomeJaExiste(userId, name)) throw new Error("PRODUCT_ALREADY_EXISTS");
+  if (await nomeJaExiste(casaId, name)) throw new Error("PRODUCT_ALREADY_EXISTS");
 
   const [criado] = await db
     .insert(products)
     .values({
-      usuarioId: userId,
+      casaId: casaId,
       name,
       category: category || "Mercearia",
       barcode: input.barcode ?? null,
@@ -137,20 +137,20 @@ export async function createProduto(userId: number, input: NewProductInput): Pro
     })
     .returning({ id: products.id });
 
-  const dto = await getProdutoDTO(userId, criado.id);
+  const dto = await getProdutoDTO(casaId, criado.id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND_AFTER_INSERT");
   return dto;
 }
 
 export async function updateProduto(
-  userId: number,
+  casaId: number,
   id: number,
   input: NewProductInput
 ): Promise<ProductDTO> {
   const name = input.name.trim();
   const category = input.category.trim();
   if (!name) throw new Error("PRODUCT_NAME_REQUIRED");
-  if (await nomeJaExiste(userId, name, id)) throw new Error("PRODUCT_ALREADY_EXISTS");
+  if (await nomeJaExiste(casaId, name, id)) throw new Error("PRODUCT_ALREADY_EXISTS");
 
   await db
     .update(products)
@@ -162,19 +162,19 @@ export async function updateProduto(
       alertThreshold: input.alertThreshold?.trim() || null,
       updatedAt: new Date(),
     })
-    .where(and(eq(products.usuarioId, userId), eq(products.id, id)));
+    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
 
-  const dto = await getProdutoDTO(userId, id);
+  const dto = await getProdutoDTO(casaId, id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND");
   return dto;
 }
 
-export async function deleteProduto(userId: number, id: number): Promise<void> {
+export async function deleteProduto(casaId: number, id: number): Promise<void> {
   // Confirma posse e existência.
   const [produto] = await db
     .select({ id: products.id })
     .from(products)
-    .where(and(eq(products.usuarioId, userId), eq(products.id, id)))
+    .where(and(eq(products.casaId, casaId), eq(products.id, id)))
     .limit(1);
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
@@ -185,14 +185,14 @@ export async function deleteProduto(userId: number, id: number): Promise<void> {
   if (Number(historico?.count ?? 0) > 0) throw new Error("PRODUCT_HAS_HISTORY");
 
   // FKs com ON DELETE CASCADE removem inventory_items/events e itens de lista.
-  await db.delete(products).where(and(eq(products.usuarioId, userId), eq(products.id, id)));
+  await db.delete(products).where(and(eq(products.casaId, casaId), eq(products.id, id)));
 }
 
-export async function seedProdutosIniciais(userId: number): Promise<void> {
+export async function seedProdutosIniciais(casaId: number): Promise<void> {
   const [contagem] = await db
     .select({ count: sql<number>`count(*)` })
     .from(products)
-    .where(eq(products.usuarioId, userId));
+    .where(eq(products.casaId, casaId));
   if (Number(contagem?.count ?? 0) > 0) return;
 
   for (const produto of seedProducts) {
@@ -200,7 +200,7 @@ export async function seedProdutosIniciais(userId: number): Promise<void> {
     const [criado] = await db
       .insert(products)
       .values({
-        usuarioId: userId,
+        casaId: casaId,
         name: produto.name,
         category: produto.category,
         purchaseCount: produto.purchaseCount,

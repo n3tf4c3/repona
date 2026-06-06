@@ -10,10 +10,22 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
+// Casa (household): unidade de compartilhamento. Várias contas na mesma casa
+// compartilham produtos, lista, estoque e histórico.
+export const casas = pgTable("casas", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().default("Minha casa"),
+  inviteCode: text("invite_code").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Casa = typeof casas.$inferSelect;
+
 export const usuarios = pgTable(
   "usuarios",
   {
     id: serial("id").primaryKey(),
+    casaId: integer("casa_id").references(() => casas.id),
     nome: text("nome"),
     email: text("email").notNull(),
     senhaHash: text("senha_hash").notNull(),
@@ -25,16 +37,16 @@ export const usuarios = pgTable(
 export type Usuario = typeof usuarios.$inferSelect;
 export type NovoUsuario = typeof usuarios.$inferInsert;
 
-// Tabelas de domínio (por usuário) — espelham o SQLite do mobile
-// (apps/mobile/src/storage/database.ts), escopadas ao usuário logado.
+// Tabelas de domínio (por casa) — espelham o SQLite do mobile
+// (apps/mobile/src/storage/database.ts), escopadas à casa do usuário logado.
 
 export const products = pgTable(
   "products",
   {
     id: serial("id").primaryKey(),
-    usuarioId: integer("usuario_id")
+    casaId: integer("casa_id")
       .notNull()
-      .references(() => usuarios.id, { onDelete: "cascade" }),
+      .references(() => casas.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     category: text("category").notNull(),
     barcode: text("barcode"),
@@ -46,10 +58,7 @@ export const products = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("products_usuario_name_lower_unique").on(
-      table.usuarioId,
-      sql`lower(${table.name})`
-    ),
+    uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
   ]
 );
 
@@ -57,15 +66,15 @@ export const shoppingLists = pgTable(
   "shopping_lists",
   {
     id: serial("id").primaryKey(),
-    usuarioId: integer("usuario_id")
+    casaId: integer("casa_id")
       .notNull()
-      .references(() => usuarios.id, { onDelete: "cascade" }),
+      .references(() => casas.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     status: text("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("shopping_lists_usuario_status_idx").on(table.usuarioId, table.status)]
+  (table) => [index("shopping_lists_casa_status_idx").on(table.casaId, table.status)]
 );
 
 export const shoppingListItems = pgTable(
