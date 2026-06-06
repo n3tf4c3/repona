@@ -153,35 +153,47 @@ export async function finalizarCompra(userId: number): Promise<number> {
   if (marcados.length === 0) return 0;
   const now = new Date();
 
+  // Tudo numa transação (db.batch): por item marcado grava histórico, incrementa
+  // purchase_count, repõe o estoque; ao final remove os itens comprados da lista.
+  type Escrita = Parameters<typeof db.batch>[0][number];
+  const escritas: Escrita[] = [];
   for (const item of marcados) {
-    await db.insert(purchaseHistory).values({
-      productId: item.productId,
-      quantity: item.quantity,
-      purchasedAt: now,
-      sourceListId: lista.id,
-    });
-
-    await db
-      .update(products)
-      .set({
-        purchaseCount: sql`${products.purchaseCount} + 1`,
-        status: "active",
-        updatedAt: now,
+    escritas.push(
+      db.insert(purchaseHistory).values({
+        productId: item.productId,
+        quantity: item.quantity,
+        purchasedAt: now,
+        sourceListId: lista.id,
       })
-      .where(eq(products.id, item.productId));
-
-    await db
-      .insert(inventoryItems)
-      .values({ productId: item.productId, quantity: item.quantity, status: "in_stock", updatedAt: now })
-      .onConflictDoUpdate({
-        target: inventoryItems.productId,
-        set: { quantity: item.quantity, status: "in_stock", updatedAt: now },
-      });
+    );
+    escritas.push(
+      db
+        .update(products)
+        .set({
+          purchaseCount: sql`${products.purchaseCount} + 1`,
+          status: "active",
+          updatedAt: now,
+        })
+        .where(eq(products.id, item.productId))
+    );
+    escritas.push(
+      db
+        .insert(inventoryItems)
+        .values({ productId: item.productId, quantity: item.quantity, status: "in_stock", updatedAt: now })
+        .onConflictDoUpdate({
+          target: inventoryItems.productId,
+          set: { quantity: item.quantity, status: "in_stock", updatedAt: now },
+        })
+    );
   }
+  escritas.push(
+    db
+      .delete(shoppingListItems)
+      .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)))
+  );
 
-  await db
-    .delete(shoppingListItems)
-    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)));
+  // db.batch exige uma tupla não-vazia; já garantimos length > 0 acima.
+  await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
 
   return marcados.length;
 }

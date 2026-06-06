@@ -18,25 +18,6 @@ async function obterEstoqueAtual(userId: number, produtoId: number): Promise<str
   return row.quantity;
 }
 
-async function aplicarQuantidade(produtoId: number, quantity: string): Promise<void> {
-  const status = isEmptyQuantity(quantity) ? "missing" : "in_stock";
-  const productStatus = status === "missing" ? "missing" : "active";
-  const now = new Date();
-
-  await db
-    .insert(inventoryItems)
-    .values({ productId: produtoId, quantity, status, updatedAt: now })
-    .onConflictDoUpdate({
-      target: inventoryItems.productId,
-      set: { quantity, status, updatedAt: now },
-    });
-
-  await db
-    .update(products)
-    .set({ status: productStatus, updatedAt: now })
-    .where(eq(products.id, produtoId));
-}
-
 export async function definirQuantidade(
   userId: number,
   produtoId: number,
@@ -44,7 +25,21 @@ export async function definirQuantidade(
 ): Promise<void> {
   await obterEstoqueAtual(userId, produtoId); // valida posse
   const normalizada = quantity.trim() || "0 un";
-  await aplicarQuantidade(produtoId, normalizada);
+  const status = isEmptyQuantity(normalizada) ? "missing" : "in_stock";
+  const productStatus = status === "missing" ? "missing" : "active";
+  const now = new Date();
+
+  // Atômico (db.batch = uma transação): upsert do estoque + status do produto.
+  await db.batch([
+    db
+      .insert(inventoryItems)
+      .values({ productId: produtoId, quantity: normalizada, status, updatedAt: now })
+      .onConflictDoUpdate({
+        target: inventoryItems.productId,
+        set: { quantity: normalizada, status, updatedAt: now },
+      }),
+    db.update(products).set({ status: productStatus, updatedAt: now }).where(eq(products.id, produtoId)),
+  ]);
 }
 
 export async function marcarEmFalta(userId: number, produtoId: number): Promise<void> {
@@ -57,12 +52,22 @@ export async function consumir(userId: number, produtoId: number): Promise<void>
 
   const consumida = getConsumedQuantity(atual);
   const proxima = getNextInventoryQuantity(atual, -1);
+  const status = isEmptyQuantity(proxima) ? "missing" : "in_stock";
+  const productStatus = status === "missing" ? "missing" : "active";
+  const now = new Date();
 
-  await db.insert(inventoryEvents).values({
-    productId: produtoId,
-    eventType: "consumed",
-    quantity: consumida,
-  });
-
-  await aplicarQuantidade(produtoId, proxima);
+  // Atômico: registra o evento de consumo + upsert do estoque + status do produto.
+  await db.batch([
+    db
+      .insert(inventoryEvents)
+      .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
+    db
+      .insert(inventoryItems)
+      .values({ productId: produtoId, quantity: proxima, status, updatedAt: now })
+      .onConflictDoUpdate({
+        target: inventoryItems.productId,
+        set: { quantity: proxima, status, updatedAt: now },
+      }),
+    db.update(products).set({ status: productStatus, updatedAt: now }).where(eq(products.id, produtoId)),
+  ]);
 }
