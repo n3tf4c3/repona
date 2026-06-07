@@ -13,7 +13,11 @@
       "supportsTablet": true
     },
     "android": {
-      "package": "com.repona.app"
+      "package": "com.repona.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro"
@@ -27,6 +31,11 @@
           "cameraPermission": "Permita que o Repona tire fotos e leia códigos de barras dos produtos."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "41b243b3-7246-4f71-a173-fe6fd6e3eb3f"
+      }
+    }
   }
 }
