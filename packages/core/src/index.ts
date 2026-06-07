@@ -31,3 +31,5 @@ export type {
 export { productNameKey, eventKey } from "./sync";
 export type { PriceTrend, PriceSummary, PricePoint } from "./price";
 export { summarizePrices } from "./price";
+export type { ShoppingTotalLine, ShoppingTotalEstimate } from "./shopping-total";
+export { estimateShoppingTotal } from "./shopping-total";
