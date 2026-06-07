@@ -8,6 +8,12 @@ export type PurchaseHistoryThumb = {
   tint: string;
 };
 
+export type PurchaseHistoryLine = {
+  productId: number;
+  name: string;
+  quantity: string;
+};
+
 export type PurchaseHistoryItem = {
   id: string;
   title: string;
@@ -16,6 +22,7 @@ export type PurchaseHistoryItem = {
   count: string;
   thumbs: PurchaseHistoryThumb[];
   more: string | null;
+  lines: PurchaseHistoryLine[];
 };
 
 export type PurchaseHistoryGroup = {
@@ -90,6 +97,7 @@ function purchaseToHistoryItem(purchase: Purchase): PurchaseHistoryItem {
     count: `${count} ${itemLabel}`,
     thumbs: purchase.records.slice(0, 3).map((record) => categoryVisuals[record.category] ?? fallbackThumb),
     more: count > 3 ? `+${count - 3}` : null,
+    lines: purchase.records.map((record) => ({ productId: record.productId, name: record.productName, quantity: record.quantity })),
   };
 }
 

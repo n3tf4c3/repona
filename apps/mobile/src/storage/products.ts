@@ -39,59 +39,6 @@ type ProductRow = {
   updated_at: string;
 };
 
-type SeedProduct = {
-  name: string;
-  category: string;
-  purchaseCount: number;
-  status?: ProductStatus;
-};
-
-const seedProducts: SeedProduct[] = [
-  { name: 'Leite integral', category: 'Laticínios', purchaseCount: 12 },
-  { name: 'Maçã Fuji', category: 'Hortifrúti', purchaseCount: 9 },
-  { name: 'Café torrado', category: 'Bebidas', purchaseCount: 7, status: 'missing' },
-  { name: 'Ovos brancos', category: 'Hortifrúti', purchaseCount: 11 },
-  { name: 'Cenoura', category: 'Hortifrúti', purchaseCount: 6 },
-  { name: 'Biscoito', category: 'Mercearia', purchaseCount: 5 },
-];
-
-export async function seedInitialProducts() {
-  const database = await initializeDatabase();
-  const count = await database.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM products');
-
-  if ((count?.count ?? 0) > 0) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-
-  await database.withTransactionAsync(async () => {
-    for (const product of seedProducts) {
-      const productStatus = product.status ?? 'active';
-      const result = await database.runAsync(
-        `INSERT INTO products (name, category, purchase_count, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        product.name,
-        product.category,
-        product.purchaseCount,
-        productStatus,
-        now,
-        now,
-      );
-
-      await database.runAsync(
-        `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        result.lastInsertRowId,
-        productStatus === 'missing' ? '0 un' : '1 un',
-        productStatus === 'missing' ? 'missing' : 'in_stock',
-        now,
-        now,
-      );
-    }
-  });
-}
-
 export async function listProducts(): Promise<ProductRecord[]> {
   const database = await initializeDatabase();
   const rows = await database.getAllAsync<ProductRow>(`

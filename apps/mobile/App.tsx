@@ -34,7 +34,7 @@ import {
 } from './src/storage/shoppingLists';
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
-import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
+import { createProduct, deleteProduct, listProducts, updateProduct } from './src/storage/products';
 import { persistPhoto } from './src/storage/photos';
 import { addProductPrice, listRecentPricesByProduct } from './src/storage/priceHistory';
 import { formatCentsBRL, parsePriceToCents } from './src/priceFormat';
@@ -52,12 +52,14 @@ import { colors, radius, shadow, spacing, typography } from './src/theme';
 import {
   buildInventoryAlerts,
   buildRebuySuggestion,
+  estimateShoppingTotal,
   getNextInventoryQuantity,
   summarizePrices,
   type InventoryAlert as CoreInventoryAlert,
   type RebuySuggestion as CoreRebuySuggestion,
   type PricePoint,
   type PriceSummary,
+  type ShoppingTotalEstimate,
 } from '@repona/core';
 
 const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
@@ -88,13 +90,14 @@ export default function App() {
   const [pricesByProduct, setPricesByProduct] = useState<Map<number, PricePoint[]>>(new Map());
   const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
+  const [selectedPurchase, setSelectedPurchase] = useState<PurchaseHistoryItem | null>(null);
+  const [editingQuantityItem, setEditingQuantityItem] = useState<ShoppingItem | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadInitialProducts() {
       try {
-        await seedInitialProducts();
         await seedActiveShoppingList();
         const activeList = await ensureActiveShoppingList();
         const records = await listProducts();
@@ -176,6 +179,11 @@ export default function App() {
   async function changeItemQuantity(item: ShoppingItem, direction: 1 | -1) {
     const nextQuantity = getNextQuantity(item.quantity, direction);
     await updateShoppingListItemQuantity(item.id, nextQuantity);
+    await refreshShoppingItems();
+  }
+
+  async function saveItemQuantity(itemId: number, quantity: string) {
+    await updateShoppingListItemQuantity(itemId, quantity);
     await refreshShoppingItems();
   }
 
@@ -374,6 +382,16 @@ export default function App() {
     }
     return map;
   }, [pricesByProduct]);
+  const shoppingTotal = useMemo(
+    () =>
+      estimateShoppingTotal(
+        shoppingItems.map((item) => ({
+          priceCents: item.productId !== undefined ? priceSummaries.get(item.productId)?.lastCents ?? null : null,
+          quantity: item.quantity,
+        })),
+      ),
+    [shoppingItems, priceSummaries],
+  );
 
   return (
     <SafeAreaProvider>
@@ -407,6 +425,7 @@ export default function App() {
               onBack={() => setActiveTab('home')}
               onToggleItem={toggleItem}
               onChangeQuantity={changeItemQuantity}
+              onEditQuantity={setEditingQuantityItem}
               onRemoveItem={removeItem}
               onNewList={confirmCreateNewShoppingList}
             />
@@ -416,6 +435,7 @@ export default function App() {
               products={products}
               isProductsReady={isProductsReady}
               errorMessage={productActionError}
+              priceSummaries={priceSummaries}
               onAddProductToList={handleAddProductToList}
               onEditProduct={openEditProduct}
               onRemoveProduct={confirmRemoveProduct}
@@ -425,7 +445,7 @@ export default function App() {
               onRegisterPrice={openPriceModal}
             />
           ) : null}
-          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
+          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
           {activeTab === 'future' ? (
             <FutureScreen
               onSynced={() => {
@@ -436,7 +456,7 @@ export default function App() {
         </SafeAreaView>
 
         {activeTab === 'list' ? (
-          <FinalizeBar items={shoppingItems} isFinalizing={isFinalizingPurchase} onFinalize={handleFinalizePurchase} />
+          <FinalizeBar items={shoppingItems} estimate={shoppingTotal} isFinalizing={isFinalizingPurchase} onFinalize={handleFinalizePurchase} />
         ) : null}
         {activeTab !== 'list' ? (
           <BottomNavigation
@@ -462,6 +482,17 @@ export default function App() {
           errorMessage={priceError}
           onClose={() => setPricingProduct(null)}
           onSave={handleSavePrice}
+        />
+
+        <PurchaseDetailModal purchase={selectedPurchase} priceSummaries={priceSummaries} onClose={() => setSelectedPurchase(null)} />
+
+        <QuantityEntryModal
+          item={editingQuantityItem}
+          onClose={() => setEditingQuantityItem(null)}
+          onSave={(itemId, quantity) => {
+            setEditingQuantityItem(null);
+            void saveItemQuantity(itemId, quantity);
+          }}
         />
       </View>
     </SafeAreaProvider>
@@ -540,6 +571,7 @@ function ShoppingListScreen({
   onBack,
   onToggleItem,
   onChangeQuantity,
+  onEditQuantity,
   onRemoveItem,
   onNewList,
 }: {
@@ -550,6 +582,7 @@ function ShoppingListScreen({
   onBack: () => void;
   onToggleItem: (id: number) => void;
   onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
+  onEditQuantity: (item: ShoppingItem) => void;
   onRemoveItem: (id: number) => void;
   onNewList: () => void;
 }) {
@@ -565,7 +598,7 @@ function ShoppingListScreen({
   }
 
   return (
-    <ScreenScroll bottomPadding={120}>
+    <ScreenScroll bottomPadding={160}>
       <View style={styles.listHeader}>
         <View style={styles.rowCenter}>
           <IconButton icon="arrow-left" onPress={onBack} />
@@ -589,6 +622,7 @@ function ShoppingListScreen({
               priceSummary={item.productId !== undefined ? priceSummaries.get(item.productId) : undefined}
               onToggle={() => onToggleItem(item.id)}
               onChangeQuantity={(direction) => onChangeQuantity(item, direction)}
+              onEditQuantity={() => onEditQuantity(item)}
               onRemove={() => onRemoveItem(item.id)}
             />
           ))}
@@ -602,6 +636,7 @@ function ProductsScreen({
   products,
   isProductsReady,
   errorMessage,
+  priceSummaries,
   onAddProductToList,
   onEditProduct,
   onRemoveProduct,
@@ -613,6 +648,7 @@ function ProductsScreen({
   products: Product[];
   isProductsReady: boolean;
   errorMessage: string | null;
+  priceSummaries: Map<number, PriceSummary>;
   onAddProductToList: (product: Product) => void;
   onEditProduct: (product: Product) => void;
   onRemoveProduct: (product: Product) => void;
@@ -654,6 +690,7 @@ function ProductsScreen({
         products={filteredProducts}
         isReady={isProductsReady}
         hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos' || onlyNeedsRestock}
+        priceSummaries={priceSummaries}
         onAdd={onAddProductToList}
         onEdit={onEditProduct}
         onRemove={onRemoveProduct}
@@ -669,9 +706,11 @@ function ProductsScreen({
 function HistoryScreen({
   historyGroups,
   isReady,
+  onOpenPurchase,
 }: {
   historyGroups: PurchaseHistoryGroup[];
   isReady: boolean;
+  onOpenPurchase: (item: PurchaseHistoryItem) => void;
 }) {
   return (
     <ScreenScroll>
@@ -682,7 +721,7 @@ function HistoryScreen({
         <View key={group.title}>
           <Text style={styles.historyGroupTitle}>{group.title}</Text>
           {group.items.map((item) => (
-            <HistoryCard key={item.id} item={item} />
+            <HistoryCard key={item.id} item={item} onOpen={onOpenPurchase} />
           ))}
         </View>
       ))}
@@ -1114,6 +1153,7 @@ function SectionTitle({ title, action, onAction }: { title: string; action?: str
 
 function ProductRow({
   product,
+  priceSummary,
   onAdd,
   onEdit,
   onRemove,
@@ -1123,6 +1163,7 @@ function ProductRow({
   onRegisterPrice,
 }: {
   product: Product;
+  priceSummary?: PriceSummary;
   onAdd: (product: Product) => void;
   onEdit?: (product: Product) => void;
   onRemove?: (product: Product) => void;
@@ -1141,6 +1182,7 @@ function ProductRow({
       <View style={styles.productText}>
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
         <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
+        {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
         {onChangeInventory && onMarkInventoryMissing && onConsume ? (
           <InventoryControls product={product} onChange={onChangeInventory} onMarkMissing={onMarkInventoryMissing} onConsume={onConsume} />
         ) : null}
@@ -1239,6 +1281,7 @@ function ProductList({
   products,
   isReady,
   hasFilters,
+  priceSummaries,
   onAdd,
   onEdit,
   onRemove,
@@ -1250,6 +1293,7 @@ function ProductList({
   products: Product[];
   isReady: boolean;
   hasFilters: boolean;
+  priceSummaries: Map<number, PriceSummary>;
   onAdd: (product: Product) => void;
   onEdit: (product: Product) => void;
   onRemove: (product: Product) => void;
@@ -1274,6 +1318,7 @@ function ProductList({
     <ProductRow
       key={product.id ?? product.name}
       product={product}
+      priceSummary={product.id !== undefined ? priceSummaries.get(product.id) : undefined}
       onAdd={onAdd}
       onEdit={onEdit}
       onRemove={onRemove}
@@ -1362,12 +1407,14 @@ function ShoppingItemRow({
   priceSummary,
   onToggle,
   onChangeQuantity,
+  onEditQuantity,
   onRemove,
 }: {
   item: ShoppingItem;
   priceSummary?: PriceSummary;
   onToggle: () => void;
   onChangeQuantity: (direction: 1 | -1) => void;
+  onEditQuantity: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -1386,7 +1433,9 @@ function ShoppingItemRow({
         <Pressable style={styles.qtyButton} onPress={() => onChangeQuantity(-1)}>
           <MaterialCommunityIcons name="minus" size={14} color={colors.ink2} />
         </Pressable>
-        <Text style={styles.quantityText}>{item.quantity}</Text>
+        <Pressable onPress={onEditQuantity}>
+          <Text style={styles.quantityText}>{item.quantity}</Text>
+        </Pressable>
         <Pressable style={styles.qtyButton} onPress={() => onChangeQuantity(1)}>
           <MaterialCommunityIcons name="plus" size={14} color={colors.ink2} />
         </Pressable>
@@ -1484,12 +1533,15 @@ function PriceEntryModal({
   );
 }
 
-function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
+function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: (item: PurchaseHistoryItem) => void }) {
   return (
-    <View style={styles.historyCard}>
+    <Pressable style={styles.historyCard} onPress={() => onOpen(item)}>
       <View style={styles.historyCardTop}>
         <Text style={styles.historyTitle}>{item.title}</Text>
-        <Text style={styles.historyTotal}>{item.total}</Text>
+        <View style={styles.historyTopRight}>
+          <Text style={styles.historyTotal}>{item.total}</Text>
+          <MaterialCommunityIcons name="chevron-right" size={20} color={colors.ink3} />
+        </View>
       </View>
       <View style={styles.historyMetaRow}>
         <MetaLabel icon="calendar-month-outline" label={item.date} />
@@ -1503,7 +1555,58 @@ function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
           {item.more ? <View style={styles.moreThumb}><Text style={styles.moreText}>{item.more}</Text></View> : null}
         </View>
       ) : null}
-    </View>
+    </Pressable>
+  );
+}
+
+function PurchaseDetailModal({
+  purchase,
+  priceSummaries,
+  onClose,
+}: {
+  purchase: PurchaseHistoryItem | null;
+  priceSummaries: Map<number, PriceSummary>;
+  onClose: () => void;
+}) {
+  const estimate = useMemo(
+    () =>
+      estimateShoppingTotal(
+        (purchase?.lines ?? []).map((line) => ({
+          priceCents: priceSummaries.get(line.productId)?.lastCents ?? null,
+          quantity: line.quantity,
+        })),
+      ),
+    [purchase, priceSummaries],
+  );
+
+  return (
+    <Modal visible={purchase !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalScrim} onPress={onClose} />
+      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>{purchase?.title ?? ''}</Text>
+        <Text style={styles.sheetSubtitle}>{purchase ? `${purchase.date} · ${purchase.count}` : ''}</Text>
+        <ScrollView style={styles.purchaseLinesScroll} contentContainerStyle={styles.purchaseLines}>
+          {purchase?.lines.map((line, index) => (
+            <View key={`${line.name}-${index}`} style={styles.purchaseLine}>
+              <Text style={styles.purchaseLineName} numberOfLines={1}>{line.name}</Text>
+              <Text style={styles.purchaseLineQty}>{line.quantity}</Text>
+            </View>
+          ))}
+        </ScrollView>
+        {estimate.pricedCount > 0 ? (
+          <View style={styles.estimateRow}>
+            <View>
+              <Text style={styles.estimateLabel}>Total estimado</Text>
+              {estimate.missingCount > 0 ? (
+                <Text style={styles.estimateHint}>Parcial · {estimate.missingCount} sem preço</Text>
+              ) : null}
+            </View>
+            <Text style={styles.estimateValue}>{formatCentsBRL(estimate.totalCents)}</Text>
+          </View>
+        ) : null}
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -1554,10 +1657,12 @@ function StatusPill({ label, background, tint }: { label: string; background: st
 
 function FinalizeBar({
   items,
+  estimate,
   isFinalizing,
   onFinalize,
 }: {
   items: ShoppingItem[];
+  estimate: ShoppingTotalEstimate;
   isFinalizing: boolean;
   onFinalize: () => void;
 }) {
@@ -1572,6 +1677,19 @@ function FinalizeBar({
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.finalizeShell}>
+      {estimate.pricedCount > 0 ? (
+        <View style={styles.estimateRow}>
+          <View>
+            <Text style={styles.estimateLabel}>Total estimado</Text>
+            {estimate.missingCount > 0 ? (
+              <Text style={styles.estimateHint}>
+                Parcial · {estimate.missingCount} sem preço
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.estimateValue}>{formatCentsBRL(estimate.totalCents)}</Text>
+        </View>
+      ) : null}
       <Pressable style={[styles.finalizeButton, disabled ? styles.finalizeButtonDisabled : null]} onPress={disabled ? undefined : onFinalize}>
         <MaterialCommunityIcons name="shopping-outline" size={22} color={colors.surface} />
         <Text style={styles.finalizeText}>{label}</Text>
@@ -1902,6 +2020,68 @@ function formatTodayLabel() {
     month: 'long',
   }).format(new Date());
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function QuantityEntryModal({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: ShoppingItem | null;
+  onClose: () => void;
+  onSave: (itemId: number, quantity: string) => void;
+}) {
+  const [value, setValue] = useState('');
+  const [unit, setUnit] = useState('un');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (item) {
+      const parsed = item.quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+      setValue(parsed ? parsed[1].replace('.', ',') : '');
+      setUnit(parsed?.[2].trim() || 'un');
+      setError(null);
+    }
+  }, [item]);
+
+  function handleSave() {
+    const num = Number(value.replace(',', '.'));
+    if (!Number.isFinite(num) || num <= 0) {
+      setError('Informe uma quantidade válida (ex.: 0,8).');
+      return;
+    }
+    const formatted = `${num}`.replace('.', ',');
+    if (item) onSave(item.id, `${formatted} ${unit}`);
+  }
+
+  return (
+    <Modal visible={item !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalScrim} onPress={onClose} />
+      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Quantidade</Text>
+        <Text style={styles.sheetSubtitle}>{item?.name ?? ''}</Text>
+        <View style={styles.inputBox}>
+          <MaterialCommunityIcons name="scale-balance" size={20} color={colors.primaryStrong} />
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            style={styles.input}
+            placeholder="Ex.: 0,8"
+            placeholderTextColor={colors.ink3}
+            keyboardType="decimal-pad"
+            autoFocus
+          />
+        </View>
+        <ChipRow chips={['un', 'kg', 'g']} selected={unit} onSelect={setUnit} />
+        {error ? <Text style={styles.formError}>{error}</Text> : null}
+        <Pressable style={styles.saveButton} onPress={handleSave}>
+          <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
+          <Text style={styles.saveButtonText}>Salvar</Text>
+        </Pressable>
+      </SafeAreaView>
+    </Modal>
+  );
 }
 
 function getNextQuantity(quantity: string, direction: 1 | -1) {
@@ -2561,7 +2741,13 @@ const styles = StyleSheet.create({
   historyCardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 10,
+  },
+  historyTopRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   historyTitle: {
     ...typography.h3,
@@ -2570,6 +2756,30 @@ const styles = StyleSheet.create({
   historyTotal: {
     ...typography.h3,
     color: colors.primaryStrong,
+  },
+  purchaseLinesScroll: {
+    maxHeight: 360,
+  },
+  purchaseLines: {
+    gap: 2,
+  },
+  purchaseLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line2,
+  },
+  purchaseLineName: {
+    ...typography.body,
+    color: colors.ink,
+    flex: 1,
+  },
+  purchaseLineQty: {
+    ...typography.labelStrong,
+    color: colors.ink2,
   },
   historyMetaRow: {
     flexDirection: 'row',
@@ -2667,6 +2877,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     paddingHorizontal: 16,
     paddingTop: 10,
+  },
+  estimateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+  },
+  estimateLabel: {
+    ...typography.labelStrong,
+    color: colors.ink2,
+  },
+  estimateHint: {
+    ...typography.label,
+    color: colors.ink3,
+  },
+  estimateValue: {
+    ...typography.h2,
+    color: colors.primaryStrong,
   },
   finalizeButton: {
     height: 58,
