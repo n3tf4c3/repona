@@ -9,7 +9,7 @@ const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 
 export type SyncResult =
   | { ok: true; lastSyncAt: string }
-  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'NETWORK' | 'CASA_NOT_FOUND' | 'SERVER' };
+  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'INVALID_NAME' | 'NETWORK' | 'CASA_NOT_FOUND' | 'SERVER' };
 
 export async function getCasaCode(): Promise<string | null> {
   return getSetting(CASA_CODE_KEY);
@@ -29,6 +29,30 @@ export async function syncNow(): Promise<SyncResult> {
   const code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   return enviarSnapshot(code);
+}
+
+// Cria a conta na nuvem (nome + token). O token gerado fica salvo e é a
+// credencial usada para acessar pelo web. Já faz a primeira sincronização.
+export async function criarConta(nome: string): Promise<SyncResult> {
+  const n = nome.trim();
+  if (!n) return { ok: false, error: 'INVALID_NAME' };
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/casa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome: n }),
+    });
+  } catch {
+    return { ok: false, error: 'NETWORK' };
+  }
+
+  if (!response.ok) return { ok: false, error: 'SERVER' };
+
+  const { token } = (await response.json()) as { token: string };
+  await setSetting(CASA_CODE_KEY, token);
+  return enviarSnapshot(token);
 }
 
 // Define o código da casa e faz a primeira sincronização. Se o código não

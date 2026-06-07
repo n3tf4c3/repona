@@ -1,6 +1,6 @@
 import { ScanLine, Camera, Home, Users, Brain, RefreshCw, type LucideIcon } from "lucide-react";
-import { getAuthSession, requireUser } from "@/server/auth/session";
-import { obterCasa } from "@/server/modules/casa";
+import { getAuthSession, requireCasa } from "@/server/auth/session";
+import { obterCasaPorId } from "@/server/modules/casa";
 import { CasaClient } from "./casa-client";
 
 const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
@@ -13,12 +13,11 @@ const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
 ];
 
 export default async function PerfilPage() {
-  const { id: userId } = await requireUser();
+  const { casaId } = await requireCasa();
   const session = await getAuthSession();
-  const nome = session?.user?.name ?? "Você";
-  const email = session?.user?.email ?? "";
-  const inicial = (nome || email || "?").trim().charAt(0).toUpperCase();
-  const casa = await obterCasa(userId);
+  const nome = session?.user?.name ?? "Sua conta";
+  const inicial = (nome || "?").trim().charAt(0).toUpperCase();
+  const casa = await obterCasaPorId(casaId);
 
   return (
     <div className="space-y-5">
@@ -34,12 +33,12 @@ export default async function PerfilPage() {
         </div>
         <div className="min-w-0">
           <p className="truncate text-lg font-black">{nome}</p>
-          {email && <p className="truncate text-sm text-ink-faint">{email}</p>}
+          <p className="truncate text-sm text-ink-faint">Conta criada no app · acesso por token</p>
         </div>
       </div>
 
-      {/* Casa (compartilhamento) */}
-      <CasaClient casa={casa} userId={userId} />
+      {/* Casa (token de acesso) */}
+      <CasaClient casa={casa} />
 
       {/* Hero */}
       <div className="rounded-card border border-line bg-primary-tint p-5">

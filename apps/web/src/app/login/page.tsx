@@ -7,12 +7,11 @@ import { signIn } from "next-auth/react";
 import { ShoppingBasket, AlertCircle } from "lucide-react";
 
 const inputClass =
-  "w-full rounded-xl border border-line bg-surface px-4 py-3 text-ink outline-none transition placeholder:text-ink-faint focus:border-primary";
+  "w-full rounded-xl border border-line bg-surface px-4 py-3 text-center text-lg font-black uppercase tracking-[0.3em] text-ink outline-none transition placeholder:text-ink-faint placeholder:tracking-normal placeholder:font-normal placeholder:text-base focus:border-primary";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -20,14 +19,14 @@ export default function LoginPage() {
     event.preventDefault();
     setError(null);
     setLoading(true);
-    const result = await signIn("credentials", { email, password, redirect: false });
+    const result = await signIn("credentials", { token: token.trim().toUpperCase(), redirect: false });
     setLoading(false);
     if (result?.ok) {
       router.push("/inicio");
       router.refresh();
       return;
     }
-    setError("E-mail ou senha inválidos.");
+    setError("Token inválido. Confira o código gerado no app.");
   }
 
   return (
@@ -38,35 +37,26 @@ export default function LoginPage() {
         </span>
         <div>
           <h1 className="text-2xl font-black tracking-tight">Entrar no Repona</h1>
-          <p className="mt-1 text-sm text-ink-faint">Acesse a lista e o estoque da sua casa.</p>
+          <p className="mt-1 text-sm text-ink-faint">Use o token de acesso gerado no app do celular.</p>
         </div>
       </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 rounded-card border border-line bg-surface p-6 shadow-sm">
         <div className="flex flex-col gap-2">
-          <label htmlFor="email" className="text-sm font-semibold text-ink-soft">
-            E-mail
+          <label htmlFor="token" className="text-sm font-semibold text-ink-soft">
+            Token de acesso
           </label>
           <input
-            id="email"
-            type="email"
-            autoComplete="email"
+            id="token"
+            type="text"
+            autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            maxLength={8}
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className={inputClass}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <label htmlFor="password" className="text-sm font-semibold text-ink-soft">
-            Senha
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={token}
+            onChange={(e) => setToken(e.target.value.toUpperCase())}
+            placeholder="8 caracteres"
             className={inputClass}
           />
         </div>
@@ -83,15 +73,9 @@ export default function LoginPage() {
         >
           {loading ? "Entrando..." : "Entrar"}
         </button>
-        <Link href="/recuperar-senha" className="text-center text-sm text-ink-faint hover:text-ink-soft">
-          Esqueci minha senha
-        </Link>
       </form>
       <p className="text-center text-sm text-ink-faint">
-        Não tem conta?{" "}
-        <Link href="/cadastro" className="font-semibold text-ink-soft hover:text-ink">
-          Criar conta
-        </Link>
+        Ainda não tem token? Crie sua conta no app do celular.
       </p>
       <Link href="/" className="text-center text-sm text-ink-faint hover:text-ink-soft">
         Voltar

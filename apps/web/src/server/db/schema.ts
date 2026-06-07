@@ -11,8 +11,9 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// Casa (household): unidade de compartilhamento. Várias contas na mesma casa
-// compartilham produtos, lista, estoque e histórico.
+// Casa (household) = a conta. Criada no mobile, identificada pelo inviteCode
+// (token). É a unidade de compartilhamento: produtos, lista, estoque e
+// histórico são escopados por casa. O login do web é só o token.
 export const casas = pgTable("casas", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().default("Minha casa"),
@@ -22,43 +23,8 @@ export const casas = pgTable("casas", {
 
 export type Casa = typeof casas.$inferSelect;
 
-export const usuarios = pgTable(
-  "usuarios",
-  {
-    id: serial("id").primaryKey(),
-    casaId: integer("casa_id")
-      .notNull()
-      .references(() => casas.id),
-    nome: text("nome"),
-    email: text("email").notNull(),
-    senhaHash: text("senha_hash").notNull(),
-    criadaEm: timestamp("criada_em", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [uniqueIndex("usuarios_email_lower_unique").on(sql`lower(${table.email})`)]
-);
-
-export type Usuario = typeof usuarios.$inferSelect;
-export type NovoUsuario = typeof usuarios.$inferInsert;
-
-// Tokens de redefinição de senha. Guardamos apenas o hash do token (o valor em
-// claro só vai no link enviado ao usuário). Expiram e são de uso único.
-export const passwordResetTokens = pgTable(
-  "password_reset_tokens",
-  {
-    id: serial("id").primaryKey(),
-    usuarioId: integer("usuario_id")
-      .notNull()
-      .references(() => usuarios.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull().unique(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    usedAt: timestamp("used_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index("password_reset_tokens_usuario_idx").on(table.usuarioId)]
-);
-
 // Tabelas de domínio (por casa) — espelham o SQLite do mobile
-// (apps/mobile/src/storage/database.ts), escopadas à casa do usuário logado.
+// (apps/mobile/src/storage/database.ts), escopadas à casa.
 
 export const products = pgTable(
   "products",

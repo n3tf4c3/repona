@@ -1,10 +1,10 @@
 import { ShoppingBasket } from "lucide-react";
-import { requireUser } from "@/server/auth/session";
+import { requireCasa } from "@/server/auth/session";
 import { NavTop, NavBottom } from "./nav.client";
 import { LogoutButton } from "./logout-button.client";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  await requireUser();
+  await requireCasa();
   return (
     <div className="min-h-screen bg-bg text-ink">
       <header className="sticky top-0 z-10 border-b border-line bg-bg/90 backdrop-blur">

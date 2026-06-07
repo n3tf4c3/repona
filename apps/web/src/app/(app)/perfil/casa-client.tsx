@@ -1,23 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Copy, Check, RefreshCw, LogOut, Pencil, Users, AlertCircle } from "lucide-react";
+import { Copy, Check, RefreshCw, Pencil, KeyRound, AlertCircle } from "lucide-react";
 import type { CasaDTO } from "@/server/modules/casa";
-import {
-  entrarComCodigoAction,
-  regenerarCodigoAction,
-  renomearCasaAction,
-  sairDaCasaAction,
-} from "./actions";
+import { regenerarCodigoAction, renomearCasaAction } from "./actions";
 
 type Resultado = { ok: boolean; error?: string };
 
-export function CasaClient({ casa, userId }: { casa: CasaDTO; userId: number }) {
+export function CasaClient({ casa }: { casa: CasaDTO }) {
   const [erro, setErro] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [editandoNome, setEditandoNome] = useState(false);
   const [nome, setNome] = useState(casa.name);
-  const [codigo, setCodigo] = useState("");
   const [pending, startTransition] = useTransition();
 
   function executar(acao: () => Promise<Resultado>, depois?: () => void) {
@@ -42,7 +36,7 @@ export function CasaClient({ casa, userId }: { casa: CasaDTO; userId: number }) 
   return (
     <div className="space-y-4 rounded-card border border-line bg-surface p-5 shadow-sm">
       <div className="flex items-center gap-2">
-        <Users size={18} className="text-primary-strong" />
+        <KeyRound size={18} className="text-primary-strong" />
         {editandoNome ? (
           <input
             value={nome}
@@ -73,10 +67,10 @@ export function CasaClient({ casa, userId }: { casa: CasaDTO; userId: number }) 
         </div>
       )}
 
-      {/* Código de convite */}
+      {/* Token de acesso */}
       <div>
         <p className="mb-1 text-xs font-bold uppercase tracking-wider text-ink-faint">
-          Código de convite
+          Token de acesso
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 rounded-xl border border-line bg-bg px-4 py-2.5 text-lg font-black tracking-[0.2em] text-ink">
@@ -92,75 +86,15 @@ export function CasaClient({ casa, userId }: { casa: CasaDTO; userId: number }) 
           <button
             disabled={pending}
             onClick={() => executar(() => regenerarCodigoAction())}
-            title="Gerar novo código"
+            title="Gerar novo token"
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-line text-ink-soft transition hover:bg-bg disabled:opacity-50"
           >
             <RefreshCw size={18} />
           </button>
         </div>
         <p className="mt-1 text-xs text-ink-faint">
-          Compartilhe com a família. Regenerar invalida o código anterior.
+          É o mesmo token do app. Gerar um novo invalida o anterior (será preciso reconectar o app).
         </p>
-      </div>
-
-      {/* Membros */}
-      <div>
-        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-ink-faint">
-          Membros ({casa.membros.length})
-        </p>
-        <div className="space-y-1.5">
-          {casa.membros.map((m) => (
-            <div key={m.id} className="flex items-center gap-3 rounded-xl bg-bg px-3 py-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-soft text-sm font-black text-primary-strong">
-                {(m.nome || m.email).trim().charAt(0).toUpperCase()}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-                {m.nome || m.email}
-                {m.id === userId && <span className="ml-1 text-xs text-ink-faint">(você)</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Entrar em outra casa */}
-      <div className="border-t border-line pt-4">
-        <p className="mb-1 text-xs font-bold uppercase tracking-wider text-ink-faint">
-          Entrar em outra casa
-        </p>
-        <div className="flex items-center gap-2">
-          <input
-            value={codigo}
-            onChange={(e) => setCodigo(e.target.value.toUpperCase())}
-            placeholder="Código de convite"
-            className="flex-1 rounded-xl border border-line px-4 py-2.5 text-sm tracking-[0.15em] outline-none focus:border-primary"
-          />
-          <button
-            disabled={pending || !codigo.trim()}
-            onClick={() => executar(() => entrarComCodigoAction(codigo), () => setCodigo(""))}
-            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            Entrar
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-ink-faint">
-          Você passa a ver a lista e o estoque da outra casa.
-        </p>
-      </div>
-
-      {/* Sair */}
-      <div className="border-t border-line pt-4">
-        <button
-          disabled={pending}
-          onClick={() => {
-            if (confirm("Sair da casa? Você irá para uma casa nova e vazia.")) {
-              executar(() => sairDaCasaAction());
-            }
-          }}
-          className="flex items-center gap-1.5 text-sm font-semibold text-danger hover:opacity-80 disabled:opacity-50"
-        >
-          <LogOut size={15} /> Sair desta casa
-        </button>
       </div>
     </div>
   );

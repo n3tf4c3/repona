@@ -29,13 +29,6 @@
       "when": 1780787440119,
       "tag": "0003_integrity_constraints",
       "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1780801699665,
-      "tag": "0004_wonderful_doctor_faustus",
-      "breakpoints": true
     }
   ]
 }
