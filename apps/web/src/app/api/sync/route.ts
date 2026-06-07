@@ -37,6 +37,15 @@ const snapshotSchema = z.object({
       })
     )
     .max(10000),
+  prices: z
+    .array(
+      z.object({
+        productName: z.string().trim().min(1).max(160),
+        priceCents: z.number().int().min(0).max(100_000_000),
+        recordedAt: z.string().max(40),
+      })
+    )
+    .max(10000),
 });
 
 // Limitador simples por IP (em memória): protege o endpoint público de abuso.

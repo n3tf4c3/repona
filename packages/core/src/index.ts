@@ -25,6 +25,9 @@ export type {
   SyncProduct,
   SyncPurchase,
   SyncConsumption,
+  SyncPrice,
   SyncSnapshot,
 } from "./sync";
 export { productNameKey, eventKey } from "./sync";
+export type { PriceTrend, PriceSummary, PricePoint } from "./price";
+export { summarizePrices } from "./price";

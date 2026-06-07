@@ -36,6 +36,8 @@ import { consumeProductInventory, markProductInventoryMissing, setProductInvento
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
 import { persistPhoto } from './src/storage/photos';
+import { addProductPrice, listRecentPricesByProduct } from './src/storage/priceHistory';
+import { formatCentsBRL, parsePriceToCents } from './src/priceFormat';
 import {
   criarConta,
   getCasaCode,
@@ -51,8 +53,11 @@ import {
   buildInventoryAlerts,
   buildRebuySuggestion,
   getNextInventoryQuantity,
+  summarizePrices,
   type InventoryAlert as CoreInventoryAlert,
   type RebuySuggestion as CoreRebuySuggestion,
+  type PricePoint,
+  type PriceSummary,
 } from '@repona/core';
 
 const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
@@ -80,6 +85,9 @@ export default function App() {
   const [isFinalizingPurchase, setIsFinalizingPurchase] = useState(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
   const [productActionError, setProductActionError] = useState<string | null>(null);
+  const [pricesByProduct, setPricesByProduct] = useState<Map<number, PricePoint[]>>(new Map());
+  const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -92,12 +100,14 @@ export default function App() {
         const records = await listProducts();
         const listRecords = await listActiveShoppingItems();
         const historyRecords = await listPurchaseHistoryRecords();
+        const prices = await listRecentPricesByProduct();
 
         if (isMounted) {
           setActiveShoppingListName(activeList.name);
           setProducts(records.map(productRecordToProduct));
           setShoppingItems(listRecords.map(shoppingListRecordToItem));
           setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
+          setPricesByProduct(prices);
         }
       } catch (error) {
         console.error('Failed to load app data', error);
@@ -132,6 +142,30 @@ export default function App() {
   async function refreshHistory() {
     const historyRecords = await listPurchaseHistoryRecords();
     setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
+  }
+
+  async function refreshPrices() {
+    setPricesByProduct(await listRecentPricesByProduct());
+  }
+
+  function openPriceModal(product: Product) {
+    setPriceError(null);
+    setPricingProduct(product);
+  }
+
+  async function handleSavePrice(priceCents: number) {
+    if (!pricingProduct?.id) {
+      return;
+    }
+    try {
+      setPriceError(null);
+      await addProductPrice(pricingProduct.id, priceCents);
+      await refreshPrices();
+      setPricingProduct(null);
+    } catch (error) {
+      console.error('Failed to save product price', error);
+      setPriceError('Não foi possível salvar o preço agora.');
+    }
   }
 
   async function toggleItem(id: number) {
@@ -332,6 +366,14 @@ export default function App() {
       .sort((a, b) => (b.purchaseCount ?? 0) - (a.purchaseCount ?? 0))
       .slice(0, 2);
   }, [products, shoppingItems]);
+  const priceSummaries = useMemo(() => {
+    const map = new Map<number, PriceSummary>();
+    for (const [productId, points] of pricesByProduct) {
+      const summary = summarizePrices(points);
+      if (summary) map.set(productId, summary);
+    }
+    return map;
+  }, [pricesByProduct]);
 
   return (
     <SafeAreaProvider>
@@ -361,6 +403,7 @@ export default function App() {
               items={shoppingItems}
               isReady={isShoppingListReady}
               listName={activeShoppingListName}
+              priceSummaries={priceSummaries}
               onBack={() => setActiveTab('home')}
               onToggleItem={toggleItem}
               onChangeQuantity={changeItemQuantity}
@@ -379,13 +422,14 @@ export default function App() {
               onChangeInventory={handleChangeProductInventory}
               onMarkInventoryMissing={handleMarkProductMissing}
               onConsumeProduct={handleConsumeProduct}
+              onRegisterPrice={openPriceModal}
             />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
           {activeTab === 'future' ? (
             <FutureScreen
               onSynced={() => {
-                void Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory()]);
+                void Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory(), refreshPrices()]);
               }}
             />
           ) : null}
@@ -411,6 +455,13 @@ export default function App() {
             setEditingProduct(null);
           }}
           onSave={handleSaveProduct}
+        />
+
+        <PriceEntryModal
+          product={pricingProduct}
+          errorMessage={priceError}
+          onClose={() => setPricingProduct(null)}
+          onSave={handleSavePrice}
         />
       </View>
     </SafeAreaProvider>
@@ -485,6 +536,7 @@ function ShoppingListScreen({
   items,
   isReady,
   listName,
+  priceSummaries,
   onBack,
   onToggleItem,
   onChangeQuantity,
@@ -494,6 +546,7 @@ function ShoppingListScreen({
   items: ShoppingItem[];
   isReady: boolean;
   listName: string;
+  priceSummaries: Map<number, PriceSummary>;
   onBack: () => void;
   onToggleItem: (id: number) => void;
   onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
@@ -533,6 +586,7 @@ function ShoppingListScreen({
             <ShoppingItemRow
               key={item.id}
               item={item}
+              priceSummary={item.productId !== undefined ? priceSummaries.get(item.productId) : undefined}
               onToggle={() => onToggleItem(item.id)}
               onChangeQuantity={(direction) => onChangeQuantity(item, direction)}
               onRemove={() => onRemoveItem(item.id)}
@@ -554,6 +608,7 @@ function ProductsScreen({
   onChangeInventory,
   onMarkInventoryMissing,
   onConsumeProduct,
+  onRegisterPrice,
 }: {
   products: Product[];
   isProductsReady: boolean;
@@ -564,6 +619,7 @@ function ProductsScreen({
   onChangeInventory: (product: Product, direction: 1 | -1) => void;
   onMarkInventoryMissing: (product: Product) => void;
   onConsumeProduct: (product: Product) => void;
+  onRegisterPrice: (product: Product) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
@@ -604,6 +660,7 @@ function ProductsScreen({
         onChangeInventory={onChangeInventory}
         onMarkInventoryMissing={onMarkInventoryMissing}
         onConsume={onConsumeProduct}
+        onRegisterPrice={onRegisterPrice}
       />
     </ScreenScroll>
   );
@@ -1063,6 +1120,7 @@ function ProductRow({
   onChangeInventory,
   onMarkInventoryMissing,
   onConsume,
+  onRegisterPrice,
 }: {
   product: Product;
   onAdd: (product: Product) => void;
@@ -1071,6 +1129,7 @@ function ProductRow({
   onChangeInventory?: (product: Product, direction: 1 | -1) => void;
   onMarkInventoryMissing?: (product: Product) => void;
   onConsume?: (product: Product) => void;
+  onRegisterPrice?: (product: Product) => void;
 }) {
   return (
     <View style={styles.productRow}>
@@ -1087,6 +1146,11 @@ function ProductRow({
         ) : null}
       </View>
       <View style={styles.productActions}>
+        {onRegisterPrice ? (
+          <Pressable style={styles.productActionButton} onPress={() => onRegisterPrice(product)}>
+            <MaterialCommunityIcons name="cash-multiple" size={17} color={colors.primaryStrong} />
+          </Pressable>
+        ) : null}
         {onEdit ? (
           <Pressable style={styles.productActionButton} onPress={() => onEdit(product)}>
             <MaterialCommunityIcons name="pencil-outline" size={17} color={colors.ink2} />
@@ -1181,6 +1245,7 @@ function ProductList({
   onChangeInventory,
   onMarkInventoryMissing,
   onConsume,
+  onRegisterPrice,
 }: {
   products: Product[];
   isReady: boolean;
@@ -1191,6 +1256,7 @@ function ProductList({
   onChangeInventory: (product: Product, direction: 1 | -1) => void;
   onMarkInventoryMissing: (product: Product) => void;
   onConsume: (product: Product) => void;
+  onRegisterPrice: (product: Product) => void;
 }) {
   if (!isReady) {
     return <EmptyState title="Carregando produtos" description="Buscando o catálogo salvo localmente." />;
@@ -1214,6 +1280,7 @@ function ProductList({
       onChangeInventory={onChangeInventory}
       onMarkInventoryMissing={onMarkInventoryMissing}
       onConsume={onConsume}
+      onRegisterPrice={onRegisterPrice}
     />
   ));
 }
@@ -1292,11 +1359,13 @@ function CategoryHeader({ title, count, color }: { title: string; count: number;
 
 function ShoppingItemRow({
   item,
+  priceSummary,
   onToggle,
   onChangeQuantity,
   onRemove,
 }: {
   item: ShoppingItem;
+  priceSummary?: PriceSummary;
   onToggle: () => void;
   onChangeQuantity: (direction: 1 | -1) => void;
   onRemove: () => void;
@@ -1310,6 +1379,7 @@ function ShoppingItemRow({
         <View style={styles.shoppingItemText}>
           <Text style={[styles.productName, item.checked ? styles.checkedText : null]} numberOfLines={1}>{item.name}</Text>
           {item.missing ? <MissingBadge /> : <Text style={styles.productMeta}>{item.meta}</Text>}
+          {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
         </View>
       </Pressable>
       <View style={styles.quantityPill}>
@@ -1334,6 +1404,83 @@ function MissingBadge() {
       <MaterialCommunityIcons name="alert-circle-outline" size={13} color={colors.coral} />
       <Text style={styles.missingText}>Em falta em casa</Text>
     </View>
+  );
+}
+
+function PriceSummaryLine({ summary }: { summary: PriceSummary }) {
+  const trendIcon = summary.trend === 'up' ? 'arrow-up' : summary.trend === 'down' ? 'arrow-down' : 'minus';
+  const trendColor =
+    summary.trend === 'up' ? colors.coral : summary.trend === 'down' ? colors.primaryStrong : colors.ink3;
+  return (
+    <View style={styles.priceLine}>
+      <Text style={styles.priceLast}>{formatCentsBRL(summary.lastCents)}</Text>
+      <MaterialCommunityIcons name={trendIcon} size={13} color={trendColor} />
+      {summary.count > 1 ? (
+        <Text style={styles.priceRange}>
+          mín {formatCentsBRL(summary.minCents)} · máx {formatCentsBRL(summary.maxCents)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function PriceEntryModal({
+  product,
+  errorMessage,
+  onClose,
+  onSave,
+}: {
+  product: Product | null;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSave: (priceCents: number) => void;
+}) {
+  const [value, setValue] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (product) {
+      setValue('');
+      setLocalError(null);
+    }
+  }, [product]);
+
+  function handleSave() {
+    const cents = parsePriceToCents(value);
+    if (cents === null) {
+      setLocalError('Informe um preço válido (ex.: 8,90).');
+      return;
+    }
+    onSave(cents);
+  }
+
+  return (
+    <Modal visible={product !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalScrim} onPress={onClose} />
+      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Registrar preço</Text>
+        <Text style={styles.sheetSubtitle}>{product?.name ?? ''} · guardamos os últimos 10 com a data.</Text>
+        <Text style={styles.fieldLabel}>Preço (R$)</Text>
+        <View style={styles.inputBox}>
+          <MaterialCommunityIcons name="cash" size={20} color={colors.primaryStrong} />
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            style={styles.input}
+            placeholder="Ex.: 8,90"
+            placeholderTextColor={colors.ink3}
+            keyboardType="decimal-pad"
+            autoFocus
+          />
+        </View>
+        {localError || errorMessage ? <Text style={styles.formError}>{localError ?? errorMessage}</Text> : null}
+        <Pressable style={styles.saveButton} onPress={handleSave}>
+          <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
+          <Text style={styles.saveButtonText}>Salvar preço</Text>
+        </Pressable>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -2770,5 +2917,19 @@ const styles = StyleSheet.create({
   syncConnectText: {
     ...typography.labelStrong,
     color: colors.indigo,
+  },
+  priceLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+  },
+  priceLast: {
+    ...typography.labelStrong,
+    color: colors.ink,
+  },
+  priceRange: {
+    ...typography.label,
+    color: colors.ink3,
   },
 });

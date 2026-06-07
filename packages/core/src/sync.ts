@@ -30,10 +30,17 @@ export type SyncConsumption = {
   occurredAt: string; // ISO
 };
 
+export type SyncPrice = {
+  productName: string;
+  priceCents: number;
+  recordedAt: string; // ISO
+};
+
 export type SyncSnapshot = {
   products: SyncProduct[];
   purchases: SyncPurchase[];
   consumptions: SyncConsumption[];
+  prices: SyncPrice[];
 };
 
 export function productNameKey(name: string): string {

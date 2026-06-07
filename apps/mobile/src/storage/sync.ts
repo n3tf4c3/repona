@@ -20,6 +20,15 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     INNER JOIN products p ON p.id = ie.product_id
     WHERE ie.event_type = 'consumed'
   `);
+  const precos = await database.getAllAsync<{
+    product_name: string;
+    price_cents: number;
+    recorded_at: string;
+  }>(`
+    SELECT p.name as product_name, ph.price_cents, ph.recorded_at
+    FROM price_history ph
+    INNER JOIN products p ON p.id = ph.product_id
+  `);
 
   return {
     products: produtos.map((p) => ({
@@ -42,6 +51,11 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       productName: c.product_name,
       quantity: c.quantity,
       occurredAt: c.occurred_at,
+    })),
+    prices: precos.map((p) => ({
+      productName: p.product_name,
+      priceCents: p.price_cents,
+      recordedAt: p.recorded_at,
     })),
   };
 }
@@ -105,6 +119,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
     await aplicarCompras(database, idPorNome, snapshot.purchases);
     await aplicarConsumos(database, idPorNome, snapshot.consumptions);
+    await aplicarPrecos(database, idPorNome, snapshot.prices);
   });
 }
 
@@ -129,6 +144,46 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
       productId,
       compra.quantity,
       compra.purchasedAt,
+    );
+  }
+}
+
+async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, precos: SyncSnapshot['prices']) {
+  const existentes = await database.getAllAsync<{ name: string; price_cents: number; recorded_at: string }>(`
+    SELECT p.name, ph.price_cents, ph.recorded_at
+    FROM price_history ph INNER JOIN products p ON p.id = ph.product_id
+  `);
+  const vistos = new Set(existentes.map((e) => eventKey(e.name, e.recorded_at, String(e.price_cents))));
+  const tocados = new Set<number>();
+
+  for (const preco of precos) {
+    const productId = idPorNome.get(preco.productName.trim().toLocaleLowerCase('pt-BR'));
+    if (!productId) continue;
+    const chave = eventKey(preco.productName, preco.recordedAt, String(preco.priceCents));
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    await database.runAsync(
+      `INSERT INTO price_history (product_id, price_cents, recorded_at) VALUES (?, ?, ?)`,
+      productId,
+      Math.round(preco.priceCents),
+      preco.recordedAt,
+    );
+    tocados.add(productId);
+  }
+
+  // Mantém apenas os 10 preços mais recentes por produto tocado.
+  for (const productId of tocados) {
+    await database.runAsync(
+      `DELETE FROM price_history
+       WHERE product_id = ?
+         AND id NOT IN (
+           SELECT id FROM price_history
+           WHERE product_id = ?
+           ORDER BY recorded_at DESC, id DESC
+           LIMIT 10
+         )`,
+      productId,
+      productId,
     );
   }
 }

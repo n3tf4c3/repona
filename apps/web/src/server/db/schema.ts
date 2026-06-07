@@ -145,3 +145,16 @@ export const inventoryEvents = pgTable(
     check("inventory_events_event_type_check", sql`${table.eventType} in ('consumed')`),
   ]
 );
+
+export const priceHistory = pgTable(
+  "price_history",
+  {
+    id: serial("id").primaryKey(),
+    productId: integer("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    priceCents: integer("price_cents").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("price_history_product_idx").on(table.productId, table.recordedAt)]
+);

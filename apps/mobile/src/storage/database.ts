@@ -94,6 +94,17 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS inventory_events_product_idx
       ON inventory_events(product_id, event_type);
 
+    CREATE TABLE IF NOT EXISTS price_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      price_cents INTEGER NOT NULL,
+      recorded_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS price_history_product_idx
+      ON price_history(product_id, recorded_at);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

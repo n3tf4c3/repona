@@ -1,13 +1,16 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   products,
   inventoryItems,
   inventoryEvents,
   purchaseHistory,
+  priceHistory,
 } from "@/server/db/schema";
 import { productNameKey, type SyncSnapshot } from "@repona/core";
+
+const MAX_PRICES_PER_PRODUCT = 10;
 
 // Merge do snapshot do mobile na casa, devolvendo o snapshot mesclado.
 // Regras: produto casa por nome (o celular vence nos campos); compras e consumos
@@ -68,8 +71,41 @@ export async function mergeCasaSnapshot(
 
   await mesclarCompras(casaId, idPorNome, incoming.purchases);
   await mesclarConsumos(casaId, idPorNome, incoming.consumptions);
+  await mesclarPrecos(casaId, idPorNome, incoming.prices);
 
   return construirSnapshot(casaId);
+}
+
+async function mesclarPrecos(
+  casaId: number,
+  idPorNome: Map<string, number>,
+  incoming: SyncSnapshot["prices"]
+) {
+  const existentes = await db
+    .select({
+      productId: priceHistory.productId,
+      priceCents: priceHistory.priceCents,
+      recordedAt: priceHistory.recordedAt,
+    })
+    .from(priceHistory)
+    .innerJoin(products, eq(products.id, priceHistory.productId))
+    .where(eq(products.casaId, casaId));
+  const vistos = new Set(
+    existentes.map((e) => `${e.productId}|${e.recordedAt.toISOString()}|${e.priceCents}`)
+  );
+
+  for (const preco of incoming) {
+    const productId = idPorNome.get(productNameKey(preco.productName));
+    if (!productId) continue;
+    const at = new Date(preco.recordedAt);
+    if (Number.isNaN(at.getTime())) continue;
+    const chave = `${productId}|${at.toISOString()}|${preco.priceCents}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    await db
+      .insert(priceHistory)
+      .values({ productId, priceCents: Math.round(preco.priceCents), recordedAt: at });
+  }
 }
 
 async function mesclarCompras(
@@ -173,6 +209,31 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     .innerJoin(products, eq(products.id, inventoryEvents.productId))
     .where(eq(products.casaId, casaId));
 
+  const linhasPrecos = await db
+    .select({
+      productName: products.name,
+      priceCents: priceHistory.priceCents,
+      recordedAt: priceHistory.recordedAt,
+    })
+    .from(priceHistory)
+    .innerJoin(products, eq(products.id, priceHistory.productId))
+    .where(eq(products.casaId, casaId))
+    .orderBy(desc(priceHistory.recordedAt));
+
+  // Mantém só os 10 preços mais recentes por produto no snapshot devolvido.
+  const precosPorProduto = new Map<string, SyncSnapshot["prices"]>();
+  for (const p of linhasPrecos) {
+    const lista = precosPorProduto.get(p.productName) ?? [];
+    if (lista.length < MAX_PRICES_PER_PRODUCT) {
+      lista.push({
+        productName: p.productName,
+        priceCents: p.priceCents,
+        recordedAt: p.recordedAt.toISOString(),
+      });
+      precosPorProduto.set(p.productName, lista);
+    }
+  }
+
   return {
     products: linhasProdutos.map((p) => ({
       name: p.name,
@@ -196,5 +257,6 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       quantity: c.quantity,
       occurredAt: c.occurredAt.toISOString(),
     })),
+    prices: [...precosPorProduto.values()].flat(),
   };
 }
