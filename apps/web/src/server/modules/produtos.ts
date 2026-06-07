@@ -4,21 +4,6 @@ import { isEmptyQuantity, type ProductDTO, type NewProductInput, type ProductSta
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents, purchaseHistory } from "@/server/db/schema";
 
-// Catálogo inicial (mesmo do mobile: apps/mobile/src/storage/products.ts).
-const seedProducts: Array<{
-  name: string;
-  category: string;
-  purchaseCount: number;
-  status?: ProductStatus;
-}> = [
-  { name: "Leite integral", category: "Laticínios", purchaseCount: 12 },
-  { name: "Maçã Fuji", category: "Hortifrúti", purchaseCount: 9 },
-  { name: "Café torrado", category: "Bebidas", purchaseCount: 7, status: "missing" },
-  { name: "Ovos brancos", category: "Hortifrúti", purchaseCount: 11 },
-  { name: "Cenoura", category: "Hortifrúti", purchaseCount: 6 },
-  { name: "Biscoito", category: "Mercearia", purchaseCount: 5 },
-];
-
 // Subconsulta de consumo agregado (eventos 'consumed') por produto.
 function consumoSubquery() {
   return db
@@ -195,30 +180,3 @@ export async function deleteProduto(casaId: number, id: number): Promise<void> {
   await db.delete(products).where(and(eq(products.casaId, casaId), eq(products.id, id)));
 }
 
-export async function seedProdutosIniciais(casaId: number): Promise<void> {
-  const [contagem] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(products)
-    .where(eq(products.casaId, casaId));
-  if (Number(contagem?.count ?? 0) > 0) return;
-
-  for (const produto of seedProducts) {
-    const status = produto.status ?? "active";
-    const [criado] = await db
-      .insert(products)
-      .values({
-        casaId: casaId,
-        name: produto.name,
-        category: produto.category,
-        purchaseCount: produto.purchaseCount,
-        status,
-      })
-      .returning({ id: products.id });
-
-    await db.insert(inventoryItems).values({
-      productId: criado.id,
-      quantity: status === "missing" ? "0 un" : "1 un",
-      status: status === "missing" ? "missing" : "in_stock",
-    });
-  }
-}

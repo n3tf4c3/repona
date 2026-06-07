@@ -1,12 +1,11 @@
 import { buildInventoryAlerts, buildRebuySuggestion } from "@repona/core";
 import { requireCasa } from "@/server/auth/session";
-import { listProdutos, seedProdutosIniciais } from "@/server/modules/produtos";
+import { listProdutos } from "@/server/modules/produtos";
 import { garantirListaAtiva, listarItensAtivos } from "@/server/modules/listas";
 import { InicioClient } from "./inicio-client";
 
 export default async function InicioPage() {
   const { casaId: id } = await requireCasa();
-  await seedProdutosIniciais(id);
 
   const lista = await garantirListaAtiva(id);
   const [produtos, itens] = await Promise.all([listProdutos(id), listarItensAtivos(id, lista.id)]);
