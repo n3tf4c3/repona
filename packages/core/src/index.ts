@@ -21,3 +21,10 @@ export type {
   RebuySuggestion,
 } from "./home-rules";
 export { buildInventoryAlerts, buildRebuySuggestion } from "./home-rules";
+export type {
+  SyncProduct,
+  SyncPurchase,
+  SyncConsumption,
+  SyncSnapshot,
+} from "./sync";
+export { productNameKey, eventKey } from "./sync";

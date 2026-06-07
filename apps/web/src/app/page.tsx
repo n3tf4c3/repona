@@ -13,13 +13,18 @@ export default function HomePage() {
           Lista de compras e controle de estoque da sua casa — agora na web.
         </p>
       </div>
-      <Link
-        href="/login"
-        className="flex items-center gap-2 rounded-xl bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90"
-      >
-        Entrar
-        <ArrowRight size={16} strokeWidth={2.4} />
-      </Link>
+      <div className="flex flex-col items-center gap-3">
+        <Link
+          href="/login"
+          className="flex items-center gap-2 rounded-xl bg-ink px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+        >
+          Entrar
+          <ArrowRight size={16} strokeWidth={2.4} />
+        </Link>
+        <Link href="/cadastro" className="text-sm font-semibold text-ink-soft hover:text-ink">
+          Criar conta
+        </Link>
+      </div>
     </main>
   );
 }

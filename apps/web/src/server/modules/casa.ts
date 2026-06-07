@@ -43,7 +43,7 @@ function registrarTentativaConvite(userId: number) {
   tentativasConvite.set(userId, { ...tentativa, count: tentativa.count + 1 });
 }
 
-async function criarCasa(name = "Minha casa"): Promise<number> {
+export async function criarCasa(name = "Minha casa"): Promise<number> {
   // Tenta algumas vezes em caso de colisão do código único.
   for (let tentativa = 0; tentativa < 5; tentativa++) {
     try {
@@ -73,6 +73,19 @@ export async function garantirCasa(userId: number): Promise<number> {
   const casaId = await criarCasa();
   await db.update(usuarios).set({ casaId }).where(eq(usuarios.id, userId));
   return casaId;
+}
+
+// Resolve a casa pelo código de convite. Usado pela sincronização do mobile,
+// onde o código é a própria credencial (sem login/senha).
+export async function obterCasaPorCodigo(code: string): Promise<number | null> {
+  const codigo = code.trim().toUpperCase();
+  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(codigo)) return null;
+  const [casa] = await db
+    .select({ id: casas.id })
+    .from(casas)
+    .where(eq(casas.inviteCode, codigo))
+    .limit(1);
+  return casa?.id ?? null;
 }
 
 export async function obterCasa(userId: number): Promise<CasaDTO> {

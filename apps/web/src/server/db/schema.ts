@@ -40,6 +40,23 @@ export const usuarios = pgTable(
 export type Usuario = typeof usuarios.$inferSelect;
 export type NovoUsuario = typeof usuarios.$inferInsert;
 
+// Tokens de redefinição de senha. Guardamos apenas o hash do token (o valor em
+// claro só vai no link enviado ao usuário). Expiram e são de uso único.
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: serial("id").primaryKey(),
+    usuarioId: integer("usuario_id")
+      .notNull()
+      .references(() => usuarios.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("password_reset_tokens_usuario_idx").on(table.usuarioId)]
+);
+
 // Tabelas de domínio (por casa) — espelham o SQLite do mobile
 // (apps/mobile/src/storage/database.ts), escopadas à casa do usuário logado.
 

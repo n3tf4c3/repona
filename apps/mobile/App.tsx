@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { futureFeatures } from './src/data';
 import { productRecordToProduct } from './src/productPresentation';
 import { purchaseHistoryRecordsToGroups } from './src/purchaseHistoryPresentation';
 import type { PurchaseHistoryGroup, PurchaseHistoryItem } from './src/purchaseHistoryPresentation';
@@ -36,6 +35,14 @@ import {
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
+import {
+  getCasaCode,
+  getLastSyncAt,
+  pairAndSync,
+  syncNow,
+  unpairCasa,
+  type SyncResult,
+} from './src/storage/syncClient';
 import { IconName, NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
 import { colors, radius, shadow, spacing, typography } from './src/theme';
 import {
@@ -352,6 +359,7 @@ export default function App() {
               onToggleItem={toggleItem}
               onChangeQuantity={changeItemQuantity}
               onRemoveItem={removeItem}
+              onNewList={confirmCreateNewShoppingList}
             />
           ) : null}
           {activeTab === 'products' ? (
@@ -368,7 +376,13 @@ export default function App() {
             />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} /> : null}
-          {activeTab === 'future' ? <FutureScreen /> : null}
+          {activeTab === 'future' ? (
+            <FutureScreen
+              onSynced={() => {
+                void Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory()]);
+              }}
+            />
+          ) : null}
         </SafeAreaView>
 
         {activeTab === 'list' ? (
@@ -430,6 +444,15 @@ function HomeScreen({
 }) {
   const todayLabel = formatTodayLabel();
 
+  function handleShowAlerts() {
+    if (inventoryAlerts.length === 0) {
+      Alert.alert('Alertas de estoque', 'Tudo em dia — nada em falta ou baixo agora.');
+      return;
+    }
+    const linhas = inventoryAlerts.map((alert) => `• ${alert.product.name}: ${alert.description}`).join('\n\n');
+    Alert.alert('Alertas de estoque', linhas);
+  }
+
   return (
     <ScreenScroll>
       <Header
@@ -437,8 +460,8 @@ function HomeScreen({
         title="Olá"
         actions={
           <>
-            <IconButton icon="magnify" />
-            <IconButton icon="bell-outline" badge />
+            <IconButton icon="magnify" onPress={onOpenProducts} />
+            <IconButton icon="bell-outline" badge={inventoryAlerts.length > 0} onPress={handleShowAlerts} />
           </>
         }
       />
@@ -446,7 +469,7 @@ function HomeScreen({
       <QuickActions onNewProduct={onNewProduct} onNewList={onNewList} onHistory={onOpenHistory} />
       <InventoryAlertsCard alerts={inventoryAlerts} isReady={isProductsReady} onOpenProducts={onOpenProducts} />
       <SuggestionCard suggestion={rebuySuggestion} onAdd={onAddSuggestionToList} />
-      <SectionTitle title="Você costuma comprar" action="Ver tudo" />
+      <SectionTitle title="Você costuma comprar" action="Ver tudo" onAction={onOpenProducts} />
       <ProductListPreview products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
     </ScreenScroll>
   );
@@ -460,6 +483,7 @@ function ShoppingListScreen({
   onToggleItem,
   onChangeQuantity,
   onRemoveItem,
+  onNewList,
 }: {
   items: ShoppingItem[];
   isReady: boolean;
@@ -468,10 +492,18 @@ function ShoppingListScreen({
   onToggleItem: (id: number) => void;
   onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
   onRemoveItem: (id: number) => void;
+  onNewList: () => void;
 }) {
   const checkedCount = items.filter((item) => item.checked).length;
   const grouped = useMemo(() => groupShoppingItems(items), [items]);
   const progress = items.length > 0 ? checkedCount / items.length : 0;
+
+  function handleOpenMenu() {
+    Alert.alert(listName, undefined, [
+      { text: 'Criar nova lista', onPress: onNewList },
+      { text: 'Fechar', style: 'cancel' },
+    ]);
+  }
 
   return (
     <ScreenScroll bottomPadding={120}>
@@ -483,7 +515,7 @@ function ShoppingListScreen({
             <Text style={styles.titleText}>{listName}</Text>
           </View>
         </View>
-        <IconButton icon="dots-vertical" />
+        <IconButton icon="dots-vertical" onPress={handleOpenMenu} />
       </View>
       <ProgressBar progress={progress} />
       {!isReady ? <EmptyState title="Carregando lista" description="Buscando os itens salvos localmente." /> : null}
@@ -529,25 +561,37 @@ function ProductsScreen({
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
-  const filteredProducts = useMemo(
-    () => filterProducts(products, searchTerm, selectedCategory),
-    [products, searchTerm, selectedCategory],
+  const [onlyNeedsRestock, setOnlyNeedsRestock] = useState(false);
+  const restockIds = useMemo(
+    () => new Set(buildInventoryAlerts(products).map((alert) => alert.product.id)),
+    [products],
   );
+  const filteredProducts = useMemo(() => {
+    const base = filterProducts(products, searchTerm, selectedCategory);
+    return onlyNeedsRestock ? base.filter((product) => restockIds.has(product.id)) : base;
+  }, [products, searchTerm, selectedCategory, onlyNeedsRestock, restockIds]);
 
   return (
     <ScreenScroll>
       <Header
         eyebrow="Catálogo da casa"
         title="Produtos"
-        actions={<IconButton icon="tune-variant" />}
+        actions={
+          <IconButton
+            icon="tune-variant"
+            badge={onlyNeedsRestock}
+            onPress={() => setOnlyNeedsRestock((value) => !value)}
+          />
+        }
       />
       <SearchBox placeholder="Buscar produto..." value={searchTerm} onChangeText={setSearchTerm} />
       {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
+      {onlyNeedsRestock ? <Text style={styles.subtleText}>Mostrando só itens em falta ou com estoque baixo.</Text> : null}
       <ChipRow chips={['Todos', 'Mercearia', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
       <ProductList
         products={filteredProducts}
         isReady={isProductsReady}
-        hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos'}
+        hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos' || onlyNeedsRestock}
         onAdd={onAddProductToList}
         onEdit={onEditProduct}
         onRemove={onRemoveProduct}
@@ -568,11 +612,7 @@ function HistoryScreen({
 }) {
   return (
     <ScreenScroll>
-      <Header
-        eyebrow="Suas compras anteriores"
-        title="Histórico"
-        actions={<IconButton icon="calendar-month-outline" />}
-      />
+      <Header eyebrow="Suas compras anteriores" title="Histórico" />
       {!isReady ? <EmptyState title="Carregando histórico" description="Buscando as compras finalizadas." /> : null}
       {isReady && historyGroups.length === 0 ? <EmptyState title="Nenhuma compra registrada" description="Finalize itens marcados na lista para criar o primeiro histórico." /> : null}
       {historyGroups.map((group) => (
@@ -587,10 +627,10 @@ function HistoryScreen({
   );
 }
 
-function FutureScreen() {
+function FutureScreen({ onSynced }: { onSynced: () => void }) {
   return (
     <ScreenScroll>
-      <Header eyebrow="No horizonte" title="Casa Repona" actions={<IconButton icon="account-group-outline" />} />
+      <Header eyebrow="No horizonte" title="Casa Repona" />
       <View style={styles.futureHero}>
         <IconBubble icon="home-variant-outline" background="rgba(127,217,160,0.18)" tint="#7FD9A0" size={52} />
         <Text style={styles.futureHeroTitle}>Feito para famílias brasileiras</Text>
@@ -598,20 +638,151 @@ function FutureScreen() {
           O MVP funciona offline e já prepara espaço para estoque doméstico, scanner e compartilhamento familiar.
         </Text>
       </View>
-      <SectionTitle title="Feito para crescer" />
-      {futureFeatures.map((feature) => (
-        <View key={feature.title} style={styles.futureCard}>
-          <IconBubble icon={feature.icon} background="rgba(127,217,160,0.15)" tint="#7FD9A0" size={48} />
-          <View style={styles.futureCardText}>
-            <Text style={styles.futureCardTitle}>{feature.title}</Text>
-            <Text style={styles.futureCardDescription}>{feature.description}</Text>
-            <View style={styles.soonPill}>
-              <Text style={styles.soonText}>Em breve</Text>
-            </View>
-          </View>
-        </View>
-      ))}
+      <CasaSyncCard onSynced={onSynced} />
     </ScreenScroll>
+  );
+}
+
+const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], string> = {
+  NOT_PAIRED: 'Conecte a uma casa primeiro.',
+  INVALID_CODE: 'Código inválido. São 8 caracteres (letras e números).',
+  NETWORK: 'Sem conexão com o servidor. Confira a rede e a URL da API.',
+  CASA_NOT_FOUND: 'Nenhuma casa encontrada com esse código.',
+  SERVER: 'O servidor recusou a sincronização. Tente de novo.',
+};
+
+function formatSyncMoment(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'agora';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} às ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
+  const [code, setCode] = useState('');
+  const [pairedCode, setPairedCode] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      setPairedCode(await getCasaCode());
+      setLastSyncAt(await getLastSyncAt());
+    })();
+  }, []);
+
+  function handleResult(result: SyncResult) {
+    if (result.ok) {
+      setLastSyncAt(result.lastSyncAt);
+      setMessage({ kind: 'ok', text: 'Tudo sincronizado com a casa.' });
+      onSynced();
+    } else {
+      setMessage({ kind: 'error', text: SYNC_ERROR_MESSAGES[result.error] });
+    }
+  }
+
+  async function handlePair() {
+    setBusy(true);
+    setMessage(null);
+    const result = await pairAndSync(code);
+    setBusy(false);
+    if (result.ok) {
+      setPairedCode(code.trim().toUpperCase());
+      setCode('');
+    }
+    handleResult(result);
+  }
+
+  async function handleSync() {
+    setBusy(true);
+    setMessage(null);
+    const result = await syncNow();
+    setBusy(false);
+    handleResult(result);
+  }
+
+  function handleUnpair() {
+    Alert.alert('Desconectar da casa', 'Os dados locais continuam no aparelho. Deseja desconectar?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Desconectar',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            await unpairCasa();
+            setPairedCode(null);
+            setLastSyncAt(null);
+            setMessage(null);
+          })();
+        },
+      },
+    ]);
+  }
+
+  return (
+    <View style={styles.syncCard}>
+      <View style={styles.syncHeader}>
+        <IconBubble icon="cloud-sync-outline" background={colors.indigoSoft} tint={colors.indigo} size={44} />
+        <View style={styles.syncHeaderText}>
+          <Text style={styles.syncTitle}>Backup na nuvem</Text>
+          <Text style={styles.subtleText}>
+            Conecte pelo código da sua casa (no app web) para guardar produtos, estoque e histórico.
+          </Text>
+        </View>
+      </View>
+
+      {pairedCode ? (
+        <>
+          <View style={styles.syncPairedRow}>
+            <Text style={styles.syncPairedLabel}>Casa conectada</Text>
+            <Text style={styles.syncPairedCode}>{pairedCode}</Text>
+          </View>
+          <Text style={styles.subtleText}>
+            {lastSyncAt ? `Última sincronização: ${formatSyncMoment(lastSyncAt)}.` : 'Ainda não sincronizado.'}
+          </Text>
+          <Pressable
+            style={[styles.saveButton, busy ? styles.saveButtonDisabled : null]}
+            disabled={busy}
+            onPress={handleSync}
+          >
+            <MaterialCommunityIcons name="sync" size={20} color={colors.surface} />
+            <Text style={styles.saveButtonText}>{busy ? 'Sincronizando...' : 'Sincronizar agora'}</Text>
+          </Pressable>
+          <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handleUnpair}>
+            <Text style={styles.syncUnpairText}>Desconectar</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <View style={styles.inputBox}>
+            <MaterialCommunityIcons name="key-outline" size={20} color={colors.primaryStrong} />
+            <TextInput
+              value={code}
+              onChangeText={(text) => setCode(text.toUpperCase())}
+              style={styles.input}
+              placeholder="Código da casa (8 caracteres)"
+              placeholderTextColor={colors.ink3}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={8}
+            />
+          </View>
+          <Pressable
+            style={[styles.saveButton, busy ? styles.saveButtonDisabled : null]}
+            disabled={busy}
+            onPress={handlePair}
+          >
+            <MaterialCommunityIcons name="link-variant" size={20} color={colors.surface} />
+            <Text style={styles.saveButtonText}>{busy ? 'Conectando...' : 'Conectar à casa'}</Text>
+          </Pressable>
+        </>
+      )}
+
+      {message ? (
+        <Text style={message.kind === 'ok' ? styles.syncMessageOk : styles.formError}>{message.text}</Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -821,11 +992,19 @@ function SuggestionCard({ suggestion, onAdd }: { suggestion: RebuySuggestion | n
   );
 }
 
-function SectionTitle({ title, action }: { title: string; action?: string }) {
+function SectionTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
   return (
     <View style={styles.sectionTitle}>
       <Text style={styles.sectionTitleText}>{title}</Text>
-      {action ? <Text style={styles.sectionAction}>{action}</Text> : null}
+      {action ? (
+        onAction ? (
+          <Pressable onPress={onAction}>
+            <Text style={styles.sectionAction}>{action}</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.sectionAction}>{action}</Text>
+        )
+      ) : null}
     </View>
   );
 }
@@ -2243,37 +2422,6 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: 'rgba(255,255,255,0.72)',
   },
-  futureCard: {
-    flexDirection: 'row',
-    gap: 14,
-    backgroundColor: colors.ink,
-    borderRadius: radius.card,
-    padding: 18,
-  },
-  futureCardText: {
-    flex: 1,
-    gap: 5,
-  },
-  futureCardTitle: {
-    ...typography.h3,
-    color: colors.surface,
-  },
-  futureCardDescription: {
-    ...typography.body,
-    color: 'rgba(255,255,255,0.66)',
-  },
-  soonPill: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    borderRadius: 8,
-    backgroundColor: 'rgba(127,217,160,0.12)',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-  },
-  soonText: {
-    ...typography.badge,
-    color: '#7FD9A0',
-  },
   bottomShell: {
     position: 'absolute',
     left: 0,
@@ -2505,5 +2653,57 @@ const styles = StyleSheet.create({
   saveButtonText: {
     ...typography.labelStrong,
     color: colors.surface,
+  },
+  syncCard: {
+    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.card,
+    borderWidth: 1,
+    borderColor: colors.indigoSoft,
+    padding: 16,
+    ...shadow.small,
+  },
+  syncHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  syncHeaderText: {
+    flex: 1,
+    gap: 3,
+  },
+  syncTitle: {
+    ...typography.h3,
+    color: colors.ink,
+  },
+  syncPairedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 12,
+    backgroundColor: colors.indigoSoft,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  syncPairedLabel: {
+    ...typography.labelStrong,
+    color: colors.ink2,
+  },
+  syncPairedCode: {
+    ...typography.labelStrong,
+    color: colors.indigo,
+    letterSpacing: 2,
+  },
+  syncUnpairButton: {
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  syncUnpairText: {
+    ...typography.label,
+    color: colors.coral,
+  },
+  syncMessageOk: {
+    ...typography.label,
+    color: colors.primaryStrong,
   },
 });

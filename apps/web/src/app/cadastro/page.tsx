@@ -5,29 +5,50 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { ShoppingBasket, AlertCircle } from "lucide-react";
+import { cadastrarAction } from "./actions";
 
 const inputClass =
   "w-full rounded-xl border border-line bg-surface px-4 py-3 text-ink outline-none transition placeholder:text-ink-faint focus:border-primary";
 
-export default function LoginPage() {
+export default function CadastroPage() {
   const router = useRouter();
+  const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [senha, setSenha] = useState("");
+  const [confirmar, setConfirmar] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (senha.length < 8) {
+      setError("A senha precisa ter ao menos 8 caracteres.");
+      return;
+    }
+    if (senha !== confirmar) {
+      setError("As senhas não coincidem.");
+      return;
+    }
+
     setLoading(true);
-    const result = await signIn("credentials", { email, password, redirect: false });
+    const result = await cadastrarAction({ nome, email, senha });
+    if (!result.ok) {
+      setLoading(false);
+      setError(result.error);
+      return;
+    }
+
+    const signInResult = await signIn("credentials", { email, password: senha, redirect: false });
     setLoading(false);
-    if (result?.ok) {
+    if (signInResult?.ok) {
       router.push("/inicio");
       router.refresh();
       return;
     }
-    setError("E-mail ou senha inválidos.");
+    // Conta criada, mas o login automático falhou: manda para o login manual.
+    router.push("/login");
   }
 
   return (
@@ -37,11 +58,24 @@ export default function LoginPage() {
           <ShoppingBasket size={28} strokeWidth={2.2} />
         </span>
         <div>
-          <h1 className="text-2xl font-black tracking-tight">Entrar no Repona</h1>
-          <p className="mt-1 text-sm text-ink-faint">Acesse a lista e o estoque da sua casa.</p>
+          <h1 className="text-2xl font-black tracking-tight">Criar conta no Repona</h1>
+          <p className="mt-1 text-sm text-ink-faint">Comece a organizar a lista e o estoque da sua casa.</p>
         </div>
       </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 rounded-card border border-line bg-surface p-6 shadow-sm">
+        <div className="flex flex-col gap-2">
+          <label htmlFor="nome" className="text-sm font-semibold text-ink-soft">
+            Nome <span className="font-normal text-ink-faint">(opcional)</span>
+          </label>
+          <input
+            id="nome"
+            type="text"
+            autoComplete="name"
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            className={inputClass}
+          />
+        </div>
         <div className="flex flex-col gap-2">
           <label htmlFor="email" className="text-sm font-semibold text-ink-soft">
             E-mail
@@ -57,16 +91,30 @@ export default function LoginPage() {
           />
         </div>
         <div className="flex flex-col gap-2">
-          <label htmlFor="password" className="text-sm font-semibold text-ink-soft">
+          <label htmlFor="senha" className="text-sm font-semibold text-ink-soft">
             Senha
           </label>
           <input
-            id="password"
+            id="senha"
             type="password"
-            autoComplete="current-password"
+            autoComplete="new-password"
             required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={senha}
+            onChange={(e) => setSenha(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <label htmlFor="confirmar" className="text-sm font-semibold text-ink-soft">
+            Confirmar senha
+          </label>
+          <input
+            id="confirmar"
+            type="password"
+            autoComplete="new-password"
+            required
+            value={confirmar}
+            onChange={(e) => setConfirmar(e.target.value)}
             className={inputClass}
           />
         </div>
@@ -81,21 +129,15 @@ export default function LoginPage() {
           disabled={loading}
           className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
         >
-          {loading ? "Entrando..." : "Entrar"}
+          {loading ? "Criando conta..." : "Criar conta"}
         </button>
-        <Link href="/recuperar-senha" className="text-center text-sm text-ink-faint hover:text-ink-soft">
-          Esqueci minha senha
-        </Link>
       </form>
       <p className="text-center text-sm text-ink-faint">
-        Não tem conta?{" "}
-        <Link href="/cadastro" className="font-semibold text-ink-soft hover:text-ink">
-          Criar conta
+        Já tem conta?{" "}
+        <Link href="/login" className="font-semibold text-ink-soft hover:text-ink">
+          Entrar
         </Link>
       </p>
-      <Link href="/" className="text-center text-sm text-ink-faint hover:text-ink-soft">
-        Voltar
-      </Link>
     </main>
   );
 }

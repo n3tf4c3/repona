@@ -94,6 +94,11 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS inventory_events_product_idx
       ON inventory_events(product_id, event_type);
 
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     UPDATE shopping_lists
       SET status = 'archived', updated_at = datetime('now')
       WHERE status = 'active'
