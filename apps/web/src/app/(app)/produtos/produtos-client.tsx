@@ -235,13 +235,18 @@ function ProductCard({
             </p>
           </div>
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
-            emFalta ? "bg-coral-soft text-danger" : "bg-primary-soft text-primary-strong"
-          }`}
-        >
-          {emFalta ? "Em falta" : "Em estoque"}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+              emFalta ? "bg-coral-soft text-danger" : "bg-primary-soft text-primary-strong"
+            }`}
+          >
+            {emFalta ? "Em falta" : "Em estoque"}
+          </span>
+          {produto.occasional && (
+            <span className="rounded-full bg-bg px-2 py-0.5 text-xs font-bold text-ink-faint">Eventual</span>
+          )}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -380,6 +385,7 @@ function ProdutoModal({
   const [name, setName] = useState(produto?.name ?? "");
   const [category, setCategory] = useState(produto?.category ?? CATEGORIAS[0]);
   const [alertThreshold, setAlertThreshold] = useState(produto?.alertThreshold ?? "");
+  const [occasional, setOccasional] = useState(produto?.occasional ?? false);
 
   return (
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
@@ -424,6 +430,20 @@ function ProdutoModal({
               className="mt-1 w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
             />
           </label>
+          <label className="flex items-start gap-3 rounded-xl border border-line p-3">
+            <input
+              type="checkbox"
+              checked={occasional}
+              onChange={(e) => setOccasional(e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>
+              <span className="text-sm font-semibold text-ink-soft">Compra eventual</span>
+              <span className="block text-xs text-ink-faint">
+                Itens de ocasião (ex.: churrasco) não geram alerta de reposição nem sugestão de recompra.
+              </span>
+            </span>
+          </label>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -434,7 +454,7 @@ function ProdutoModal({
           </button>
           <button
             disabled={pending}
-            onClick={() => onSalvar({ name, category, alertThreshold })}
+            onClick={() => onSalvar({ name, category, alertThreshold, occasional })}
             className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
             {pending ? "Salvando..." : "Salvar"}

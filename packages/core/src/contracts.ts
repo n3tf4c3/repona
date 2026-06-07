@@ -20,6 +20,7 @@ export type ProductDTO = {
   consumptionCount: number;
   lastConsumedAt: string | null;
   archived: boolean;
+  occasional: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -30,6 +31,7 @@ export type NewProductInput = {
   barcode?: string | null;
   photoUri?: string | null;
   alertThreshold?: string | null;
+  occasional?: boolean;
 };
 
 export type ShoppingListDTO = {

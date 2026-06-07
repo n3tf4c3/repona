@@ -32,6 +32,7 @@ type ProdutoRow = {
   consumptionCount: number;
   lastConsumedAt: Date | null;
   archived: boolean;
+  occasional: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -57,6 +58,7 @@ function selecionarProdutos(casaId: number, opts?: { id?: number; arquivado?: bo
       consumptionCount: sql<number>`coalesce(${consumo.consumptionCount}, 0)`,
       lastConsumedAt: consumo.lastConsumedAt,
       archived: products.archived,
+      occasional: products.occasional,
       createdAt: products.createdAt,
       updatedAt: products.updatedAt,
     })
@@ -84,6 +86,7 @@ function mapProduto(row: ProdutoRow): ProductDTO {
     // de timestamp), entao normalizamos via Date antes de serializar.
     lastConsumedAt: row.lastConsumedAt ? new Date(row.lastConsumedAt).toISOString() : null,
     archived: row.archived,
+    occasional: row.occasional,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -136,6 +139,7 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       barcode: input.barcode ?? null,
       photoUri: input.photoUri ?? null,
       alertThreshold: input.alertThreshold?.trim() || null,
+      occasional: input.occasional ?? false,
     })
     .returning({ id: products.id });
 
@@ -168,6 +172,7 @@ export async function updateProduto(
       barcode: input.barcode ?? null,
       photoUri: input.photoUri ?? null,
       alertThreshold: input.alertThreshold?.trim() || null,
+      occasional: input.occasional ?? false,
       updatedAt: new Date(),
     })
     .where(and(eq(products.casaId, casaId), eq(products.id, id)));

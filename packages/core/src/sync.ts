@@ -17,6 +17,7 @@ export type SyncProduct = {
   inventoryQuantity: string;
   inventoryStatus: InventoryStatus;
   archived: boolean;
+  occasional: boolean;
 };
 
 export type SyncPurchase = {

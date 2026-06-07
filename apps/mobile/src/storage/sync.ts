@@ -42,6 +42,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       inventoryQuantity: p.inventoryQuantity,
       inventoryStatus: p.inventoryStatus,
       archived: p.archived,
+      occasional: p.occasional,
     })),
     purchases: compras.map((c) => ({
       productName: c.productName,
@@ -72,8 +73,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     for (const prod of snapshot.products) {
       await database.runAsync(
         `INSERT INTO products
-           (name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, occasional, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            category = excluded.category,
            barcode = excluded.barcode,
@@ -82,6 +83,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
            status = excluded.status,
            alert_threshold = excluded.alert_threshold,
            archived = excluded.archived,
+           occasional = excluded.occasional,
            updated_at = excluded.updated_at`,
         prod.name.trim(),
         prod.category,
@@ -91,6 +93,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         prod.status,
         prod.alertThreshold,
         prod.archived ? 1 : 0,
+        prod.occasional ? 1 : 0,
         now,
         now,
       );

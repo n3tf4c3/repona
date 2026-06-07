@@ -42,6 +42,7 @@ const productInputSchema = z.object({
   barcode: z.string().trim().max(80).nullable().optional().transform((value) => value || null),
   photoUri: z.string().trim().max(1000).nullable().optional().transform((value) => value || null),
   alertThreshold: z.string().trim().max(30).nullable().optional().transform((value) => value || null),
+  occasional: z.boolean().optional().default(false),
 });
 
 function tratar(error: unknown): Resultado {

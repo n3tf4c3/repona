@@ -18,6 +18,7 @@ function produto(over: Partial<ProductDTO>): ProductDTO {
     consumptionCount: 0,
     lastConsumedAt: null,
     archived: false,
+    occasional: false,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,
@@ -37,6 +38,21 @@ test("alerta 'missing' aparece e vem antes de 'low'", () => {
 test("estoque alto não gera alerta", () => {
   const alerts = buildInventoryAlerts([produto({ inventoryQuantity: "5 un" })]);
   assert.equal(alerts.length, 0);
+});
+
+test("compra eventual não gera alerta mesmo em falta", () => {
+  const alerts = buildInventoryAlerts([
+    produto({ name: "Picanha", inventoryStatus: "missing", inventoryQuantity: "0 un", occasional: true }),
+  ]);
+  assert.equal(alerts.length, 0);
+});
+
+test("compra eventual fica fora da sugestão de recompra", () => {
+  const s = buildRebuySuggestion(
+    [produto({ id: 9, name: "Picanha", inventoryStatus: "missing", inventoryQuantity: "0 un", occasional: true })],
+    []
+  );
+  assert.equal(s, null);
 });
 
 test("limiar customizado define estoque baixo", () => {

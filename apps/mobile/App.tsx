@@ -1249,7 +1249,10 @@ function ProductRow({
         <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
       )}
       <View style={styles.productText}>
-        <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+        <View style={styles.productNameRow}>
+          <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+          {product.occasional ? <Text style={styles.eventualBadge}>Eventual</Text> : null}
+        </View>
         <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
         {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
         {onChangeInventory && onMarkInventoryMissing && onConsume ? (
@@ -1827,6 +1830,7 @@ function NewProductSheet({
   const [category, setCategory] = useState('Mercearia');
   const [barcode, setBarcode] = useState<string | null>(null);
   const [alertThreshold, setAlertThreshold] = useState('');
+  const [occasional, setOccasional] = useState(false);
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -1844,6 +1848,7 @@ function NewProductSheet({
       setCategory(product?.category ?? 'Mercearia');
       setBarcode(product?.barcode ?? null);
       setAlertThreshold(product?.alertThreshold ?? '');
+      setOccasional(product?.occasional ?? false);
       setBarcodeError(null);
       setPhotoUri(product?.photoUri ?? null);
       setPhotoError(null);
@@ -1917,7 +1922,7 @@ function NewProductSheet({
     }
 
     setIsSaving(true);
-    await onSave({ name, category, barcode, photoUri, alertThreshold: alertThreshold.trim() || null });
+    await onSave({ name, category, barcode, photoUri, alertThreshold: alertThreshold.trim() || null, occasional });
     setIsSaving(false);
   }
 
@@ -1954,6 +1959,17 @@ function NewProductSheet({
               placeholderTextColor={colors.ink3}
             />
           </View>
+          <Pressable style={styles.occasionalRow} onPress={() => setOccasional((value) => !value)}>
+            <MaterialCommunityIcons
+              name={occasional ? 'checkbox-marked' : 'checkbox-blank-outline'}
+              size={22}
+              color={occasional ? colors.primaryStrong : colors.ink3}
+            />
+            <View style={styles.occasionalTextBlock}>
+              <Text style={styles.occasionalTitle}>Compra eventual</Text>
+              <Text style={styles.occasionalHint}>Itens de ocasião (ex.: churrasco) não geram alerta de reposição.</Text>
+            </View>
+          </Pressable>
           {photoUri ? <Image source={{ uri: photoUri }} style={styles.sheetPhotoPreview} /> : null}
           <View style={styles.optionalRow}>
             <OptionalCapture icon="camera-outline" label={photoUri ? 'Foto anexada' : 'Foto (opcional)'} onPress={openPhotoCamera} />
@@ -2630,6 +2646,37 @@ const styles = StyleSheet.create({
   unarchiveText: {
     ...typography.labelStrong,
     color: colors.primaryStrong,
+  },
+  occasionalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  occasionalTextBlock: {
+    flex: 1,
+  },
+  occasionalTitle: {
+    ...typography.labelStrong,
+    color: colors.ink,
+  },
+  occasionalHint: {
+    ...typography.label,
+    color: colors.ink3,
+  },
+  productNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  eventualBadge: {
+    ...typography.label,
+    color: colors.ink2,
+    backgroundColor: colors.bg2,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    overflow: 'hidden',
   },
   productError: {
     ...typography.labelStrong,

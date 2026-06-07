@@ -19,6 +19,7 @@ export type Product = {
   consumptionCount?: number;
   lastConsumedAt?: string | null;
   archived?: boolean;
+  occasional?: boolean;
   meta: string;
   icon: IconName;
   background: string;

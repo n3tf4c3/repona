@@ -19,6 +19,7 @@ export type ProductRecord = {
   consumptionCount: number;
   lastConsumedAt: string | null;
   archived: boolean;
+  occasional: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -37,6 +38,7 @@ type ProductRow = {
   consumption_count: number;
   last_consumed_at: string | null;
   archived: number;
+  occasional: number;
   created_at: string;
   updated_at: string;
 };
@@ -56,6 +58,7 @@ const PRODUCT_SELECT = `
       COALESCE(ie.consumption_count, 0) as consumption_count,
       ie.last_consumed_at,
       p.archived,
+      p.occasional,
       p.created_at,
       p.updated_at
     FROM products p
@@ -136,13 +139,14 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   let productId = 0;
   await database.withTransactionAsync(async () => {
     const result = await database.runAsync(
-      `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, purchase_count, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
       name,
       category || 'Mercearia',
       input.barcode ?? null,
       input.photoUri ?? null,
       input.alertThreshold?.trim() || null,
+      input.occasional ? 1 : 0,
       now,
       now,
     );
@@ -172,6 +176,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
        p.archived,
+       p.occasional,
        p.created_at,
        p.updated_at
      FROM products p
@@ -221,6 +226,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
           barcode = ?,
           photo_uri = ?,
           alert_threshold = ?,
+          occasional = ?,
           updated_at = ?
       WHERE id = ?`,
     name,
@@ -228,6 +234,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
     input.barcode ?? null,
     input.photoUri ?? null,
     input.alertThreshold?.trim() || null,
+    input.occasional ? 1 : 0,
     now,
     productId,
   );
@@ -247,6 +254,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
        p.archived,
+       p.occasional,
        p.created_at,
        p.updated_at
      FROM products p
@@ -303,6 +311,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
     consumptionCount: row.consumption_count,
     lastConsumedAt: row.last_consumed_at,
     archived: row.archived === 1,
+    occasional: row.occasional === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

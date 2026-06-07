@@ -61,6 +61,7 @@ export function productRecordToProduct(record: ProductRecord): Product {
     consumptionCount: record.consumptionCount,
     lastConsumedAt: record.lastConsumedAt,
     archived: record.archived,
+    occasional: record.occasional,
     meta: buildProductMeta(record),
     ...visual,
   };

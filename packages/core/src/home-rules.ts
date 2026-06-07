@@ -16,6 +16,8 @@ export type ProductLike = {
   inventoryStatus?: "in_stock" | "missing";
   alertThreshold?: string | null;
   lastConsumedAt?: string | null;
+  // Compra eventual (ex.: churrasco): fica fora de alertas e sugestão de recompra.
+  occasional?: boolean;
 };
 
 export type InventoryAlert<P extends ProductLike = ProductDTO> = {
@@ -102,6 +104,7 @@ function descricaoComConsumo(product: ProductLike, base: string): string {
 
 export function buildInventoryAlerts<P extends ProductLike>(products: P[]): InventoryAlert<P>[] {
   const alerts = products.reduce<InventoryAlert<P>[]>((items, product) => {
+    if (product.occasional) return items;
     if (product.inventoryStatus === "missing") {
       items.push({
         id: `${product.id}-missing`,
@@ -156,6 +159,7 @@ export function buildRebuySuggestion<P extends ProductLike>(
 ): RebuySuggestion<P> | null {
   const listed = new Set(listedProductIds);
   const suggestions = products.reduce<RebuySuggestion<P>[]>((items, product) => {
+    if (product.occasional) return items;
     if (product.id !== undefined && listed.has(product.id)) return items;
     const suggestion = getProductRebuySuggestion(product);
     if (suggestion) items.push(suggestion);

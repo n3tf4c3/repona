@@ -41,6 +41,7 @@ export const products = pgTable(
     status: text("status").notNull().default("active"),
     alertThreshold: text("alert_threshold"),
     archived: boolean("archived").notNull().default(false),
+    occasional: boolean("occasional").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

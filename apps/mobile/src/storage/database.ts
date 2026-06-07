@@ -135,5 +135,9 @@ export async function initializeDatabase() {
     await database.execAsync('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;');
   }
 
+  if (!productColumns.some((column) => column.name === 'occasional')) {
+    await database.execAsync('ALTER TABLE products ADD COLUMN occasional INTEGER NOT NULL DEFAULT 0;');
+  }
+
   return database;
 }
