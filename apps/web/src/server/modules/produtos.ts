@@ -78,7 +78,9 @@ function mapProduto(row: ProdutoRow): ProductDTO {
     inventoryQuantity: row.inventoryQuantity,
     inventoryStatus: estoqueVazio ? "missing" : (row.inventoryStatus as InventoryStatus),
     consumptionCount: row.consumptionCount,
-    lastConsumedAt: row.lastConsumedAt ? row.lastConsumedAt.toISOString() : null,
+    // max(occurred_at) volta como string no neon-http (nao Date como nas colunas
+    // de timestamp), entao normalizamos via Date antes de serializar.
+    lastConsumedAt: row.lastConsumedAt ? new Date(row.lastConsumedAt).toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
