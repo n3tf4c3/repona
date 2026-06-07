@@ -35,6 +35,7 @@ import {
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
 import { createProduct, deleteProduct, listProducts, seedInitialProducts, updateProduct } from './src/storage/products';
+import { persistPhoto } from './src/storage/photos';
 import {
   criarConta,
   getCasaCode,
@@ -168,11 +169,15 @@ export default function App() {
       setProductFormError(null);
       setProductActionError(null);
 
+      // Persiste a foto no diretório do app antes de salvar (a câmera grava no
+      // cache, que o sistema pode limpar).
+      const persisted = { ...input, photoUri: persistPhoto(input.photoUri) };
+
       if (editingProduct?.id) {
-        await updateProduct(editingProduct.id, input);
+        await updateProduct(editingProduct.id, persisted);
         await Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory()]);
       } else {
-        await createProduct(input);
+        await createProduct(persisted);
         await refreshProducts();
       }
 
