@@ -16,6 +16,8 @@ const snapshotSchema = z.object({
         alertThreshold: z.string().max(40).nullable(),
         inventoryQuantity: z.string().max(40),
         inventoryStatus: z.enum(["in_stock", "missing"]),
+        // Clientes antigos não enviam archived: default false mantém compat.
+        archived: z.boolean().optional().default(false),
       })
     )
     .max(2000),

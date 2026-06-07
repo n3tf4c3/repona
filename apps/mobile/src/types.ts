@@ -18,6 +18,7 @@ export type Product = {
   inventoryStatus?: 'in_stock' | 'missing';
   consumptionCount?: number;
   lastConsumedAt?: string | null;
+  archived?: boolean;
   meta: string;
   icon: IconName;
   background: string;

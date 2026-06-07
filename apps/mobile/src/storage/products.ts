@@ -18,6 +18,7 @@ export type ProductRecord = {
   inventoryStatus: InventoryStatus;
   consumptionCount: number;
   lastConsumedAt: string | null;
+  archived: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -35,13 +36,12 @@ type ProductRow = {
   inventory_status: InventoryStatus;
   consumption_count: number;
   last_consumed_at: string | null;
+  archived: number;
   created_at: string;
   updated_at: string;
 };
 
-export async function listProducts(): Promise<ProductRecord[]> {
-  const database = await initializeDatabase();
-  const rows = await database.getAllAsync<ProductRow>(`
+const PRODUCT_SELECT = `
     SELECT
       p.id,
       p.name,
@@ -55,6 +55,7 @@ export async function listProducts(): Promise<ProductRecord[]> {
       COALESCE(ii.status, 'missing') as inventory_status,
       COALESCE(ie.consumption_count, 0) as consumption_count,
       ie.last_consumed_at,
+      p.archived,
       p.created_at,
       p.updated_at
     FROM products p
@@ -64,11 +65,53 @@ export async function listProducts(): Promise<ProductRecord[]> {
       FROM inventory_events
       WHERE event_type = 'consumed'
       GROUP BY product_id
-    ) ie ON ie.product_id = p.id
-    ORDER BY p.created_at DESC, p.name ASC
-  `);
+    ) ie ON ie.product_id = p.id`;
 
+async function queryProducts(archived: 0 | 1): Promise<ProductRecord[]> {
+  const database = await initializeDatabase();
+  const rows = await database.getAllAsync<ProductRow>(
+    `${PRODUCT_SELECT}
+     WHERE p.archived = ?
+     ORDER BY p.created_at DESC, p.name ASC`,
+    archived,
+  );
   return rows.map(mapProductRow);
+}
+
+export async function listProducts(): Promise<ProductRecord[]> {
+  return queryProducts(0);
+}
+
+export async function listArchivedProducts(): Promise<ProductRecord[]> {
+  return queryProducts(1);
+}
+
+// Todos os produtos, inclusive arquivados — usado só pela sincronização, para
+// que o estado "arquivado" também suba para a nuvem.
+export async function listAllProductsForSync(): Promise<ProductRecord[]> {
+  const database = await initializeDatabase();
+  const rows = await database.getAllAsync<ProductRow>(
+    `${PRODUCT_SELECT} ORDER BY p.created_at DESC, p.name ASC`,
+  );
+  return rows.map(mapProductRow);
+}
+
+export async function archiveProduct(productId: number) {
+  const database = await initializeDatabase();
+  await database.runAsync(
+    'UPDATE products SET archived = 1, updated_at = ? WHERE id = ?',
+    new Date().toISOString(),
+    productId,
+  );
+}
+
+export async function unarchiveProduct(productId: number) {
+  const database = await initializeDatabase();
+  await database.runAsync(
+    'UPDATE products SET archived = 0, updated_at = ? WHERE id = ?',
+    new Date().toISOString(),
+    productId,
+  );
 }
 
 export async function createProduct(input: NewProductInput): Promise<ProductRecord> {
@@ -128,6 +171,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        COALESCE(ii.status, 'missing') as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
+       p.archived,
        p.created_at,
        p.updated_at
      FROM products p
@@ -202,6 +246,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
        COALESCE(ii.status, 'missing') as inventory_status,
        COALESCE(ie.consumption_count, 0) as consumption_count,
        ie.last_consumed_at,
+       p.archived,
        p.created_at,
        p.updated_at
      FROM products p
@@ -257,6 +302,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
     inventoryStatus: isMissing ? 'missing' : row.inventory_status,
     consumptionCount: row.consumption_count,
     lastConsumedAt: row.last_consumed_at,
+    archived: row.archived === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

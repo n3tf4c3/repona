@@ -1,6 +1,6 @@
 import { eventKey, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
-import { listProducts } from './products';
+import { listAllProductsForSync } from './products';
 import { listPurchaseHistoryRecords } from './purchaseHistory';
 
 // Monta o snapshot local (produtos + estoque, compras e consumos). A lista de
@@ -8,7 +8,7 @@ import { listPurchaseHistoryRecords } from './purchaseHistory';
 export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const database = await initializeDatabase();
 
-  const produtos = await listProducts();
+  const produtos = await listAllProductsForSync();
   const compras = await listPurchaseHistoryRecords();
   const consumos = await database.getAllAsync<{
     product_name: string;
@@ -41,6 +41,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       alertThreshold: p.alertThreshold,
       inventoryQuantity: p.inventoryQuantity,
       inventoryStatus: p.inventoryStatus,
+      archived: p.archived,
     })),
     purchases: compras.map((c) => ({
       productName: c.productName,
@@ -71,8 +72,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     for (const prod of snapshot.products) {
       await database.runAsync(
         `INSERT INTO products
-           (name, category, barcode, photo_uri, purchase_count, status, alert_threshold, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            category = excluded.category,
            barcode = excluded.barcode,
@@ -80,6 +81,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
            purchase_count = excluded.purchase_count,
            status = excluded.status,
            alert_threshold = excluded.alert_threshold,
+           archived = excluded.archived,
            updated_at = excluded.updated_at`,
         prod.name.trim(),
         prod.category,
@@ -88,6 +90,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         prod.purchaseCount,
         prod.status,
         prod.alertThreshold,
+        prod.archived ? 1 : 0,
         now,
         now,
       );

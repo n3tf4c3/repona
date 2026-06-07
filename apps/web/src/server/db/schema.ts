@@ -40,6 +40,7 @@ export const products = pgTable(
     purchaseCount: integer("purchase_count").notNull().default(0),
     status: text("status").notNull().default("active"),
     alertThreshold: text("alert_threshold"),
+    archived: boolean("archived").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

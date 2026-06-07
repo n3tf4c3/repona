@@ -60,6 +60,7 @@ export function productRecordToProduct(record: ProductRecord): Product {
     inventoryStatus: record.inventoryStatus,
     consumptionCount: record.consumptionCount,
     lastConsumedAt: record.lastConsumedAt,
+    archived: record.archived,
     meta: buildProductMeta(record),
     ...visual,
   };

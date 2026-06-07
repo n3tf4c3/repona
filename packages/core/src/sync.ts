@@ -16,6 +16,7 @@ export type SyncProduct = {
   alertThreshold: string | null;
   inventoryQuantity: string;
   inventoryStatus: InventoryStatus;
+  archived: boolean;
 };
 
 export type SyncPurchase = {

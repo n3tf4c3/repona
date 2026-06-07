@@ -8,12 +8,13 @@ import { requireCasa } from "@/server/auth/session";
 import {
   createProduto,
   updateProduto,
-  deleteProduto,
+  excluirOuArquivarProduto,
+  desarquivarProduto,
 } from "@/server/modules/produtos";
 import { definirQuantidade, marcarEmFalta, consumir } from "@/server/modules/estoque";
 import { adicionarProduto } from "@/server/modules/listas";
 
-type Resultado = { ok: true } | { ok: false; error: string };
+type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string };
 
 const MENSAGENS: Record<string, string> = {
   PRODUCT_NAME_REQUIRED: "Informe o nome do produto.",
@@ -88,7 +89,18 @@ export async function atualizarProdutoAction(
 export async function excluirProdutoAction(produtoId: number): Promise<Resultado> {
   const { casaId: id } = await requireCasa();
   try {
-    await deleteProduto(id, validar(idSchema, produtoId));
+    const { arquivado } = await excluirOuArquivarProduto(id, validar(idSchema, produtoId));
+    revalidarDominio();
+    return { ok: true, arquivado };
+  } catch (error) {
+    return tratar(error);
+  }
+}
+
+export async function desarquivarProdutoAction(produtoId: number): Promise<Resultado> {
+  const { casaId: id } = await requireCasa();
+  try {
+    await desarquivarProduto(id, validar(idSchema, produtoId));
     revalidarDominio();
     return { ok: true };
   } catch (error) {

@@ -17,6 +17,7 @@ function produto(over: Partial<ProductDTO>): ProductDTO {
     inventoryStatus: "in_stock",
     consumptionCount: 0,
     lastConsumedAt: null,
+    archived: false,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,

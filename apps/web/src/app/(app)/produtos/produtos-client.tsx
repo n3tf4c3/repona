@@ -12,6 +12,8 @@ import {
   PackageX,
   AlertCircle,
   PackageOpen,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { getNextInventoryQuantity, type ProductDTO, type NewProductInput } from "@repona/core";
 import { CATEGORIAS } from "@/lib/categorias";
@@ -20,17 +22,25 @@ import {
   criarProdutoAction,
   atualizarProdutoAction,
   excluirProdutoAction,
+  desarquivarProdutoAction,
   definirQuantidadeAction,
   marcarEmFaltaAction,
   consumirAction,
   adicionarAListaAction,
 } from "./actions";
 
-type Resultado = { ok: true } | { ok: false; error: string };
+type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string };
 
-export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
+export function ProdutosClient({
+  produtos,
+  arquivados,
+}: {
+  produtos: ProductDTO[];
+  arquivados: ProductDTO[];
+}) {
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todos");
+  const [verArquivados, setVerArquivados] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<ProductDTO | null>(null);
   const [criando, setCriando] = useState(false);
@@ -38,12 +48,13 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
 
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    return produtos.filter((p) => {
+    const base = verArquivados ? arquivados : produtos;
+    return base.filter((p) => {
       const casaBusca = !termo || p.name.toLowerCase().includes(termo);
       const casaCategoria = categoria === "Todos" || p.category === categoria;
       return casaBusca && casaCategoria;
     });
-  }, [produtos, busca, categoria]);
+  }, [produtos, arquivados, verArquivados, busca, categoria]);
 
   function executar(acao: () => Promise<Resultado>) {
     setErro(null);
@@ -100,6 +111,20 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
         ))}
       </div>
 
+      {arquivados.length > 0 && (
+        <button
+          onClick={() => setVerArquivados((v) => !v)}
+          className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition ${
+            verArquivados
+              ? "bg-ink text-white"
+              : "border border-line bg-surface text-ink-soft hover:border-primary"
+          }`}
+        >
+          <Archive size={15} strokeWidth={2.2} />
+          {verArquivados ? "Mostrando arquivados" : `Mostrar arquivados (${arquivados.length})`}
+        </button>
+      )}
+
       {erro && !(criando || editando) && (
         <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
           <AlertCircle size={16} />
@@ -111,31 +136,43 @@ export function ProdutosClient({ produtos }: { produtos: ProductDTO[] }) {
         {filtrados.length === 0 && (
           <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line py-12 text-center text-ink-faint">
             <PackageOpen size={32} strokeWidth={1.6} />
-            <p className="text-sm">Nenhum produto encontrado.</p>
+            <p className="text-sm">
+              {verArquivados ? "Nenhum produto arquivado." : "Nenhum produto encontrado."}
+            </p>
           </div>
         )}
-        {filtrados.map((produto) => (
-          <ProductCard
-            key={produto.id}
-            produto={produto}
-            pending={pending}
-            onAddLista={() => executar(() => adicionarAListaAction(produto.id))}
-            onEditar={() => {
-              setEditando(produto);
-              setCriando(false);
-            }}
-            onExcluir={() => {
-              if (window.confirm(`Excluir ${produto.name}?`)) executar(() => excluirProdutoAction(produto.id));
-            }}
-            onStock={(dir) =>
-              executar(() =>
-                definirQuantidadeAction(produto.id, getNextInventoryQuantity(produto.inventoryQuantity, dir))
-              )
-            }
-            onFalta={() => executar(() => marcarEmFaltaAction(produto.id))}
-            onConsumir={() => executar(() => consumirAction(produto.id))}
-          />
-        ))}
+        {verArquivados
+          ? filtrados.map((produto) => (
+              <ArchivedCard
+                key={produto.id}
+                produto={produto}
+                pending={pending}
+                onDesarquivar={() => executar(() => desarquivarProdutoAction(produto.id))}
+              />
+            ))
+          : filtrados.map((produto) => (
+              <ProductCard
+                key={produto.id}
+                produto={produto}
+                pending={pending}
+                onAddLista={() => executar(() => adicionarAListaAction(produto.id))}
+                onEditar={() => {
+                  setEditando(produto);
+                  setCriando(false);
+                }}
+                onExcluir={() => {
+                  if (window.confirm(`Excluir ${produto.name}?\n\nSe tiver histórico de compras, será arquivado (some do catálogo, histórico preservado).`))
+                    executar(() => excluirProdutoAction(produto.id));
+                }}
+                onStock={(dir) =>
+                  executar(() =>
+                    definirQuantidadeAction(produto.id, getNextInventoryQuantity(produto.inventoryQuantity, dir))
+                  )
+                }
+                onFalta={() => executar(() => marcarEmFaltaAction(produto.id))}
+                onConsumir={() => executar(() => consumirAction(produto.id))}
+              />
+            ))}
       </div>
 
       {(criando || editando) && (
@@ -228,6 +265,38 @@ function ProductCard({
           </IconButton>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ArchivedCard({
+  produto,
+  pending,
+  onDesarquivar,
+}: {
+  produto: ProductDTO;
+  pending: boolean;
+  onDesarquivar: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-card border border-line bg-surface/60 p-4">
+      <div className="flex items-center gap-3">
+        <CategoriaBolha category={produto.category} />
+        <div>
+          <p className="font-bold leading-tight text-ink-soft">{produto.name}</p>
+          <p className="text-xs text-ink-faint">
+            {produto.category} · comprado {produto.purchaseCount}x · arquivado
+          </p>
+        </div>
+      </div>
+      <button
+        disabled={pending}
+        onClick={onDesarquivar}
+        className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink-soft transition hover:border-primary hover:text-primary-strong disabled:opacity-40"
+      >
+        <ArchiveRestore size={15} strokeWidth={2.2} />
+        Desarquivar
+      </button>
     </div>
   );
 }

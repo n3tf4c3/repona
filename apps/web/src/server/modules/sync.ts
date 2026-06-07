@@ -39,6 +39,7 @@ export async function mergeCasaSnapshot(
           purchaseCount: prod.purchaseCount,
           status: prod.status,
           alertThreshold: prod.alertThreshold,
+          archived: prod.archived,
           updatedAt: new Date(),
         })
         .where(eq(products.id, productId));
@@ -54,6 +55,7 @@ export async function mergeCasaSnapshot(
           purchaseCount: prod.purchaseCount,
           status: prod.status,
           alertThreshold: prod.alertThreshold,
+          archived: prod.archived,
         })
         .returning({ id: products.id });
       productId = novo.id;
@@ -182,6 +184,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       purchaseCount: products.purchaseCount,
       status: products.status,
       alertThreshold: products.alertThreshold,
+      archived: products.archived,
       inventoryQuantity: inventoryItems.quantity,
       inventoryStatus: inventoryItems.status,
     })
@@ -246,6 +249,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       inventoryQuantity: p.inventoryQuantity ?? "0 un",
       inventoryStatus: (p.inventoryStatus ??
         "missing") as SyncSnapshot["products"][number]["inventoryStatus"],
+      archived: p.archived,
     })),
     purchases: linhasCompras.map((c) => ({
       productName: c.productName,

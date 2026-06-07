@@ -34,7 +34,7 @@ import {
 } from './src/storage/shoppingLists';
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
-import { createProduct, deleteProduct, listProducts, updateProduct } from './src/storage/products';
+import { archiveProduct, createProduct, deleteProduct, listArchivedProducts, listProducts, unarchiveProduct, updateProduct } from './src/storage/products';
 import { persistPhoto } from './src/storage/photos';
 import { addProductPrice, listRecentPricesByProduct } from './src/storage/priceHistory';
 import { formatCentsBRL, parsePriceToCents } from './src/priceFormat';
@@ -81,6 +81,7 @@ export default function App() {
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
   const [isShoppingListReady, setIsShoppingListReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [archivedProducts, setArchivedProducts] = useState<Product[]>([]);
   const [isProductsReady, setIsProductsReady] = useState(false);
   const [historyGroups, setHistoryGroups] = useState<PurchaseHistoryGroup[]>([]);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
@@ -138,8 +139,9 @@ export default function App() {
   }
 
   async function refreshProducts() {
-    const records = await listProducts();
+    const [records, archivedRecords] = await Promise.all([listProducts(), listArchivedProducts()]);
     setProducts(records.map(productRecordToProduct));
+    setArchivedProducts(archivedRecords.map(productRecordToProduct));
   }
 
   async function refreshHistory() {
@@ -241,14 +243,29 @@ export default function App() {
       await deleteProduct(product.id);
       await Promise.all([refreshProducts(), refreshShoppingItems()]);
     } catch (error) {
-      setProductActionError(getProductErrorMessage(error));
+      // Produto com histórico não pode ser excluído (perderia o histórico):
+      // nesse caso arquivamos (some do catálogo, histórico/preços preservados).
+      if (error instanceof Error && error.message === 'PRODUCT_HAS_HISTORY' && product.id) {
+        await archiveProduct(product.id);
+        await Promise.all([refreshProducts(), refreshShoppingItems()]);
+      } else {
+        setProductActionError(getProductErrorMessage(error));
+      }
     }
+  }
+
+  async function handleUnarchiveProduct(product: Product) {
+    if (!product.id) {
+      return;
+    }
+    await unarchiveProduct(product.id);
+    await refreshProducts();
   }
 
   function confirmRemoveProduct(product: Product) {
     Alert.alert(
       'Remover produto',
-      `Remover ${product.name} do catálogo?`,
+      `Remover ${product.name} do catálogo? Se tiver histórico de compras, será arquivado (o histórico é preservado).`,
       [
         { text: 'Cancelar', style: 'cancel' },
         { text: 'Remover', style: 'destructive', onPress: () => { void handleRemoveProduct(product); } },
@@ -433,6 +450,7 @@ export default function App() {
           {activeTab === 'products' ? (
             <ProductsScreen
               products={products}
+              archivedProducts={archivedProducts}
               isProductsReady={isProductsReady}
               errorMessage={productActionError}
               priceSummaries={priceSummaries}
@@ -443,6 +461,7 @@ export default function App() {
               onMarkInventoryMissing={handleMarkProductMissing}
               onConsumeProduct={handleConsumeProduct}
               onRegisterPrice={openPriceModal}
+              onUnarchiveProduct={handleUnarchiveProduct}
             />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
@@ -634,6 +653,7 @@ function ShoppingListScreen({
 
 function ProductsScreen({
   products,
+  archivedProducts,
   isProductsReady,
   errorMessage,
   priceSummaries,
@@ -644,8 +664,10 @@ function ProductsScreen({
   onMarkInventoryMissing,
   onConsumeProduct,
   onRegisterPrice,
+  onUnarchiveProduct,
 }: {
   products: Product[];
+  archivedProducts: Product[];
   isProductsReady: boolean;
   errorMessage: string | null;
   priceSummaries: Map<number, PriceSummary>;
@@ -656,10 +678,12 @@ function ProductsScreen({
   onMarkInventoryMissing: (product: Product) => void;
   onConsumeProduct: (product: Product) => void;
   onRegisterPrice: (product: Product) => void;
+  onUnarchiveProduct: (product: Product) => void;
 }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [onlyNeedsRestock, setOnlyNeedsRestock] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const restockIds = useMemo(
     () => new Set(buildInventoryAlerts(products).map((alert) => alert.product.id)),
     [products],
@@ -668,6 +692,10 @@ function ProductsScreen({
     const base = filterProducts(products, searchTerm, selectedCategory);
     return onlyNeedsRestock ? base.filter((product) => restockIds.has(product.id)) : base;
   }, [products, searchTerm, selectedCategory, onlyNeedsRestock, restockIds]);
+  const filteredArchived = useMemo(
+    () => filterProducts(archivedProducts, searchTerm, selectedCategory),
+    [archivedProducts, searchTerm, selectedCategory],
+  );
 
   return (
     <ScreenScroll>
@@ -686,20 +714,61 @@ function ProductsScreen({
       {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
       {onlyNeedsRestock ? <Text style={styles.subtleText}>Mostrando só itens em falta ou com estoque baixo.</Text> : null}
       <ChipRow chips={['Todos', 'Mercearia', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
-      <ProductList
-        products={filteredProducts}
-        isReady={isProductsReady}
-        hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos' || onlyNeedsRestock}
-        priceSummaries={priceSummaries}
-        onAdd={onAddProductToList}
-        onEdit={onEditProduct}
-        onRemove={onRemoveProduct}
-        onChangeInventory={onChangeInventory}
-        onMarkInventoryMissing={onMarkInventoryMissing}
-        onConsume={onConsumeProduct}
-        onRegisterPrice={onRegisterPrice}
-      />
+      {archivedProducts.length > 0 ? (
+        <Pressable
+          style={[styles.archivedToggle, showArchived ? styles.archivedToggleActive : null]}
+          onPress={() => setShowArchived((value) => !value)}
+        >
+          <MaterialCommunityIcons name="archive-outline" size={15} color={showArchived ? colors.surface : colors.ink2} />
+          <Text style={[styles.archivedToggleText, showArchived ? styles.archivedToggleTextActive : null]}>
+            {showArchived ? 'Mostrando arquivados' : `Mostrar arquivados (${archivedProducts.length})`}
+          </Text>
+        </Pressable>
+      ) : null}
+      {showArchived ? (
+        filteredArchived.length === 0 ? (
+          <EmptyState title="Nenhum arquivado" description="Nenhum produto arquivado com esse filtro." />
+        ) : (
+          filteredArchived.map((product) => (
+            <ArchivedProductRow key={product.id ?? product.name} product={product} onUnarchive={onUnarchiveProduct} />
+          ))
+        )
+      ) : (
+        <ProductList
+          products={filteredProducts}
+          isReady={isProductsReady}
+          hasFilters={searchTerm.trim().length > 0 || selectedCategory !== 'Todos' || onlyNeedsRestock}
+          priceSummaries={priceSummaries}
+          onAdd={onAddProductToList}
+          onEdit={onEditProduct}
+          onRemove={onRemoveProduct}
+          onChangeInventory={onChangeInventory}
+          onMarkInventoryMissing={onMarkInventoryMissing}
+          onConsume={onConsumeProduct}
+          onRegisterPrice={onRegisterPrice}
+        />
+      )}
     </ScreenScroll>
+  );
+}
+
+function ArchivedProductRow({ product, onUnarchive }: { product: Product; onUnarchive: (product: Product) => void }) {
+  return (
+    <View style={styles.productRow}>
+      {product.photoUri ? (
+        <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
+      ) : (
+        <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
+      )}
+      <View style={styles.productText}>
+        <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+        <Text style={styles.productMeta} numberOfLines={1}>{product.category ?? 'Mercearia'} · arquivado</Text>
+      </View>
+      <Pressable style={styles.unarchiveButton} onPress={() => onUnarchive(product)}>
+        <MaterialCommunityIcons name="archive-arrow-up-outline" size={16} color={colors.primaryStrong} />
+        <Text style={styles.unarchiveText}>Desarquivar</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -2523,6 +2592,44 @@ const styles = StyleSheet.create({
   },
   productDeleteButton: {
     backgroundColor: colors.coralSoft,
+  },
+  archivedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.line2,
+    backgroundColor: colors.surface,
+    marginBottom: 4,
+  },
+  archivedToggleActive: {
+    backgroundColor: colors.ink,
+    borderColor: colors.ink,
+  },
+  archivedToggleText: {
+    ...typography.labelStrong,
+    color: colors.ink2,
+  },
+  archivedToggleTextActive: {
+    color: colors.surface,
+  },
+  unarchiveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.line2,
+  },
+  unarchiveText: {
+    ...typography.labelStrong,
+    color: colors.primaryStrong,
   },
   productError: {
     ...typography.labelStrong,

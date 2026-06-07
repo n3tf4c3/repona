@@ -29,6 +29,13 @@
       "when": 1780787440119,
       "tag": "0003_integrity_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780790000000,
+      "tag": "0004_archived_products",
+      "breakpoints": true
     }
   ]
 }

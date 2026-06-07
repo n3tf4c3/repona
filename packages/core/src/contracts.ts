@@ -19,6 +19,7 @@ export type ProductDTO = {
   inventoryStatus: InventoryStatus;
   consumptionCount: number;
   lastConsumedAt: string | null;
+  archived: boolean;
   createdAt: string;
   updatedAt: string;
 };

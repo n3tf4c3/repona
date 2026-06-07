@@ -31,16 +31,17 @@ type ProdutoRow = {
   inventoryStatus: string;
   consumptionCount: number;
   lastConsumedAt: Date | null;
+  archived: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
 
-function selecionarProdutos(casaId: number, id?: number) {
+function selecionarProdutos(casaId: number, opts?: { id?: number; arquivado?: boolean }) {
   const consumo = consumoSubquery();
-  const filtro =
-    id === undefined
-      ? eq(products.casaId, casaId)
-      : and(eq(products.casaId, casaId), eq(products.id, id));
+  const conds = [eq(products.casaId, casaId)];
+  if (opts?.id !== undefined) conds.push(eq(products.id, opts.id));
+  if (opts?.arquivado !== undefined) conds.push(eq(products.archived, opts.arquivado));
+  const filtro = and(...conds);
   return db
     .select({
       id: products.id,
@@ -55,6 +56,7 @@ function selecionarProdutos(casaId: number, id?: number) {
       inventoryStatus: sql<string>`coalesce(${inventoryItems.status}, 'missing')`,
       consumptionCount: sql<number>`coalesce(${consumo.consumptionCount}, 0)`,
       lastConsumedAt: consumo.lastConsumedAt,
+      archived: products.archived,
       createdAt: products.createdAt,
       updatedAt: products.updatedAt,
     })
@@ -81,18 +83,30 @@ function mapProduto(row: ProdutoRow): ProductDTO {
     // max(occurred_at) volta como string no neon-http (nao Date como nas colunas
     // de timestamp), entao normalizamos via Date antes de serializar.
     lastConsumedAt: row.lastConsumedAt ? new Date(row.lastConsumedAt).toISOString() : null,
+    archived: row.archived,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 export async function listProdutos(casaId: number): Promise<ProductDTO[]> {
-  const rows = await selecionarProdutos(casaId).orderBy(desc(products.createdAt), asc(products.name));
+  const rows = await selecionarProdutos(casaId, { arquivado: false }).orderBy(
+    desc(products.createdAt),
+    asc(products.name)
+  );
+  return rows.map(mapProduto);
+}
+
+export async function listProdutosArquivados(casaId: number): Promise<ProductDTO[]> {
+  const rows = await selecionarProdutos(casaId, { arquivado: true }).orderBy(
+    desc(products.createdAt),
+    asc(products.name)
+  );
   return rows.map(mapProduto);
 }
 
 async function getProdutoDTO(casaId: number, id: number): Promise<ProductDTO | null> {
-  const [row] = await selecionarProdutos(casaId, id);
+  const [row] = await selecionarProdutos(casaId, { id });
   return row ? mapProduto(row) : null;
 }
 
@@ -163,8 +177,14 @@ export async function updateProduto(
   return dto;
 }
 
-export async function deleteProduto(casaId: number, id: number): Promise<void> {
-  // Confirma posse e existência.
+// Produto com histórico de compras não pode ser excluído (a FK de
+// purchase_history não tem cascade e perderíamos o histórico): nesse caso
+// arquivamos (some do catálogo, histórico/preços preservados). Sem histórico,
+// exclui de vez. Devolve o que aconteceu para a UI dar o feedback certo.
+export async function excluirOuArquivarProduto(
+  casaId: number,
+  id: number
+): Promise<{ arquivado: boolean }> {
   const [produto] = await db
     .select({ id: products.id })
     .from(products)
@@ -176,9 +196,24 @@ export async function deleteProduto(casaId: number, id: number): Promise<void> {
     .select({ count: sql<number>`count(*)::int` })
     .from(purchaseHistory)
     .where(eq(purchaseHistory.productId, id));
-  if (Number(historico?.count ?? 0) > 0) throw new Error("PRODUCT_HAS_HISTORY");
+
+  if (Number(historico?.count ?? 0) > 0) {
+    await db
+      .update(products)
+      .set({ archived: true, updatedAt: new Date() })
+      .where(and(eq(products.casaId, casaId), eq(products.id, id)));
+    return { arquivado: true };
+  }
 
   // FKs com ON DELETE CASCADE removem inventory_items/events e itens de lista.
   await db.delete(products).where(and(eq(products.casaId, casaId), eq(products.id, id)));
+  return { arquivado: false };
+}
+
+export async function desarquivarProduto(casaId: number, id: number): Promise<void> {
+  await db
+    .update(products)
+    .set({ archived: false, updatedAt: new Date() })
+    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
 }
 

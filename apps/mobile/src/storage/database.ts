@@ -131,5 +131,9 @@ export async function initializeDatabase() {
     await database.execAsync('ALTER TABLE products ADD COLUMN alert_threshold TEXT;');
   }
 
+  if (!productColumns.some((column) => column.name === 'archived')) {
+    await database.execAsync('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;');
+  }
+
   return database;
 }
