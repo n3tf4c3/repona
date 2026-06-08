@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { obterCasaPorCodigo } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
+import { rateLimited } from "@/server/rateLimit";
 
 const snapshotSchema = z.object({
   products: z
@@ -52,30 +53,14 @@ const snapshotSchema = z.object({
     .max(10000),
 });
 
-// Limitador simples por IP (em memória): protege o endpoint público de abuso.
-// LIMITAÇÃO CONHECIDA (auditoria #12): o contador vive no processo e a chave é o
-// x-forwarded-for, então em serverless/multi-instância o limite NÃO é global e
-// um cliente que varie o header pode contorná-lo. Aceito por ora; um limite real
-// exige store externo (Vercel KV/Upstash) e IP de fonte confiável do provedor.
-const tentativas = new Map<string, { count: number; resetAt: number }>();
-const JANELA_MS = 60 * 1000;
+// Rate limit por IP via Vercel KV (auditoria #12), com fallback em memória.
+const JANELA_SEG = 60;
 const MAX_POR_JANELA = 30;
-
-function rateLimited(ip: string): boolean {
-  const agora = Date.now();
-  const t = tentativas.get(ip);
-  if (!t || t.resetAt <= agora) {
-    tentativas.set(ip, { count: 1, resetAt: agora + JANELA_MS });
-    return false;
-  }
-  t.count += 1;
-  return t.count > MAX_POR_JANELA;
-}
 
 export async function POST(req: NextRequest) {
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
-  if (rateLimited(ip)) {
+  if (await rateLimited(`sync:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
 
