@@ -12,7 +12,6 @@ const snapshotSchema = z.object({
         name: z.string().trim().min(1).max(160),
         category: z.string().max(80),
         barcode: z.string().max(120).nullable(),
-        photoUri: z.string().max(2000).nullable(),
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),
         alertThreshold: z.string().max(40).nullable(),

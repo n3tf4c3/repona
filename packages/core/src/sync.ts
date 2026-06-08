@@ -17,7 +17,8 @@ export type SyncProduct = {
   name: string;
   category: string;
   barcode: string | null;
-  photoUri: string | null;
+  // Foto NÃO entra no sync: é uma URI local do dispositivo, sem valor em outro
+  // aparelho/nuvem. Fica estritamente local no mobile. (auditoria #6)
   purchaseCount: number;
   status: ProductStatus;
   alertThreshold: string | null;

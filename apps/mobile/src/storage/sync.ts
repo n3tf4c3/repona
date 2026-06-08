@@ -37,7 +37,6 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       name: p.name,
       category: p.category,
       barcode: p.barcode,
-      photoUri: p.photoUri,
       purchaseCount: p.purchaseCount,
       status: p.status,
       alertThreshold: p.alertThreshold,
@@ -115,13 +114,12 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         }
         await database.runAsync(
           `UPDATE products SET
-             name = ?, category = ?, barcode = ?, photo_uri = ?,
+             name = ?, category = ?, barcode = ?,
              status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
            WHERE id = ?`,
           nomeFinal,
           prod.category,
           prod.barcode,
-          prod.photoUri,
           prod.status,
           prod.alertThreshold,
           prod.archived ? 1 : 0,
@@ -133,13 +131,12 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       } else {
         const inserido = await database.runAsync(
           `INSERT INTO products
-             (sync_id, name, category, barcode, photo_uri, status, alert_threshold, archived, occasional, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (sync_id, name, category, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           prod.syncId ?? uuidv4(),
           nome,
           prod.category,
           prod.barcode,
-          prod.photoUri,
           prod.status,
           prod.alertThreshold,
           prod.archived ? 1 : 0,
