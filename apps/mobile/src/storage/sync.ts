@@ -115,14 +115,13 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         }
         await database.runAsync(
           `UPDATE products SET
-             name = ?, category = ?, barcode = ?, photo_uri = ?, purchase_count = ?,
+             name = ?, category = ?, barcode = ?, photo_uri = ?,
              status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
            WHERE id = ?`,
           nomeFinal,
           prod.category,
           prod.barcode,
           prod.photoUri,
-          prod.purchaseCount,
           prod.status,
           prod.alertThreshold,
           prod.archived ? 1 : 0,
@@ -134,14 +133,13 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       } else {
         const inserido = await database.runAsync(
           `INSERT INTO products
-             (sync_id, name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, occasional, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (sync_id, name, category, barcode, photo_uri, status, alert_threshold, archived, occasional, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           prod.syncId ?? uuidv4(),
           nome,
           prod.category,
           prod.barcode,
           prod.photoUri,
-          prod.purchaseCount,
           prod.status,
           prod.alertThreshold,
           prod.archived ? 1 : 0,
@@ -174,6 +172,16 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     await aplicarCompras(database, idPorNome, snapshot.purchases);
     await aplicarConsumos(database, idPorNome, snapshot.consumptions);
     await aplicarPrecos(database, idPorNome, snapshot.prices);
+
+    // purchase_count é derivado do histórico (auditoria #3): recalcula após o
+    // merge, em vez de confiar no valor do snapshot (que não soma entre
+    // dispositivos).
+    await database.runAsync(
+      `UPDATE products
+       SET purchase_count = (
+         SELECT COUNT(*) FROM purchase_history WHERE purchase_history.product_id = products.id
+       )`,
+    );
   });
 }
 

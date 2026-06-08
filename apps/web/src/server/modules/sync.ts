@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   products,
@@ -65,7 +65,6 @@ export async function mergeCasaSnapshot(
           category: prod.category,
           barcode: prod.barcode,
           photoUri: prod.photoUri,
-          purchaseCount: prod.purchaseCount,
           status: prod.status,
           alertThreshold: prod.alertThreshold,
           archived: prod.archived,
@@ -90,7 +89,6 @@ export async function mergeCasaSnapshot(
           category: prod.category,
           barcode: prod.barcode,
           photoUri: prod.photoUri,
-          purchaseCount: prod.purchaseCount,
           status: prod.status,
           alertThreshold: prod.alertThreshold,
           archived: prod.archived,
@@ -119,6 +117,17 @@ export async function mergeCasaSnapshot(
   await mesclarCompras(casaId, idPorNome, incoming.purchases);
   await mesclarConsumos(casaId, idPorNome, incoming.consumptions);
   await mesclarPrecos(casaId, idPorNome, incoming.prices);
+
+  // purchase_count é derivado do histórico (auditoria #3): recalcula após o
+  // merge das compras, em vez de confiar no valor do snapshot (que não soma
+  // entre dispositivos). O snapshot devolvido já leva o valor recalculado.
+  await db.execute(sql`
+    UPDATE products
+    SET purchase_count = (
+      SELECT COUNT(*) FROM purchase_history WHERE purchase_history.product_id = products.id
+    )
+    WHERE products.casa_id = ${casaId}
+  `);
 
   return construirSnapshot(casaId);
 }
