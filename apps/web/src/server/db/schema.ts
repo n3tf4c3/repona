@@ -79,6 +79,11 @@ export const shoppingLists = pgTable(
   ]
 );
 
+// RISCO ACEITO (auditoria #14): shopping_list_items e purchase_history.source_list_id
+// referenciam lista e produto separadamente, sem constraint garantindo que ambos
+// pertençam à mesma casa_id. A coerência por casa é imposta no nível de query
+// (todos os módulos filtram por casaId), não pelo banco. Adicionar casa_id nos
+// filhos + FKs compostas é uma migração pesada e puramente defensiva; fica adiada.
 export const shoppingListItems = pgTable(
   "shopping_list_items",
   {

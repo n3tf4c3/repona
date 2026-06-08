@@ -53,6 +53,10 @@ const snapshotSchema = z.object({
 });
 
 // Limitador simples por IP (em memória): protege o endpoint público de abuso.
+// LIMITAÇÃO CONHECIDA (auditoria #12): o contador vive no processo e a chave é o
+// x-forwarded-for, então em serverless/multi-instância o limite NÃO é global e
+// um cliente que varie o header pode contorná-lo. Aceito por ora; um limite real
+// exige store externo (Vercel KV/Upstash) e IP de fonte confiável do provedor.
 const tentativas = new Map<string, { count: number; resetAt: number }>();
 const JANELA_MS = 60 * 1000;
 const MAX_POR_JANELA = 30;

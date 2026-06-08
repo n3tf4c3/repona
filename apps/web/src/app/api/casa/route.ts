@@ -7,6 +7,9 @@ const bodySchema = z.object({
 });
 
 // Limitador simples por IP (em memória): evita criação em massa de contas.
+// LIMITAÇÃO CONHECIDA (auditoria #12): contador em memória + chave x-forwarded-for
+// não dão limite global em serverless/multi-instância. Aceito por ora; limite real
+// exige store externo (Vercel KV/Upstash) e IP de fonte confiável do provedor.
 const tentativas = new Map<string, { count: number; resetAt: number }>();
 const JANELA_MS = 60 * 60 * 1000;
 const MAX_POR_JANELA = 20;

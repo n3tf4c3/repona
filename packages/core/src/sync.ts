@@ -28,6 +28,11 @@ export type SyncProduct = {
   occasional: boolean;
 };
 
+// O sync NORMALIZA a compra sem a lista de origem (auditoria #17): a lista de
+// compras não faz parte do contrato (ver #9), então sourceListId/Name não teriam
+// sentido entre dispositivos (espaços de id distintos). Compras que voltam da
+// nuvem em outro aparelho perdem o vínculo com a lista e caem no rótulo genérico
+// "Compra finalizada". Aceito enquanto listas não sincronizarem.
 export type SyncPurchase = {
   productName: string;
   quantity: string;
