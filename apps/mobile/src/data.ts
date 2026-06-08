@@ -72,7 +72,7 @@ export const futureFeatures = [
   feature('Scanner de código', 'Aponte a câmera e adicione produtos pelo código de barras.', 'barcode-scan'),
   feature('Cadastro por foto', 'Tire uma foto do produto e complete o cadastro em menos passos.', 'camera-outline'),
   feature('Estoque doméstico', 'Saiba o que tem em casa, o que está acabando e o que precisa repor.', 'home-variant-outline'),
-  feature('Compartilhamento familiar', 'Toda a família na mesma lista, atualizada em tempo real.', 'account-group-outline'),
+  feature('Compartilhamento familiar', 'Catálogo, estoque e histórico da casa compartilhados entre os aparelhos.', 'account-group-outline'),
   feature('Sugestões inteligentes', 'Recompras previstas a partir dos hábitos de consumo.', 'brain'),
   feature('Ciclo de vida do item', 'Planejado, comprado, consumido e em falta em um único fluxo.', 'refresh'),
 ];

@@ -7,7 +7,7 @@ const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
   { title: "Scanner de código", description: "Aponte a câmera e adicione produtos pelo código de barras.", Icon: ScanLine },
   { title: "Cadastro por foto", description: "Tire uma foto do produto e complete o cadastro em menos passos.", Icon: Camera },
   { title: "Estoque doméstico", description: "Saiba o que tem em casa, o que está acabando e o que precisa repor.", Icon: Home },
-  { title: "Compartilhamento familiar", description: "Toda a família na mesma lista, atualizada em tempo real.", Icon: Users },
+  { title: "Compartilhamento familiar", description: "Catálogo, estoque e histórico da casa compartilhados entre os aparelhos.", Icon: Users },
   { title: "Sugestões inteligentes", description: "Recompras previstas a partir dos hábitos de consumo.", Icon: Brain },
   { title: "Ciclo de vida do item", description: "Planejado, comprado, consumido e em falta em um único fluxo.", Icon: RefreshCw },
 ];
