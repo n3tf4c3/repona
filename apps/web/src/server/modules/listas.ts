@@ -174,13 +174,23 @@ export async function finalizarCompra(casaId: number): Promise<number> {
 
   if (marcados.length === 0) return 0;
   if (marcados.some((item) => isEmptyQuantity(item.quantity))) throw new Error("QUANTITY_INVALID");
+
+  // Claim atômico: o DELETE ... RETURNING remove e devolve os itens marcados de
+  // uma vez. Uma finalização concorrente recebe RETURNING vazio e não duplica o
+  // histórico (a leitura acima é só para validar a quantidade). (auditoria #15)
+  const comprados = await db
+    .delete(shoppingListItems)
+    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)))
+    .returning({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity });
+
+  if (comprados.length === 0) return 0;
   const now = new Date();
 
-  // Tudo numa transação (db.batch): por item marcado grava histórico, incrementa
-  // purchase_count, repõe o estoque; ao final remove os itens comprados da lista.
+  // db.batch roda como uma transação: por item comprado grava histórico,
+  // incrementa purchase_count e repõe o estoque.
   type Escrita = Parameters<typeof db.batch>[0][number];
   const escritas: Escrita[] = [];
-  for (const item of marcados) {
+  for (const item of comprados) {
     escritas.push(
       db.insert(purchaseHistory).values({
         productId: item.productId,
@@ -209,14 +219,9 @@ export async function finalizarCompra(casaId: number): Promise<number> {
         })
     );
   }
-  escritas.push(
-    db
-      .delete(shoppingListItems)
-      .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)))
-  );
 
-  // db.batch exige uma tupla não-vazia; já garantimos length > 0 acima.
+  // db.batch exige uma tupla não-vazia; já garantimos comprados.length > 0 acima.
   await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
 
-  return marcados.length;
+  return comprados.length;
 }

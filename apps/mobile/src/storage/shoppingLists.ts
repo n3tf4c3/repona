@@ -243,26 +243,30 @@ export async function removeShoppingListItem(itemId: number) {
 export async function finalizeActiveShoppingList() {
   const database = await initializeDatabase();
   const activeList = await ensureActiveShoppingList();
-  const purchasedItems = await database.getAllAsync<{ product_id: number; quantity: string }>(
-    `SELECT product_id, quantity
-     FROM shopping_list_items
-     WHERE shopping_list_id = ? AND checked = 1
-     ORDER BY id ASC`,
-    activeList.id,
-  );
-
-  if (purchasedItems.length === 0) {
-    return 0;
-  }
-
-  if (purchasedItems.some((item) => isEmptyQuantity(item.quantity))) {
-    throw new Error('QUANTITY_INVALID');
-  }
-
-  const now = new Date().toISOString();
+  let finalizedCount = 0;
 
   await database.withTransactionAsync(async () => {
-    for (const item of purchasedItems) {
+    // Claim atômico: o DELETE ... RETURNING remove e devolve os itens marcados
+    // de uma vez. Uma finalização concorrente/retry recebe conjunto vazio e não
+    // duplica histórico; quantidade inválida lança e desfaz o DELETE. (auditoria #15)
+    const comprados = await database.getAllAsync<{ product_id: number; quantity: string }>(
+      `DELETE FROM shopping_list_items
+       WHERE shopping_list_id = ? AND checked = 1
+       RETURNING product_id, quantity`,
+      activeList.id,
+    );
+
+    if (comprados.length === 0) {
+      return;
+    }
+
+    if (comprados.some((item) => isEmptyQuantity(item.quantity))) {
+      throw new Error('QUANTITY_INVALID');
+    }
+
+    const now = new Date().toISOString();
+
+    for (const item of comprados) {
       await database.runAsync(
         `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id)
          VALUES (?, ?, ?, ?)`,
@@ -297,21 +301,17 @@ export async function finalizeActiveShoppingList() {
     }
 
     await database.runAsync(
-      `DELETE FROM shopping_list_items
-       WHERE shopping_list_id = ? AND checked = 1`,
-      activeList.id,
-    );
-
-    await database.runAsync(
       `UPDATE shopping_lists
        SET updated_at = ?
        WHERE id = ?`,
       now,
       activeList.id,
     );
+
+    finalizedCount = comprados.length;
   });
 
-  return purchasedItems.length;
+  return finalizedCount;
 }
 
 function mapShoppingListRow(row: ShoppingListRow): ShoppingListRecord {
