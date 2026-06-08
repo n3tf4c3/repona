@@ -51,6 +51,20 @@ const snapshotSchema = z.object({
       })
     )
     .max(10000),
+  // Itens da lista ativa (auditoria #9). Opcional: clientes antigos não enviam.
+  listItems: z
+    .array(
+      z.object({
+        productName: z.string().trim().min(1).max(160),
+        quantity: z.string().max(40),
+        checked: z.boolean(),
+        deleted: z.boolean(),
+        updatedAt: z.string().datetime({ offset: true }),
+      })
+    )
+    .max(2000)
+    .optional()
+    .default([]),
 });
 
 // Rate limit por IP via Vercel KV (auditoria #12), com fallback em memória.

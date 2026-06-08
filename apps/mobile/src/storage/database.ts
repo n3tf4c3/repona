@@ -205,6 +205,15 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       );
     }
   },
+
+  // v4: tombstone de item da lista para o sync (auditoria #9). Finalizar/remover
+  // marca deleted em vez de apagar, para a deleção propagar sem ressuscitar.
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(shopping_list_items)');
+    if (!cols.some((c) => c.name === 'deleted')) {
+      await db.execAsync('ALTER TABLE shopping_list_items ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
+    }
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

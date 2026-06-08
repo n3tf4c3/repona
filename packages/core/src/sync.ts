@@ -51,11 +51,26 @@ export type SyncPrice = {
   recordedAt: string; // ISO
 };
 
+// Item da lista de compras ativa da casa (auditoria #9). A lista ativa é tratada
+// como um conjunto por casa, com identidade pelo produto. A deleção é um
+// tombstone (`deleted`) em vez de remoção física, para que finalizar/remover não
+// seja "ressuscitado" por um device que ainda tinha o item. Merge por `updatedAt`
+// (LWW), igual aos produtos.
+export type SyncListItem = {
+  productName: string;
+  quantity: string;
+  checked: boolean;
+  deleted: boolean;
+  updatedAt: string; // ISO
+};
+
 export type SyncSnapshot = {
   products: SyncProduct[];
   purchases: SyncPurchase[];
   consumptions: SyncConsumption[];
   prices: SyncPrice[];
+  // Opcional para tolerar clientes antigos que não enviam a lista. (auditoria #9)
+  listItems?: SyncListItem[];
 };
 
 export function productNameKey(name: string): string {

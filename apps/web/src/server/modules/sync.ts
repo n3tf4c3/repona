@@ -1,5 +1,5 @@
 import "server-only";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   products,
@@ -7,8 +7,14 @@ import {
   inventoryEvents,
   purchaseHistory,
   priceHistory,
+  shoppingListItems,
 } from "@/server/db/schema";
 import { productNameKey, matchProduct, shouldApplyIncoming, type SyncSnapshot } from "@repona/core";
+import { garantirListaAtiva } from "@/server/modules/listas";
+
+// Tombstones de item de lista mais antigos que isto são podados (já propagaram a
+// deleção). Um device offline por mais que isso pode reviver um item. (auditoria #9)
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const MAX_PRICES_PER_PRODUCT = 10;
 
@@ -115,6 +121,7 @@ export async function mergeCasaSnapshot(
   await mesclarCompras(casaId, idPorNome, incoming.purchases);
   await mesclarConsumos(casaId, idPorNome, incoming.consumptions);
   await mesclarPrecos(casaId, idPorNome, incoming.prices);
+  await mesclarItensLista(casaId, idPorNome, incoming.listItems ?? []);
 
   // purchase_count é derivado do histórico (auditoria #3): recalcula após o
   // merge das compras, em vez de confiar no valor do snapshot (que não soma
@@ -226,6 +233,71 @@ async function mesclarConsumos(
   }
 }
 
+async function mesclarItensLista(
+  casaId: number,
+  idPorNome: Map<string, number>,
+  incoming: NonNullable<SyncSnapshot["listItems"]>
+) {
+  const lista = await garantirListaAtiva(casaId);
+
+  const existentes = await db
+    .select({
+      productId: shoppingListItems.productId,
+      updatedAt: shoppingListItems.updatedAt,
+    })
+    .from(shoppingListItems)
+    .where(eq(shoppingListItems.shoppingListId, lista.id));
+  const porProduto = new Map(existentes.map((e) => [e.productId, e.updatedAt]));
+
+  for (const item of incoming) {
+    const productId = idPorNome.get(productNameKey(item.productName));
+    if (!productId) continue;
+    const atualUpdatedAt = porProduto.get(productId);
+    const novoUpdatedAt = item.updatedAt ? new Date(item.updatedAt) : new Date();
+
+    if (atualUpdatedAt !== undefined) {
+      // LWW: só aplica o recebido se for mais novo que o local. (auditoria #9)
+      if (!shouldApplyIncoming(item.updatedAt, atualUpdatedAt.toISOString())) continue;
+      await db
+        .update(shoppingListItems)
+        .set({
+          quantity: item.quantity,
+          checked: item.checked,
+          deleted: item.deleted,
+          updatedAt: novoUpdatedAt,
+        })
+        .where(
+          and(
+            eq(shoppingListItems.shoppingListId, lista.id),
+            eq(shoppingListItems.productId, productId)
+          )
+        );
+    } else {
+      await db.insert(shoppingListItems).values({
+        casaId,
+        shoppingListId: lista.id,
+        productId,
+        quantity: item.quantity,
+        checked: item.checked,
+        deleted: item.deleted,
+        updatedAt: novoUpdatedAt,
+      });
+      porProduto.set(productId, novoUpdatedAt);
+    }
+  }
+
+  // Poda tombstones já propagados (mais velhos que o TTL). (auditoria #9)
+  await db
+    .delete(shoppingListItems)
+    .where(
+      and(
+        eq(shoppingListItems.shoppingListId, lista.id),
+        eq(shoppingListItems.deleted, true),
+        lt(shoppingListItems.updatedAt, new Date(Date.now() - TOMBSTONE_TTL_MS))
+      )
+    );
+}
+
 async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasProdutos = await db
     .select({
@@ -277,6 +349,21 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     .where(eq(products.casaId, casaId))
     .orderBy(desc(priceHistory.recordedAt));
 
+  // Itens da lista ativa, inclusive tombstones (deleted), para a deleção
+  // propagar para os outros devices. (auditoria #9)
+  const listaAtiva = await garantirListaAtiva(casaId);
+  const linhasItens = await db
+    .select({
+      productName: products.name,
+      quantity: shoppingListItems.quantity,
+      checked: shoppingListItems.checked,
+      deleted: shoppingListItems.deleted,
+      updatedAt: shoppingListItems.updatedAt,
+    })
+    .from(shoppingListItems)
+    .innerJoin(products, eq(products.id, shoppingListItems.productId))
+    .where(eq(shoppingListItems.shoppingListId, listaAtiva.id));
+
   // Mantém só os 10 preços mais recentes por produto no snapshot devolvido.
   const precosPorProduto = new Map<string, SyncSnapshot["prices"]>();
   for (const p of linhasPrecos) {
@@ -318,5 +405,12 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       occurredAt: c.occurredAt.toISOString(),
     })),
     prices: [...precosPorProduto.values()].flat(),
+    listItems: linhasItens.map((i) => ({
+      productName: i.productName,
+      quantity: i.quantity,
+      checked: i.checked,
+      deleted: i.deleted,
+      updatedAt: i.updatedAt.toISOString(),
+    })),
   };
 }

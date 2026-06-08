@@ -99,6 +99,9 @@ export const shoppingListItems = pgTable(
       .references(() => products.id, { onDelete: "cascade" }),
     quantity: text("quantity").notNull().default("1 un"),
     checked: boolean("checked").notNull().default(false),
+    // Tombstone de sync: finalizar/remover marca deleted em vez de apagar, para
+    // a deleção propagar sem ser ressuscitada por outro device. (auditoria #9)
+    deleted: boolean("deleted").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

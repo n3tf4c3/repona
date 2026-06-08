@@ -85,7 +85,9 @@ export async function listarItensAtivos(
         eq(shoppingListItems.shoppingListId, lista.id),
         eq(products.casaId, casaId),
         // Produto arquivado não participa da lista ativa. (auditoria #8)
-        eq(products.archived, false)
+        eq(products.archived, false),
+        // Tombstones de sync não aparecem na lista. (auditoria #9)
+        eq(shoppingListItems.deleted, false)
       )
     )
     .orderBy(asc(products.category), asc(shoppingListItems.checked), asc(products.name));
@@ -118,7 +120,14 @@ export async function adicionarProduto(casaId: number, produtoId: number): Promi
     .values({ casaId, shoppingListId: lista.id, productId: produtoId, quantity: "1 un", updatedAt: now })
     .onConflictDoUpdate({
       target: [shoppingListItems.shoppingListId, shoppingListItems.productId],
-      set: { updatedAt: now },
+      // Re-adicionar reativa um tombstone (volta a '1 un', desmarcado); um item já
+      // ativo só tem o updatedAt tocado, sem perder quantidade/marca. (auditoria #9)
+      set: {
+        quantity: sql`case when ${shoppingListItems.deleted} then '1 un' else ${shoppingListItems.quantity} end`,
+        checked: sql`case when ${shoppingListItems.deleted} then false else ${shoppingListItems.checked} end`,
+        deleted: false,
+        updatedAt: now,
+      },
     });
 }
 
@@ -154,8 +163,10 @@ export async function atualizarQuantidade(
 }
 
 export async function removerItem(casaId: number, itemId: number): Promise<void> {
+  // Soft-delete: vira tombstone para a remoção propagar no sync. (auditoria #9)
   await db
-    .delete(shoppingListItems)
+    .update(shoppingListItems)
+    .set({ deleted: true, updatedAt: new Date() })
     .where(
       and(
         eq(shoppingListItems.id, itemId),
@@ -184,15 +195,20 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   if (marcados.length === 0) return 0;
   if (marcados.some((item) => isEmptyQuantity(item.quantity))) throw new Error("QUANTITY_INVALID");
 
-  // Claim atômico: o DELETE ... RETURNING remove e devolve os itens marcados de
-  // uma vez. Uma finalização concorrente recebe RETURNING vazio e não duplica o
-  // histórico (a leitura acima é só para validar a quantidade). (auditoria #15)
+  // Claim atômico: o UPDATE ... RETURNING marca os itens como tombstone (deleted)
+  // e os devolve de uma vez. Uma finalização concorrente recebe RETURNING vazio e
+  // não duplica o histórico (a leitura acima é só para validar a quantidade). O
+  // tombstone — em vez de DELETE — faz a finalização propagar no sync sem o item
+  // ser ressuscitado por outro device. (auditoria #15, #9)
+  const now = new Date();
   const comprados = await db
-    .delete(shoppingListItems)
+    .update(shoppingListItems)
+    .set({ deleted: true, updatedAt: now })
     .where(
       and(
         eq(shoppingListItems.shoppingListId, lista.id),
         eq(shoppingListItems.checked, true),
+        eq(shoppingListItems.deleted, false),
         // Não finaliza item de produto arquivado. (auditoria #8)
         inArray(
           shoppingListItems.productId,
@@ -206,7 +222,6 @@ export async function finalizarCompra(casaId: number): Promise<number> {
     .returning({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity });
 
   if (comprados.length === 0) return 0;
-  const now = new Date();
 
   // db.batch roda como uma transação: por item comprado grava histórico,
   // incrementa purchase_count e repõe o estoque.

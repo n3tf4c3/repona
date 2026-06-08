@@ -143,7 +143,7 @@ export async function listActiveShoppingItems(): Promise<ShoppingListItemRecord[
        sli.checked
      FROM shopping_list_items sli
      INNER JOIN products p ON p.id = sli.product_id
-     WHERE sli.shopping_list_id = ? AND p.archived = 0
+     WHERE sli.shopping_list_id = ? AND p.archived = 0 AND sli.deleted = 0
      ORDER BY p.category ASC, sli.checked ASC, p.name ASC`,
     activeList.id,
   );
@@ -158,10 +158,14 @@ export async function addProductToActiveShoppingList(productId: number) {
 
   await database.runAsync(
     `INSERT INTO shopping_list_items
-      (shopping_list_id, product_id, quantity, checked, created_at, updated_at)
-     VALUES (?, ?, '1 un', 0, ?, ?)
+      (shopping_list_id, product_id, quantity, checked, deleted, created_at, updated_at)
+     VALUES (?, ?, '1 un', 0, 0, ?, ?)
      ON CONFLICT(shopping_list_id, product_id)
-     DO UPDATE SET updated_at = excluded.updated_at`,
+     DO UPDATE SET
+       quantity = CASE WHEN deleted = 1 THEN '1 un' ELSE quantity END,
+       checked = CASE WHEN deleted = 1 THEN 0 ELSE checked END,
+       deleted = 0,
+       updated_at = excluded.updated_at`,
     activeList.id,
     productId,
     now,
@@ -236,8 +240,12 @@ export async function updateShoppingListItemQuantity(itemId: number, quantity: s
 
 export async function removeShoppingListItem(itemId: number) {
   const database = await initializeDatabase();
-
-  await database.runAsync('DELETE FROM shopping_list_items WHERE id = ?', itemId);
+  // Soft-delete: vira tombstone para a remoção propagar no sync. (auditoria #9)
+  await database.runAsync(
+    'UPDATE shopping_list_items SET deleted = 1, updated_at = ? WHERE id = ?',
+    new Date().toISOString(),
+    itemId,
+  );
 }
 
 export async function finalizeActiveShoppingList() {
@@ -246,14 +254,19 @@ export async function finalizeActiveShoppingList() {
   let finalizedCount = 0;
 
   await database.withTransactionAsync(async () => {
-    // Claim atômico: o DELETE ... RETURNING remove e devolve os itens marcados
-    // de uma vez. Uma finalização concorrente/retry recebe conjunto vazio e não
-    // duplica histórico; quantidade inválida lança e desfaz o DELETE. (auditoria #15)
+    // Claim atômico: o UPDATE ... RETURNING marca os itens como tombstone
+    // (deleted) e os devolve de uma vez. Uma finalização concorrente/retry recebe
+    // conjunto vazio e não duplica histórico; quantidade inválida lança e desfaz o
+    // UPDATE. O tombstone — em vez de DELETE — faz a finalização propagar no sync
+    // sem o item ser ressuscitado por outro device. (auditoria #15, #9)
+    const now = new Date().toISOString();
     const comprados = await database.getAllAsync<{ product_id: number; quantity: string }>(
-      `DELETE FROM shopping_list_items
-       WHERE shopping_list_id = ? AND checked = 1
+      `UPDATE shopping_list_items
+       SET deleted = 1, updated_at = ?
+       WHERE shopping_list_id = ? AND checked = 1 AND deleted = 0
          AND product_id IN (SELECT id FROM products WHERE archived = 0)
        RETURNING product_id, quantity`,
+      now,
       activeList.id,
     );
 
@@ -264,8 +277,6 @@ export async function finalizeActiveShoppingList() {
     if (comprados.some((item) => isEmptyQuantity(item.quantity))) {
       throw new Error('QUANTITY_INVALID');
     }
-
-    const now = new Date().toISOString();
 
     for (const item of comprados) {
       await database.runAsync(

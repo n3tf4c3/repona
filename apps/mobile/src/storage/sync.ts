@@ -30,6 +30,26 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     INNER JOIN products p ON p.id = ph.product_id
   `);
 
+  // Itens da lista ativa, inclusive tombstones (deleted), para a deleção
+  // propagar para os outros devices. (auditoria #9)
+  const lista = await database.getFirstAsync<{ id: number }>(
+    `SELECT id FROM shopping_lists WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
+  );
+  const itensLista = lista
+    ? await database.getAllAsync<{
+        product_name: string;
+        quantity: string;
+        checked: number;
+        deleted: number;
+        updated_at: string;
+      }>(
+        `SELECT p.name as product_name, sli.quantity, sli.checked, sli.deleted, sli.updated_at
+         FROM shopping_list_items sli INNER JOIN products p ON p.id = sli.product_id
+         WHERE sli.shopping_list_id = ?`,
+        lista.id,
+      )
+    : [];
+
   return {
     products: produtos.map((p) => ({
       syncId: p.syncId,
@@ -59,6 +79,13 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       productName: p.product_name,
       priceCents: p.price_cents,
       recordedAt: p.recorded_at,
+    })),
+    listItems: itensLista.map((i) => ({
+      productName: i.product_name,
+      quantity: i.quantity,
+      checked: i.checked === 1,
+      deleted: i.deleted === 1,
+      updatedAt: i.updated_at,
     })),
   };
 }
@@ -169,6 +196,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     await aplicarCompras(database, idPorNome, snapshot.purchases);
     await aplicarConsumos(database, idPorNome, snapshot.consumptions);
     await aplicarPrecos(database, idPorNome, snapshot.prices);
+    await aplicarItensLista(database, idPorNome, snapshot.listItems ?? []);
 
     // purchase_count é derivado do histórico (auditoria #3): recalcula após o
     // merge, em vez de confiar no valor do snapshot (que não soma entre
@@ -183,6 +211,80 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 }
 
 type Db = Awaited<ReturnType<typeof initializeDatabase>>;
+
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function aplicarItensLista(
+  database: Db,
+  idPorNome: Map<string, number>,
+  itens: NonNullable<SyncSnapshot['listItems']>,
+) {
+  if (itens.length === 0) return;
+
+  let lista = await database.getFirstAsync<{ id: number }>(
+    `SELECT id FROM shopping_lists WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
+  );
+  if (!lista) {
+    const agora = new Date().toISOString();
+    const res = await database.runAsync(
+      `INSERT INTO shopping_lists (name, status, created_at, updated_at)
+       VALUES ('Compra da Semana', 'active', ?, ?)`,
+      agora,
+      agora,
+    );
+    lista = { id: res.lastInsertRowId };
+  }
+
+  const existentes = await database.getAllAsync<{ product_id: number; updated_at: string }>(
+    `SELECT product_id, updated_at FROM shopping_list_items WHERE shopping_list_id = ?`,
+    lista.id,
+  );
+  const porProduto = new Map(existentes.map((e) => [e.product_id, e.updated_at]));
+
+  for (const item of itens) {
+    const productId = idPorNome.get(item.productName.trim().toLocaleLowerCase('pt-BR'));
+    if (!productId) continue;
+    const atual = porProduto.get(productId);
+    const updatedAt = item.updatedAt ?? new Date().toISOString();
+
+    if (atual !== undefined) {
+      // LWW: só aplica o recebido se for mais novo que o local. (auditoria #9)
+      if (!shouldApplyIncoming(item.updatedAt, atual)) continue;
+      await database.runAsync(
+        `UPDATE shopping_list_items SET quantity = ?, checked = ?, deleted = ?, updated_at = ?
+         WHERE shopping_list_id = ? AND product_id = ?`,
+        item.quantity,
+        item.checked ? 1 : 0,
+        item.deleted ? 1 : 0,
+        updatedAt,
+        lista.id,
+        productId,
+      );
+    } else {
+      await database.runAsync(
+        `INSERT INTO shopping_list_items
+           (shopping_list_id, product_id, quantity, checked, deleted, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        lista.id,
+        productId,
+        item.quantity,
+        item.checked ? 1 : 0,
+        item.deleted ? 1 : 0,
+        updatedAt,
+        updatedAt,
+      );
+      porProduto.set(productId, updatedAt);
+    }
+  }
+
+  // Poda tombstones já propagados (mais velhos que o TTL). (auditoria #9)
+  const limite = new Date(Date.now() - TOMBSTONE_TTL_MS).toISOString();
+  await database.runAsync(
+    `DELETE FROM shopping_list_items WHERE shopping_list_id = ? AND deleted = 1 AND updated_at < ?`,
+    lista.id,
+    limite,
+  );
+}
 
 async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
   const existentes = await database.getAllAsync<{ name: string; quantity: string; purchased_at: string }>(`
