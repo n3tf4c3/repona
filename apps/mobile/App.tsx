@@ -404,10 +404,12 @@ export default function App() {
   const shoppingTotal = useMemo(
     () =>
       estimateShoppingTotal(
-        shoppingItems.map((item) => ({
-          priceCents: item.productId !== undefined ? priceSummaries.get(item.productId)?.lastCents ?? null : null,
-          quantity: item.quantity,
-        })),
+        shoppingItems
+          .filter((item) => item.checked)
+          .map((item) => ({
+            priceCents: item.productId !== undefined ? priceSummaries.get(item.productId)?.lastCents ?? null : null,
+            quantity: item.quantity,
+          })),
       ),
     [shoppingItems, priceSummaries],
   );

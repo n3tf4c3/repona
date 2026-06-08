@@ -55,16 +55,16 @@ export async function criarConta(nome: string): Promise<SyncResult> {
   return enviarSnapshot(token);
 }
 
-// Define o código da casa e faz a primeira sincronização. Se o código não
-// existir, desfaz o pareamento.
+// Define o código da casa e faz a primeira sincronização. O código só é
+// persistido se o primeiro sync der certo — assim falha de rede/servidor não
+// deixa o app "pareado" com um código que nunca sincronizou.
 export async function pairAndSync(code: string): Promise<SyncResult> {
   const normalized = code.trim().toUpperCase();
   if (!CASA_CODE_REGEX.test(normalized)) return { ok: false, error: 'INVALID_CODE' };
 
-  await setSetting(CASA_CODE_KEY, normalized);
   const result = await enviarSnapshot(normalized);
-  if (!result.ok && result.error === 'CASA_NOT_FOUND') {
-    await deleteSetting(CASA_CODE_KEY);
+  if (result.ok) {
+    await setSetting(CASA_CODE_KEY, normalized);
   }
   return result;
 }

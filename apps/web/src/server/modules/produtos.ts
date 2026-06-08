@@ -138,6 +138,9 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       category: category || "Mercearia",
       barcode: input.barcode ?? null,
       photoUri: input.photoUri ?? null,
+      // Estoque nasce vazio, então o status do produto acompanha (em falta) —
+      // evita divergir do que o DTO/lista/snapshot mostram. (auditoria #7)
+      status: "missing",
       alertThreshold: input.alertThreshold?.trim() || null,
       occasional: input.occasional ?? false,
     })

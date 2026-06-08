@@ -27,7 +27,7 @@ const snapshotSchema = z.object({
       z.object({
         productName: z.string().trim().min(1).max(160),
         quantity: z.string().max(40),
-        purchasedAt: z.string().max(40),
+        purchasedAt: z.string().datetime({ offset: true }),
       })
     )
     .max(10000),
@@ -36,7 +36,7 @@ const snapshotSchema = z.object({
       z.object({
         productName: z.string().trim().min(1).max(160),
         quantity: z.string().max(40),
-        occurredAt: z.string().max(40),
+        occurredAt: z.string().datetime({ offset: true }),
       })
     )
     .max(10000),
@@ -44,8 +44,8 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         productName: z.string().trim().min(1).max(160),
-        priceCents: z.number().int().min(0).max(100_000_000),
-        recordedAt: z.string().max(40),
+        priceCents: z.number().int().min(1).max(100_000_000),
+        recordedAt: z.string().datetime({ offset: true }),
       })
     )
     .max(10000),

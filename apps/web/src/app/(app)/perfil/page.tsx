@@ -15,9 +15,10 @@ const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
 export default async function PerfilPage() {
   const { casaId } = await requireCasa();
   const session = await getAuthSession();
-  const nome = session?.user?.name ?? "Sua conta";
-  const inicial = (nome || "?").trim().charAt(0).toUpperCase();
   const casa = await obterCasaPorId(casaId);
+  // Nome vem do banco (reflete renomeação imediata); o JWT é fallback.
+  const nome = casa?.name ?? session?.user?.name ?? "Sua conta";
+  const inicial = (nome || "?").trim().charAt(0).toUpperCase();
 
   return (
     <div className="space-y-5">
