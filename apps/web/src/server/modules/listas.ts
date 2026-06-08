@@ -80,7 +80,14 @@ export async function listarItensAtivos(
     })
     .from(shoppingListItems)
     .innerJoin(products, eq(products.id, shoppingListItems.productId))
-    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(products.casaId, casaId)))
+    .where(
+      and(
+        eq(shoppingListItems.shoppingListId, lista.id),
+        eq(products.casaId, casaId),
+        // Produto arquivado não participa da lista ativa. (auditoria #8)
+        eq(products.archived, false)
+      )
+    )
     .orderBy(asc(products.category), asc(shoppingListItems.checked), asc(products.name));
 
   return rows.map((row) => ({
@@ -167,7 +174,9 @@ export async function finalizarCompra(casaId: number): Promise<number> {
       and(
         eq(shoppingListItems.shoppingListId, lista.id),
         eq(shoppingListItems.checked, true),
-        eq(products.casaId, casaId)
+        eq(products.casaId, casaId),
+        // Arquivado não é comprado mesmo que tenha ficado marcado. (auditoria #8)
+        eq(products.archived, false)
       )
     )
     .orderBy(asc(shoppingListItems.id));
@@ -180,7 +189,20 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   // histórico (a leitura acima é só para validar a quantidade). (auditoria #15)
   const comprados = await db
     .delete(shoppingListItems)
-    .where(and(eq(shoppingListItems.shoppingListId, lista.id), eq(shoppingListItems.checked, true)))
+    .where(
+      and(
+        eq(shoppingListItems.shoppingListId, lista.id),
+        eq(shoppingListItems.checked, true),
+        // Não finaliza item de produto arquivado. (auditoria #8)
+        inArray(
+          shoppingListItems.productId,
+          db
+            .select({ id: products.id })
+            .from(products)
+            .where(and(eq(products.casaId, casaId), eq(products.archived, false)))
+        )
+      )
+    )
     .returning({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity });
 
   if (comprados.length === 0) return 0;

@@ -143,7 +143,7 @@ export async function listActiveShoppingItems(): Promise<ShoppingListItemRecord[
        sli.checked
      FROM shopping_list_items sli
      INNER JOIN products p ON p.id = sli.product_id
-     WHERE sli.shopping_list_id = ?
+     WHERE sli.shopping_list_id = ? AND p.archived = 0
      ORDER BY p.category ASC, sli.checked ASC, p.name ASC`,
     activeList.id,
   );
@@ -252,6 +252,7 @@ export async function finalizeActiveShoppingList() {
     const comprados = await database.getAllAsync<{ product_id: number; quantity: string }>(
       `DELETE FROM shopping_list_items
        WHERE shopping_list_id = ? AND checked = 1
+         AND product_id IN (SELECT id FROM products WHERE archived = 0)
        RETURNING product_id, quantity`,
       activeList.id,
     );
