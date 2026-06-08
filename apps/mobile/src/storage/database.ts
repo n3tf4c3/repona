@@ -126,40 +126,55 @@ export async function initializeDatabase() {
       WHERE status = 'active';
   `);
 
-  const productColumns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
+  await runMigrations(database);
 
-  if (!productColumns.some((column) => column.name === 'alert_threshold')) {
-    await database.execAsync('ALTER TABLE products ADD COLUMN alert_threshold TEXT;');
-  }
+  return database;
+}
 
-  if (!productColumns.some((column) => column.name === 'archived')) {
-    await database.execAsync('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;');
-  }
+// Migrations versionadas por PRAGMA user_version (auditoria #16). Cada passo é
+// idempotente: instalações antigas (user_version 0) rodam todos os passos uma
+// vez e avançam a versão; instalações novas, já criadas pelo schema acima,
+// também passam por eles sem efeito colateral. Versões futuras entram só como
+// novos passos no fim do array.
+const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
+  // v1: colunas adicionadas depois do schema inicial + identidade de sync.
+  async (db) => {
+    const productColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
 
-  if (!productColumns.some((column) => column.name === 'occasional')) {
-    await database.execAsync('ALTER TABLE products ADD COLUMN occasional INTEGER NOT NULL DEFAULT 0;');
-  }
+    if (!productColumns.some((column) => column.name === 'alert_threshold')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN alert_threshold TEXT;');
+    }
 
-  // Identidade estável do produto para o sync (auditoria #1). SQLite não gera
-  // UUID, então backfillamos as linhas existentes em JS antes do índice único.
-  if (!productColumns.some((column) => column.name === 'sync_id')) {
-    await database.execAsync('ALTER TABLE products ADD COLUMN sync_id TEXT;');
-  }
-  const semSyncId = await database.getAllAsync<{ id: number }>('SELECT id FROM products WHERE sync_id IS NULL');
-  for (const row of semSyncId) {
-    await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', uuidv4(), row.id);
-  }
-  await database.execAsync('CREATE UNIQUE INDEX IF NOT EXISTS products_sync_id_unique ON products(sync_id);');
+    if (!productColumns.some((column) => column.name === 'archived')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;');
+    }
 
-  // Limpeza única: remove compras fantasma criadas pelo sync (source_list_id NULL)
+    if (!productColumns.some((column) => column.name === 'occasional')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN occasional INTEGER NOT NULL DEFAULT 0;');
+    }
+
+    // Identidade estável do produto para o sync (auditoria #1). SQLite não gera
+    // UUID, então backfillamos as linhas existentes em JS antes do índice único.
+    if (!productColumns.some((column) => column.name === 'sync_id')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN sync_id TEXT;');
+    }
+    const semSyncId = await db.getAllAsync<{ id: number }>('SELECT id FROM products WHERE sync_id IS NULL');
+    for (const row of semSyncId) {
+      await db.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', uuidv4(), row.id);
+    }
+    await db.execAsync('CREATE UNIQUE INDEX IF NOT EXISTS products_sync_id_unique ON products(sync_id);');
+  },
+
+  // v2: limpeza única de compras fantasma criadas pelo sync (source_list_id NULL)
   // quando já existe a compra original (com lista de origem) do mesmo produto,
   // quantidade e instante (comparado ao segundo, pois ms/formato podem divergir).
-  const dedupApplied = await database.getFirstAsync<{ value: string }>(
-    "SELECT value FROM settings WHERE key = 'dedup_purchase_history_v1'",
-  );
+  async (db) => {
+    const dedupApplied = await db.getFirstAsync<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'dedup_purchase_history_v1'",
+    );
+    if (dedupApplied) return;
 
-  if (!dedupApplied) {
-    await database.runAsync(`
+    await db.runAsync(`
       DELETE FROM purchase_history
       WHERE source_list_id IS NULL
         AND EXISTS (
@@ -170,11 +185,34 @@ export async function initializeDatabase() {
             AND substr(original.purchased_at, 1, 19) = substr(purchase_history.purchased_at, 1, 19)
         )
     `);
-    await database.runAsync(
+    await db.runAsync(
       "INSERT INTO settings (key, value) VALUES ('dedup_purchase_history_v1', ?)",
       new Date().toISOString(),
     );
-  }
+  },
 
-  return database;
+  // v3: garante a unicidade case-insensitive de products.name em instalações
+  // antigas (o COLLATE NOCASE UNIQUE inline só vale na tabela recém-criada).
+  // Se já houver duplicata local, não força o índice — quebraria o init e a
+  // criação local já valida o nome por SELECT; deixa para reconciliação futura.
+  async (db) => {
+    const dup = await db.getFirstAsync<{ n: number }>(
+      'SELECT COUNT(*) - COUNT(DISTINCT lower(name)) AS n FROM products',
+    );
+    if ((dup?.n ?? 0) === 0) {
+      await db.execAsync(
+        'CREATE UNIQUE INDEX IF NOT EXISTS products_name_nocase_unique ON products(name COLLATE NOCASE);',
+      );
+    }
+  },
+];
+
+async function runMigrations(database: SQLite.SQLiteDatabase) {
+  const row = await database.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const current = row?.user_version ?? 0;
+  for (let version = current; version < MIGRATIONS.length; version++) {
+    await MIGRATIONS[version](database);
+    // PRAGMA não aceita parâmetro vinculado; o valor é um índice controlado.
+    await database.execAsync(`PRAGMA user_version = ${version + 1}`);
+  }
 }
