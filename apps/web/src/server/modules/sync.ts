@@ -190,7 +190,7 @@ async function mesclarCompras(
     vistos.add(chave);
     await db
       .insert(purchaseHistory)
-      .values({ productId, quantity: compra.quantity, purchasedAt: at });
+      .values({ casaId, productId, quantity: compra.quantity, purchasedAt: at });
   }
 }
 

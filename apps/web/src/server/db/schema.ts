@@ -7,6 +7,8 @@ import {
   timestamp,
   uuid,
   uniqueIndex,
+  unique,
+  foreignKey,
   index,
   check,
 } from "drizzle-orm/pg-core";
@@ -55,6 +57,9 @@ export const products = pgTable(
     uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
     uniqueIndex("products_casa_syncid_unique").on(table.casaId, table.syncId),
     check("products_status_check", sql`${table.status} in ('active', 'missing')`),
+    // Alvo das FKs compostas das filhas: garante que o filho fique na mesma casa
+    // do produto. (auditoria #14)
+    unique("products_id_casa_unique").on(table.id, table.casaId),
   ]
 );
 
@@ -76,18 +81,16 @@ export const shoppingLists = pgTable(
       .on(table.casaId)
       .where(sql`${table.status} = 'active'`),
     check("shopping_lists_status_check", sql`${table.status} in ('active', 'archived')`),
+    // Alvo das FKs compostas (item/histórico na mesma casa da lista). (auditoria #14)
+    unique("shopping_lists_id_casa_unique").on(table.id, table.casaId),
   ]
 );
 
-// RISCO ACEITO (auditoria #14): shopping_list_items e purchase_history.source_list_id
-// referenciam lista e produto separadamente, sem constraint garantindo que ambos
-// pertençam à mesma casa_id. A coerência por casa é imposta no nível de query
-// (todos os módulos filtram por casaId), não pelo banco. Adicionar casa_id nos
-// filhos + FKs compostas é uma migração pesada e puramente defensiva; fica adiada.
 export const shoppingListItems = pgTable(
   "shopping_list_items",
   {
     id: serial("id").primaryKey(),
+    casaId: integer("casa_id").notNull(),
     shoppingListId: integer("shopping_list_id")
       .notNull()
       .references(() => shoppingLists.id, { onDelete: "cascade" }),
@@ -105,6 +108,17 @@ export const shoppingListItems = pgTable(
       table.shoppingListId,
       table.productId
     ),
+    // Item preso à mesma casa do produto e da lista. (auditoria #14)
+    foreignKey({
+      columns: [table.productId, table.casaId],
+      foreignColumns: [products.id, products.casaId],
+      name: "sli_product_casa_fk",
+    }),
+    foreignKey({
+      columns: [table.shoppingListId, table.casaId],
+      foreignColumns: [shoppingLists.id, shoppingLists.casaId],
+      name: "sli_list_casa_fk",
+    }),
   ]
 );
 
@@ -112,6 +126,7 @@ export const purchaseHistory = pgTable(
   "purchase_history",
   {
     id: serial("id").primaryKey(),
+    casaId: integer("casa_id").notNull(),
     productId: integer("product_id")
       .notNull()
       .references(() => products.id),
@@ -124,6 +139,18 @@ export const purchaseHistory = pgTable(
   (table) => [
     index("purchase_history_product_idx").on(table.productId),
     index("purchase_history_source_list_idx").on(table.sourceListId),
+    // Histórico preso à mesma casa do produto; a lista de origem (quando há)
+    // também tem de ser da mesma casa. (auditoria #14)
+    foreignKey({
+      columns: [table.productId, table.casaId],
+      foreignColumns: [products.id, products.casaId],
+      name: "ph_product_casa_fk",
+    }),
+    foreignKey({
+      columns: [table.sourceListId, table.casaId],
+      foreignColumns: [shoppingLists.id, shoppingLists.casaId],
+      name: "ph_source_list_casa_fk",
+    }),
   ]
 );
 

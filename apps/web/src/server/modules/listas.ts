@@ -115,7 +115,7 @@ export async function adicionarProduto(casaId: number, produtoId: number): Promi
   const now = new Date();
   await db
     .insert(shoppingListItems)
-    .values({ shoppingListId: lista.id, productId: produtoId, quantity: "1 un", updatedAt: now })
+    .values({ casaId, shoppingListId: lista.id, productId: produtoId, quantity: "1 un", updatedAt: now })
     .onConflictDoUpdate({
       target: [shoppingListItems.shoppingListId, shoppingListItems.productId],
       set: { updatedAt: now },
@@ -215,6 +215,7 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   for (const item of comprados) {
     escritas.push(
       db.insert(purchaseHistory).values({
+        casaId,
         productId: item.productId,
         quantity: item.quantity,
         purchasedAt: now,
