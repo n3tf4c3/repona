@@ -19,6 +19,10 @@ export const casas = pgTable("casas", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().default("Minha casa"),
   inviteCode: text("invite_code").notNull().unique(),
+  // Versão da credencial: incrementa ao regenerar o token. O JWT da sessão web
+  // guarda o valor de quando logou; se divergir do banco, a sessão é encerrada.
+  // Assim regenerar o código também revoga as sessões web ativas. (auditoria #13)
+  credentialVersion: integer("credential_version").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

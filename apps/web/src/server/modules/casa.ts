@@ -1,6 +1,6 @@
 import "server-only";
 import { randomInt } from "crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { casas } from "@/server/db/schema";
 
@@ -59,16 +59,28 @@ export async function obterCasaPorCodigo(code: string): Promise<number | null> {
   return casa?.id ?? null;
 }
 
-// Autentica no web pelo token: devolve id + nome da casa, ou null.
-export async function autenticarCasa(code: string): Promise<{ id: number; name: string } | null> {
+// Autentica no web pelo token: devolve id + nome + versão da credencial, ou null.
+export async function autenticarCasa(
+  code: string
+): Promise<{ id: number; name: string; credentialVersion: number } | null> {
   const codigo = code.trim().toUpperCase();
   if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(codigo)) return null;
   const [casa] = await db
-    .select({ id: casas.id, name: casas.name })
+    .select({ id: casas.id, name: casas.name, credentialVersion: casas.credentialVersion })
     .from(casas)
     .where(eq(casas.inviteCode, codigo))
     .limit(1);
   return casa ?? null;
+}
+
+// Versão atual da credencial da casa (para comparar com o JWT da sessão).
+export async function obterCredentialVersion(casaId: number): Promise<number | null> {
+  const [casa] = await db
+    .select({ credentialVersion: casas.credentialVersion })
+    .from(casas)
+    .where(eq(casas.id, casaId))
+    .limit(1);
+  return casa?.credentialVersion ?? null;
 }
 
 export async function obterCasaPorId(casaId: number): Promise<CasaDTO> {
@@ -84,7 +96,15 @@ export async function obterCasaPorId(casaId: number): Promise<CasaDTO> {
 export async function regenerarCodigo(casaId: number): Promise<void> {
   for (let tentativa = 0; tentativa < 5; tentativa++) {
     try {
-      await db.update(casas).set({ inviteCode: gerarCodigo() }).where(eq(casas.id, casaId));
+      // Incrementa a versão da credencial junto com o novo código: invalida o
+      // token antigo (logins/syncs) e as sessões web já emitidas. (auditoria #13)
+      await db
+        .update(casas)
+        .set({
+          inviteCode: gerarCodigo(),
+          credentialVersion: sql`${casas.credentialVersion} + 1`,
+        })
+        .where(eq(casas.id, casaId));
       return;
     } catch (error) {
       if (tentativa === 4) throw error;

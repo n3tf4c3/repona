@@ -36,7 +36,7 @@ export const authOptions: NextAuthOptions = {
         if (!casa) return null;
 
         // session.user.id passa a ser o casaId (a conta = a casa).
-        return { id: String(casa.id), name: casa.name };
+        return { id: String(casa.id), name: casa.name, credentialVersion: casa.credentialVersion };
       },
     }),
   ],
@@ -45,6 +45,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.sub = user.id;
         token.name = user.name;
+        token.credentialVersion = user.credentialVersion;
       }
       return token;
     },
@@ -52,6 +53,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user && token.sub) {
         session.user.id = token.sub;
         session.user.name = token.name ?? null;
+        session.credentialVersion = token.credentialVersion;
       }
       return session;
     },
