@@ -50,6 +50,14 @@ export function productNameKey(name: string): string {
 }
 
 // Chave de dedupe de um evento (compra/consumo): produto + instante + quantidade.
+// O instante é normalizado para segundos de epoch para tolerar diferenças de
+// formato/precisão de fração de segundo introduzidas no ida-e-volta pela nuvem
+// (ex.: o mesmo instante salvo local e relido do Postgres não bate byte a byte).
 export function eventKey(productName: string, isoDate: string, quantity: string): string {
-  return `${productNameKey(productName)}|${isoDate}|${quantity.trim()}`;
+  return `${productNameKey(productName)}|${instantKey(isoDate)}|${quantity.trim()}`;
+}
+
+function instantKey(isoDate: string): string {
+  const ms = new Date(isoDate).getTime();
+  return Number.isNaN(ms) ? isoDate : String(Math.floor(ms / 1000));
 }

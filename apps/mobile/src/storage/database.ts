@@ -139,5 +139,30 @@ export async function initializeDatabase() {
     await database.execAsync('ALTER TABLE products ADD COLUMN occasional INTEGER NOT NULL DEFAULT 0;');
   }
 
+  // Limpeza única: remove compras fantasma criadas pelo sync (source_list_id NULL)
+  // quando já existe a compra original (com lista de origem) do mesmo produto,
+  // quantidade e instante (comparado ao segundo, pois ms/formato podem divergir).
+  const dedupApplied = await database.getFirstAsync<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'dedup_purchase_history_v1'",
+  );
+
+  if (!dedupApplied) {
+    await database.runAsync(`
+      DELETE FROM purchase_history
+      WHERE source_list_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM purchase_history original
+          WHERE original.source_list_id IS NOT NULL
+            AND original.product_id = purchase_history.product_id
+            AND original.quantity = purchase_history.quantity
+            AND substr(original.purchased_at, 1, 19) = substr(purchase_history.purchased_at, 1, 19)
+        )
+    `);
+    await database.runAsync(
+      "INSERT INTO settings (key, value) VALUES ('dedup_purchase_history_v1', ?)",
+      new Date().toISOString(),
+    );
+  }
+
   return database;
 }
