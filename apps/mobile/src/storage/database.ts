@@ -1,3 +1,4 @@
+import { uuidv4 } from '@repona/core';
 import * as SQLite from 'expo-sqlite';
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -138,6 +139,17 @@ export async function initializeDatabase() {
   if (!productColumns.some((column) => column.name === 'occasional')) {
     await database.execAsync('ALTER TABLE products ADD COLUMN occasional INTEGER NOT NULL DEFAULT 0;');
   }
+
+  // Identidade estável do produto para o sync (auditoria #1). SQLite não gera
+  // UUID, então backfillamos as linhas existentes em JS antes do índice único.
+  if (!productColumns.some((column) => column.name === 'sync_id')) {
+    await database.execAsync('ALTER TABLE products ADD COLUMN sync_id TEXT;');
+  }
+  const semSyncId = await database.getAllAsync<{ id: number }>('SELECT id FROM products WHERE sync_id IS NULL');
+  for (const row of semSyncId) {
+    await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', uuidv4(), row.id);
+  }
+  await database.execAsync('CREATE UNIQUE INDEX IF NOT EXISTS products_sync_id_unique ON products(sync_id);');
 
   // Limpeza única: remove compras fantasma criadas pelo sync (source_list_id NULL)
   // quando já existe a compra original (com lista de origem) do mesmo produto,

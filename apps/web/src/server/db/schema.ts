@@ -5,6 +5,7 @@ import {
   integer,
   boolean,
   timestamp,
+  uuid,
   uniqueIndex,
   index,
   check,
@@ -33,6 +34,7 @@ export const products = pgTable(
     casaId: integer("casa_id")
       .notNull()
       .references(() => casas.id, { onDelete: "cascade" }),
+    syncId: uuid("sync_id").notNull().defaultRandom(),
     name: text("name").notNull(),
     category: text("category").notNull(),
     barcode: text("barcode"),
@@ -47,6 +49,7 @@ export const products = pgTable(
   },
   (table) => [
     uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
+    uniqueIndex("products_casa_syncid_unique").on(table.casaId, table.syncId),
     check("products_status_check", sql`${table.status} in ('active', 'missing')`),
   ]
 );

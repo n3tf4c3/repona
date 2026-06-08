@@ -28,7 +28,8 @@ export type {
   SyncPrice,
   SyncSnapshot,
 } from "./sync";
-export { productNameKey, eventKey } from "./sync";
+export type { ProductMatch, ProductMatchMaps } from "./sync";
+export { productNameKey, eventKey, uuidv4, matchProduct } from "./sync";
 export type { PriceTrend, PriceSummary, PricePoint } from "./price";
 export { summarizePrices } from "./price";
 export type { ShoppingTotalLine, ShoppingTotalEstimate } from "./shopping-total";

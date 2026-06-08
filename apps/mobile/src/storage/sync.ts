@@ -1,4 +1,4 @@
-import { eventKey, type SyncSnapshot } from '@repona/core';
+import { eventKey, uuidv4, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 import { listPurchaseHistoryRecords } from './purchaseHistory';
@@ -32,6 +32,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
 
   return {
     products: produtos.map((p) => ({
+      syncId: p.syncId,
       name: p.name,
       category: p.category,
       barcode: p.barcode,
@@ -71,38 +72,62 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
   await database.withTransactionAsync(async () => {
     for (const prod of snapshot.products) {
-      await database.runAsync(
-        `INSERT INTO products
-           (name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, occasional, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(name) DO UPDATE SET
-           category = excluded.category,
-           barcode = excluded.barcode,
-           photo_uri = excluded.photo_uri,
-           purchase_count = excluded.purchase_count,
-           status = excluded.status,
-           alert_threshold = excluded.alert_threshold,
-           archived = excluded.archived,
-           occasional = excluded.occasional,
-           updated_at = excluded.updated_at`,
-        prod.name.trim(),
-        prod.category,
-        prod.barcode,
-        prod.photoUri,
-        prod.purchaseCount,
-        prod.status,
-        prod.alertThreshold,
-        prod.archived ? 1 : 0,
-        prod.occasional ? 1 : 0,
-        now,
-        now,
-      );
+      const nome = prod.name.trim();
 
-      const row = await database.getFirstAsync<{ id: number }>(
-        'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
-        prod.name.trim(),
-      );
-      if (!row) continue;
+      // Resolve identidade: syncId primeiro; senão por nome, adotando o syncId
+      // do servidor; senão insere. Nome não é sobrescrito em match. (auditoria #1)
+      let row = prod.syncId
+        ? await database.getFirstAsync<{ id: number }>('SELECT id FROM products WHERE sync_id = ? LIMIT 1', prod.syncId)
+        : null;
+
+      if (!row) {
+        const porNome = await database.getFirstAsync<{ id: number }>(
+          'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
+          nome,
+        );
+        if (porNome && prod.syncId) {
+          await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porNome.id);
+        }
+        row = porNome;
+      }
+
+      if (row) {
+        await database.runAsync(
+          `UPDATE products SET
+             category = ?, barcode = ?, photo_uri = ?, purchase_count = ?,
+             status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
+           WHERE id = ?`,
+          prod.category,
+          prod.barcode,
+          prod.photoUri,
+          prod.purchaseCount,
+          prod.status,
+          prod.alertThreshold,
+          prod.archived ? 1 : 0,
+          prod.occasional ? 1 : 0,
+          now,
+          row.id,
+        );
+      } else {
+        const inserido = await database.runAsync(
+          `INSERT INTO products
+             (sync_id, name, category, barcode, photo_uri, purchase_count, status, alert_threshold, archived, occasional, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          prod.syncId ?? uuidv4(),
+          nome,
+          prod.category,
+          prod.barcode,
+          prod.photoUri,
+          prod.purchaseCount,
+          prod.status,
+          prod.alertThreshold,
+          prod.archived ? 1 : 0,
+          prod.occasional ? 1 : 0,
+          now,
+          now,
+        );
+        row = { id: inserido.lastInsertRowId };
+      }
 
       await database.runAsync(
         `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)

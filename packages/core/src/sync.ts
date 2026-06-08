@@ -7,6 +7,9 @@
 import type { ProductStatus, InventoryStatus } from "./contracts";
 
 export type SyncProduct = {
+  // Identidade estável compartilhada (UUID); nome é só atributo. Opcional para
+  // tolerar clientes antigos na transição — nesse caso o merge casa por nome.
+  syncId?: string;
   name: string;
   category: string;
   barcode: string | null;
@@ -47,6 +50,41 @@ export type SyncSnapshot = {
 
 export function productNameKey(name: string): string {
   return name.trim().toLocaleLowerCase("pt-BR");
+}
+
+// UUID v4 baseado em Math.random. Suficiente para um id de sync doméstico —
+// colisão é astronomicamente improvável e o id não tem valor de segurança.
+export function uuidv4(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+// Reconciliação de identidade do produto no merge: casa por syncId primeiro e
+// cai para o nome (legado/transição). Quem chama decide o que fazer com cada
+// caso — no servidor o syncId local vence; no mobile o id do servidor é adotado.
+export type ProductMatchMaps = {
+  idBySyncId: Map<string, number>;
+  idByName: Map<string, number>;
+};
+
+export type ProductMatch =
+  | { id: number; matchedBy: "syncId" | "name" }
+  | { id: null; matchedBy: "none" };
+
+export function matchProduct(
+  input: { syncId?: string | null; name: string },
+  maps: ProductMatchMaps
+): ProductMatch {
+  if (input.syncId) {
+    const porSync = maps.idBySyncId.get(input.syncId);
+    if (porSync !== undefined) return { id: porSync, matchedBy: "syncId" };
+  }
+  const porNome = maps.idByName.get(productNameKey(input.name));
+  if (porNome !== undefined) return { id: porNome, matchedBy: "name" };
+  return { id: null, matchedBy: "none" };
 }
 
 // Chave de dedupe de um evento (compra/consumo): produto + instante + quantidade.

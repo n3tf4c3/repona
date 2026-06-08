@@ -1,4 +1,4 @@
-import { isEmptyQuantity } from '@repona/core';
+import { isEmptyQuantity, uuidv4 } from '@repona/core';
 import { initializeDatabase } from './database';
 import type { NewProductInput } from '../types';
 import type { InventoryStatus } from './inventory';
@@ -7,6 +7,7 @@ export type ProductStatus = 'active' | 'missing';
 
 export type ProductRecord = {
   id: number;
+  syncId: string;
   name: string;
   category: string;
   barcode: string | null;
@@ -26,6 +27,7 @@ export type ProductRecord = {
 
 type ProductRow = {
   id: number;
+  sync_id: string;
   name: string;
   category: string;
   barcode: string | null;
@@ -46,6 +48,7 @@ type ProductRow = {
 const PRODUCT_SELECT = `
     SELECT
       p.id,
+      p.sync_id,
       p.name,
       p.category,
       p.barcode,
@@ -139,8 +142,9 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   let productId = 0;
   await database.withTransactionAsync(async () => {
     const result = await database.runAsync(
-      `INSERT INTO products (name, category, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      `INSERT INTO products (sync_id, name, category, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      uuidv4(),
       name,
       category || 'Mercearia',
       input.barcode ?? null,
@@ -164,6 +168,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   const created = await database.getFirstAsync<ProductRow>(
     `SELECT
        p.id,
+       p.sync_id,
        p.name,
        p.category,
        p.barcode,
@@ -242,6 +247,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   const updated = await database.getFirstAsync<ProductRow>(
     `SELECT
        p.id,
+       p.sync_id,
        p.name,
        p.category,
        p.barcode,
@@ -299,6 +305,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
   const isMissing = isEmptyQuantity(row.inventory_quantity);
   return {
     id: row.id,
+    syncId: row.sync_id,
     name: row.name,
     category: row.category,
     barcode: row.barcode,

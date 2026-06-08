@@ -8,7 +8,7 @@ import {
   purchaseHistory,
   priceHistory,
 } from "@/server/db/schema";
-import { productNameKey, type SyncSnapshot } from "@repona/core";
+import { productNameKey, matchProduct, type SyncSnapshot } from "@repona/core";
 
 const MAX_PRICES_PER_PRODUCT = 10;
 
@@ -27,16 +27,19 @@ export async function mergeCasaSnapshot(
   incoming: SyncSnapshot
 ): Promise<SyncSnapshot> {
   const existentes = await db
-    .select({ id: products.id, name: products.name })
+    .select({ id: products.id, name: products.name, syncId: products.syncId })
     .from(products)
     .where(eq(products.casaId, casaId));
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
+  const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
 
   for (const prod of incoming.products) {
-    const chave = productNameKey(prod.name);
-    let productId = idPorNome.get(chave);
+    // Casa por syncId, cai para o nome (legado). Em match, o syncId do servidor
+    // é autoritativo: não sobrescrevemos products.syncId. (auditoria #1)
+    const match = matchProduct(prod, { idBySyncId: idPorSyncId, idByName: idPorNome });
+    let productId = match.id ?? undefined;
 
-    if (productId) {
+    if (productId !== undefined) {
       await db
         .update(products)
         .set({
@@ -56,6 +59,7 @@ export async function mergeCasaSnapshot(
         .insert(products)
         .values({
           casaId,
+          syncId: prod.syncId,
           name: prod.name.trim(),
           category: prod.category,
           barcode: prod.barcode,
@@ -66,9 +70,10 @@ export async function mergeCasaSnapshot(
           archived: prod.archived,
           occasional: prod.occasional,
         })
-        .returning({ id: products.id });
+        .returning({ id: products.id, syncId: products.syncId });
       productId = novo.id;
-      idPorNome.set(chave, productId);
+      idPorNome.set(productNameKey(prod.name), productId);
+      idPorSyncId.set(novo.syncId, productId);
     }
 
     await db
@@ -186,6 +191,7 @@ async function mesclarConsumos(
 async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasProdutos = await db
     .select({
+      syncId: products.syncId,
       name: products.name,
       category: products.category,
       barcode: products.barcode,
@@ -249,6 +255,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
 
   return {
     products: linhasProdutos.map((p) => ({
+      syncId: p.syncId,
       name: p.name,
       category: p.category,
       barcode: p.barcode,
