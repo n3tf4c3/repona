@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { uuidv4, matchProduct, type ProductMatchMaps } from "./sync";
+import { uuidv4, matchProduct, shouldApplyIncoming, type ProductMatchMaps } from "./sync";
 
 test("uuidv4: formato v4 (versão 4, variante 8/9/a/b)", () => {
   const id = uuidv4();
@@ -36,4 +36,27 @@ test("matchProduct: nenhum match retorna none", () => {
     id: null,
     matchedBy: "none",
   });
+});
+
+const t0 = "2026-06-08T10:00:00.000Z";
+const t1 = "2026-06-08T11:00:00.000Z";
+
+test("shouldApplyIncoming: recebido mais novo aplica", () => {
+  assert.equal(shouldApplyIncoming(t1, t0), true);
+});
+
+test("shouldApplyIncoming: recebido mais antigo não aplica", () => {
+  assert.equal(shouldApplyIncoming(t0, t1), false);
+});
+
+test("shouldApplyIncoming: empate não aplica (idempotente)", () => {
+  assert.equal(shouldApplyIncoming(t0, t0), false);
+});
+
+test("shouldApplyIncoming: sem updatedAt (cliente legado) aplica", () => {
+  assert.equal(shouldApplyIncoming(undefined, t0), true);
+});
+
+test("shouldApplyIncoming: data inválida aplica (não trava merge)", () => {
+  assert.equal(shouldApplyIncoming("nao-e-data", t0), true);
 });

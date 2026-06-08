@@ -10,6 +10,10 @@ export type SyncProduct = {
   // Identidade estável compartilhada (UUID); nome é só atributo. Opcional para
   // tolerar clientes antigos na transição — nesse caso o merge casa por nome.
   syncId?: string;
+  // Instante da última modificação do produto (atributos ou estoque), ISO. Base
+  // do LWW: só sobrescreve quando o recebido é mais novo. Opcional p/ cliente
+  // legado (sem ele, aplica como antes). (auditoria #2)
+  updatedAt?: string;
   name: string;
   category: string;
   barcode: string | null;
@@ -85,6 +89,20 @@ export function matchProduct(
   const porNome = maps.idByName.get(productNameKey(input.name));
   if (porNome !== undefined) return { id: porNome, matchedBy: "name" };
   return { id: null, matchedBy: "none" };
+}
+
+// LWW: decide se o registro recebido deve sobrescrever o local. Sem updatedAt
+// no recebido (cliente legado) aplica como antes; datas inválidas também
+// aplicam, para não travar o merge. Empate não sobrescreve (idempotente).
+export function shouldApplyIncoming(
+  incomingUpdatedAt: string | undefined | null,
+  storedUpdatedAt: string
+): boolean {
+  if (!incomingUpdatedAt) return true;
+  const recebido = new Date(incomingUpdatedAt).getTime();
+  const atual = new Date(storedUpdatedAt).getTime();
+  if (Number.isNaN(recebido) || Number.isNaN(atual)) return true;
+  return recebido > atual;
 }
 
 // Chave de dedupe de um evento (compra/consumo): produto + instante + quantidade.

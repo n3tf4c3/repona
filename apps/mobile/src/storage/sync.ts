@@ -1,4 +1,4 @@
-import { eventKey, uuidv4, type SyncSnapshot } from '@repona/core';
+import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 import { listPurchaseHistoryRecords } from './purchaseHistory';
@@ -33,6 +33,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   return {
     products: produtos.map((p) => ({
       syncId: p.syncId,
+      updatedAt: p.updatedAt,
       name: p.name,
       category: p.category,
       barcode: p.barcode,
@@ -75,14 +76,17 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       const nome = prod.name.trim();
 
       // Resolve identidade: syncId primeiro; senão por nome, adotando o syncId
-      // do servidor; senão insere. Nome não é sobrescrito em match. (auditoria #1)
+      // do servidor; senão insere. (auditoria #1)
       let row = prod.syncId
-        ? await database.getFirstAsync<{ id: number }>('SELECT id FROM products WHERE sync_id = ? LIMIT 1', prod.syncId)
+        ? await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
+            'SELECT id, name, updated_at FROM products WHERE sync_id = ? LIMIT 1',
+            prod.syncId,
+          )
         : null;
 
       if (!row) {
-        const porNome = await database.getFirstAsync<{ id: number }>(
-          'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
+        const porNome = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
+          'SELECT id, name, updated_at FROM products WHERE lower(name) = lower(?) LIMIT 1',
           nome,
         );
         if (porNome && prod.syncId) {
@@ -91,12 +95,30 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         row = porNome;
       }
 
+      let productId: number;
+
       if (row) {
+        // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
+        if (!shouldApplyIncoming(prod.updatedAt, row.updated_at)) {
+          continue;
+        }
+        // Renomeia só se o novo nome não pertence a outro produto local (evita
+        // violar a unicidade); em colisão mantém o nome local e reconcilia depois.
+        let nomeFinal = nome;
+        if (productNameKey(prod.name) !== productNameKey(row.name)) {
+          const colide = await database.getFirstAsync<{ id: number }>(
+            'SELECT id FROM products WHERE lower(name) = lower(?) AND id <> ? LIMIT 1',
+            nome,
+            row.id,
+          );
+          if (colide) nomeFinal = row.name;
+        }
         await database.runAsync(
           `UPDATE products SET
-             category = ?, barcode = ?, photo_uri = ?, purchase_count = ?,
+             name = ?, category = ?, barcode = ?, photo_uri = ?, purchase_count = ?,
              status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
            WHERE id = ?`,
+          nomeFinal,
           prod.category,
           prod.barcode,
           prod.photoUri,
@@ -105,9 +127,10 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           prod.alertThreshold,
           prod.archived ? 1 : 0,
           prod.occasional ? 1 : 0,
-          now,
+          prod.updatedAt ?? now,
           row.id,
         );
+        productId = row.id;
       } else {
         const inserido = await database.runAsync(
           `INSERT INTO products
@@ -124,9 +147,9 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           prod.archived ? 1 : 0,
           prod.occasional ? 1 : 0,
           now,
-          now,
+          prod.updatedAt ?? now,
         );
-        row = { id: inserido.lastInsertRowId };
+        productId = inserido.lastInsertRowId;
       }
 
       await database.runAsync(
@@ -136,7 +159,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
            quantity = excluded.quantity,
            status = excluded.status,
            updated_at = excluded.updated_at`,
-        row.id,
+        productId,
         prod.inventoryQuantity,
         prod.inventoryStatus,
         now,

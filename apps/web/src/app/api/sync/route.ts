@@ -8,6 +8,7 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         syncId: z.string().uuid().optional(),
+        updatedAt: z.string().datetime({ offset: true }).optional(),
         name: z.string().trim().min(1).max(160),
         category: z.string().max(80),
         barcode: z.string().max(120).nullable(),

@@ -8,7 +8,7 @@ import {
   purchaseHistory,
   priceHistory,
 } from "@/server/db/schema";
-import { productNameKey, matchProduct, type SyncSnapshot } from "@repona/core";
+import { productNameKey, matchProduct, shouldApplyIncoming, type SyncSnapshot } from "@repona/core";
 
 const MAX_PRICES_PER_PRODUCT = 10;
 
@@ -27,22 +27,41 @@ export async function mergeCasaSnapshot(
   incoming: SyncSnapshot
 ): Promise<SyncSnapshot> {
   const existentes = await db
-    .select({ id: products.id, name: products.name, syncId: products.syncId })
+    .select({
+      id: products.id,
+      name: products.name,
+      syncId: products.syncId,
+      updatedAt: products.updatedAt,
+    })
     .from(products)
     .where(eq(products.casaId, casaId));
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
+  const infoPorId = new Map(existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt }]));
 
   for (const prod of incoming.products) {
     // Casa por syncId, cai para o nome (legado). Em match, o syncId do servidor
     // é autoritativo: não sobrescrevemos products.syncId. (auditoria #1)
     const match = matchProduct(prod, { idBySyncId: idPorSyncId, idByName: idPorNome });
-    let productId = match.id ?? undefined;
+    let productId: number;
 
-    if (productId !== undefined) {
+    if (match.id !== null) {
+      const info = infoPorId.get(match.id)!;
+      // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
+      if (!shouldApplyIncoming(prod.updatedAt, info.updatedAt.toISOString())) {
+        continue;
+      }
+      // Renomeia só se o novo nome não pertence a outro produto (evita violar a
+      // unicidade); em colisão mantém o nome local e reconcilia depois.
+      const donoDoNome = idPorNome.get(productNameKey(prod.name));
+      const nomeColide = donoDoNome !== undefined && donoDoNome !== match.id;
+      const nomeFinal = nomeColide ? info.name : prod.name.trim();
+      const novoUpdatedAt = prod.updatedAt ? new Date(prod.updatedAt) : new Date();
+
       await db
         .update(products)
         .set({
+          name: nomeFinal,
           category: prod.category,
           barcode: prod.barcode,
           photoUri: prod.photoUri,
@@ -51,9 +70,16 @@ export async function mergeCasaSnapshot(
           alertThreshold: prod.alertThreshold,
           archived: prod.archived,
           occasional: prod.occasional,
-          updatedAt: new Date(),
+          updatedAt: novoUpdatedAt,
         })
-        .where(eq(products.id, productId));
+        .where(eq(products.id, match.id));
+
+      if (productNameKey(info.name) !== productNameKey(nomeFinal)) {
+        idPorNome.delete(productNameKey(info.name));
+        idPorNome.set(productNameKey(nomeFinal), match.id);
+      }
+      infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt });
+      productId = match.id;
     } else {
       const [novo] = await db
         .insert(products)
@@ -69,11 +95,16 @@ export async function mergeCasaSnapshot(
           alertThreshold: prod.alertThreshold,
           archived: prod.archived,
           occasional: prod.occasional,
+          updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : undefined,
         })
         .returning({ id: products.id, syncId: products.syncId });
       productId = novo.id;
       idPorNome.set(productNameKey(prod.name), productId);
       idPorSyncId.set(novo.syncId, productId);
+      infoPorId.set(productId, {
+        name: prod.name.trim(),
+        updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : new Date(),
+      });
     }
 
     await db
@@ -192,6 +223,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasProdutos = await db
     .select({
       syncId: products.syncId,
+      updatedAt: products.updatedAt,
       name: products.name,
       category: products.category,
       barcode: products.barcode,
@@ -256,6 +288,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   return {
     products: linhasProdutos.map((p) => ({
       syncId: p.syncId,
+      updatedAt: p.updatedAt.toISOString(),
       name: p.name,
       category: p.category,
       barcode: p.barcode,
