@@ -50,7 +50,10 @@ export function ProdutosClient({
     const termo = busca.trim().toLowerCase();
     const base = verArquivados ? arquivados : produtos;
     return base.filter((p) => {
-      const casaBusca = !termo || p.name.toLowerCase().includes(termo);
+      const casaBusca =
+        !termo ||
+        p.name.toLowerCase().includes(termo) ||
+        (p.barcode?.toLowerCase().includes(termo) ?? false);
       const casaCategoria = categoria === "Todos" || p.category === categoria;
       return casaBusca && casaCategoria;
     });
@@ -454,7 +457,16 @@ function ProdutoModal({
           </button>
           <button
             disabled={pending}
-            onClick={() => onSalvar({ name, category, alertThreshold, occasional })}
+            onClick={() =>
+              onSalvar({
+                name,
+                category,
+                alertThreshold,
+                occasional,
+                barcode: produto?.barcode ?? null,
+                photoUri: produto?.photoUri ?? null,
+              })
+            }
             className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
             {pending ? "Salvando..." : "Salvar"}

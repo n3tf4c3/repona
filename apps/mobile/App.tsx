@@ -102,6 +102,7 @@ export default function App() {
         await seedActiveShoppingList();
         const activeList = await ensureActiveShoppingList();
         const records = await listProducts();
+        const archivedRecords = await listArchivedProducts();
         const listRecords = await listActiveShoppingItems();
         const historyRecords = await listPurchaseHistoryRecords();
         const prices = await listRecentPricesByProduct();
@@ -109,6 +110,7 @@ export default function App() {
         if (isMounted) {
           setActiveShoppingListName(activeList.name);
           setProducts(records.map(productRecordToProduct));
+          setArchivedProducts(archivedRecords.map(productRecordToProduct));
           setShoppingItems(listRecords.map(shoppingListRecordToItem));
           setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
           setPricesByProduct(prices);

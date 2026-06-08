@@ -12,6 +12,13 @@ import { productNameKey, type SyncSnapshot } from "@repona/core";
 
 const MAX_PRICES_PER_PRODUCT = 10;
 
+// Instante em segundos de epoch: o dedupe normaliza o timestamp para tolerar
+// diferenças de fração de segundo/formato no ida-e-volta entre mobile e nuvem
+// (mesma lógica do eventKey do core). A quantidade é comparada com trim().
+function instanteEmSegundos(date: Date): number {
+  return Math.floor(date.getTime() / 1000);
+}
+
 // Merge do snapshot do mobile na casa, devolvendo o snapshot mesclado.
 // Regras: produto casa por nome (o celular vence nos campos); compras e consumos
 // são append-only com dedupe por produto+instante+quantidade. Nada é apagado.
@@ -95,7 +102,7 @@ async function mesclarPrecos(
     .innerJoin(products, eq(products.id, priceHistory.productId))
     .where(eq(products.casaId, casaId));
   const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${e.recordedAt.toISOString()}|${e.priceCents}`)
+    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.recordedAt)}|${e.priceCents}`)
   );
 
   for (const preco of incoming) {
@@ -103,7 +110,7 @@ async function mesclarPrecos(
     if (!productId) continue;
     const at = new Date(preco.recordedAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${at.toISOString()}|${preco.priceCents}`;
+    const chave = `${productId}|${instanteEmSegundos(at)}|${Math.round(preco.priceCents)}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await db
@@ -127,7 +134,7 @@ async function mesclarCompras(
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .where(eq(products.casaId, casaId));
   const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${e.purchasedAt.toISOString()}|${e.quantity}`)
+    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${e.quantity.trim()}`)
   );
 
   for (const compra of incoming) {
@@ -135,7 +142,7 @@ async function mesclarCompras(
     if (!productId) continue;
     const at = new Date(compra.purchasedAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${at.toISOString()}|${compra.quantity}`;
+    const chave = `${productId}|${instanteEmSegundos(at)}|${compra.quantity.trim()}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await db
@@ -159,7 +166,7 @@ async function mesclarConsumos(
     .innerJoin(products, eq(products.id, inventoryEvents.productId))
     .where(eq(products.casaId, casaId));
   const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${e.occurredAt.toISOString()}|${e.quantity}`)
+    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.occurredAt)}|${e.quantity.trim()}`)
   );
 
   for (const consumo of incoming) {
@@ -167,7 +174,7 @@ async function mesclarConsumos(
     if (!productId) continue;
     const at = new Date(consumo.occurredAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${at.toISOString()}|${consumo.quantity}`;
+    const chave = `${productId}|${instanteEmSegundos(at)}|${consumo.quantity.trim()}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await db
