@@ -30,6 +30,7 @@ const snapshotSchema = z.object({
         productName: z.string().trim().min(1).max(160),
         quantity: z.string().max(40),
         purchasedAt: z.string().datetime({ offset: true }),
+        sourceListName: z.string().max(120).nullish(),
       })
     )
     .max(10000),

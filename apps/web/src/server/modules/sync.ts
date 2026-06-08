@@ -197,7 +197,13 @@ async function mesclarCompras(
     vistos.add(chave);
     await db
       .insert(purchaseHistory)
-      .values({ casaId, productId, quantity: compra.quantity, purchasedAt: at });
+      .values({
+        casaId,
+        productId,
+        quantity: compra.quantity,
+        purchasedAt: at,
+        sourceListName: compra.sourceListName ?? null,
+      });
   }
 }
 
@@ -323,6 +329,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       productName: products.name,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
+      sourceListName: purchaseHistory.sourceListName,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
@@ -398,6 +405,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       productName: c.productName,
       quantity: c.quantity,
       purchasedAt: c.purchasedAt.toISOString(),
+      sourceListName: c.sourceListName,
     })),
     consumptions: linhasConsumos.map((c) => ({
       productName: c.productName,

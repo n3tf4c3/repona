@@ -33,7 +33,7 @@ export async function listPurchaseHistoryRecords(): Promise<PurchaseHistoryRecor
       ph.quantity,
       ph.purchased_at,
       ph.source_list_id,
-      sl.name as source_list_name
+      COALESCE(ph.source_list_name, sl.name) as source_list_name
     FROM purchase_history ph
     INNER JOIN products p ON p.id = ph.product_id
     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id

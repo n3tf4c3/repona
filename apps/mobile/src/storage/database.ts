@@ -214,6 +214,20 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       await db.execAsync('ALTER TABLE shopping_list_items ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
     }
   },
+
+  // v5: nome da lista de origem denormalizado na compra (auditoria #17). Viaja no
+  // sync para a compra preservar a origem em outro device (o id da lista é local).
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(purchase_history)');
+    if (!cols.some((c) => c.name === 'source_list_name')) {
+      await db.execAsync('ALTER TABLE purchase_history ADD COLUMN source_list_name TEXT;');
+      await db.execAsync(
+        `UPDATE purchase_history SET source_list_name = (
+           SELECT name FROM shopping_lists WHERE shopping_lists.id = purchase_history.source_list_id
+         ) WHERE source_list_name IS NULL`,
+      );
+    }
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

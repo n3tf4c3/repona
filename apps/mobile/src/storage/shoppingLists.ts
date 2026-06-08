@@ -280,12 +280,13 @@ export async function finalizeActiveShoppingList() {
 
     for (const item of comprados) {
       await database.runAsync(
-        `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
+         VALUES (?, ?, ?, ?, ?)`,
         item.product_id,
         item.quantity,
         now,
         activeList.id,
+        activeList.name,
       );
 
       await database.runAsync(

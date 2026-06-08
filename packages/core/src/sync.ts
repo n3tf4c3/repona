@@ -28,15 +28,15 @@ export type SyncProduct = {
   occasional: boolean;
 };
 
-// O sync NORMALIZA a compra sem a lista de origem (auditoria #17): a lista de
-// compras não faz parte do contrato (ver #9), então sourceListId/Name não teriam
-// sentido entre dispositivos (espaços de id distintos). Compras que voltam da
-// nuvem em outro aparelho perdem o vínculo com a lista e caem no rótulo genérico
-// "Compra finalizada". Aceito enquanto listas não sincronizarem.
 export type SyncPurchase = {
   productName: string;
   quantity: string;
   purchasedAt: string; // ISO
+  // Nome da lista de origem, denormalizado no momento da compra (auditoria #17).
+  // O id da lista é local a cada device, então viaja o nome; compras
+  // sincronizadas preservam a origem em vez de cair em "Compra finalizada".
+  // Opcional/nulo para compras sem lista e clientes antigos.
+  sourceListName?: string | null;
 };
 
 export type SyncConsumption = {

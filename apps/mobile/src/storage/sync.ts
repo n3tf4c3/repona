@@ -69,6 +69,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       productName: c.productName,
       quantity: c.quantity,
       purchasedAt: c.purchasedAt,
+      sourceListName: c.sourceListName,
     })),
     consumptions: consumos.map((c) => ({
       productName: c.product_name,
@@ -300,11 +301,12 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await database.runAsync(
-      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id)
-       VALUES (?, ?, ?, NULL)`,
+      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
+       VALUES (?, ?, ?, NULL, ?)`,
       productId,
       compra.quantity,
       compra.purchasedAt,
+      compra.sourceListName ?? null,
     );
   }
 }

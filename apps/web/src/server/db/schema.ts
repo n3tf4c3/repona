@@ -138,6 +138,9 @@ export const purchaseHistory = pgTable(
     sourceListId: integer("source_list_id").references(() => shoppingLists.id, {
       onDelete: "set null",
     }),
+    // Nome da lista de origem denormalizado: sobrevive ao sync (o id é local) e a
+    // exclusões da lista. (auditoria #17)
+    sourceListName: text("source_list_name"),
   },
   (table) => [
     index("purchase_history_product_idx").on(table.productId),

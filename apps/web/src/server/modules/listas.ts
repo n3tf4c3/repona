@@ -235,6 +235,7 @@ export async function finalizarCompra(casaId: number): Promise<number> {
         quantity: item.quantity,
         purchasedAt: now,
         sourceListId: lista.id,
+        sourceListName: lista.name,
       })
     );
     escritas.push(

@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import type { PurchaseHistoryDTO } from "@repona/core";
 import { db } from "@/server/db";
 import { products, shoppingLists, purchaseHistory } from "@/server/db/schema";
@@ -14,7 +14,9 @@ export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDT
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
       sourceListId: purchaseHistory.sourceListId,
-      sourceListName: shoppingLists.name,
+      // Prefere o nome denormalizado (sobrevive ao sync); cai no join p/ linhas
+      // antigas ainda sem o valor. (auditoria #17)
+      sourceListName: sql<string | null>`coalesce(${purchaseHistory.sourceListName}, ${shoppingLists.name})`,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
