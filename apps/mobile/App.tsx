@@ -1246,22 +1246,24 @@ function ProductRow({
   onRegisterPrice?: (product: Product) => void;
 }) {
   return (
-    <View style={styles.productRow}>
-      {product.photoUri ? (
-        <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
-      ) : (
-        <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
-      )}
-      <View style={styles.productText}>
-        <View style={styles.productNameRow}>
-          <Text style={[styles.productName, styles.productNameFlex]} numberOfLines={2}>{product.name}</Text>
-          {product.occasional ? <Text style={styles.eventualBadge}>Eventual</Text> : null}
+    <View style={styles.productCard}>
+      <View style={styles.productHeader}>
+        {product.photoUri ? (
+          <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
+        ) : (
+          <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
+        )}
+        <View style={styles.productText}>
+          <View style={styles.productNameRow}>
+            <Text style={[styles.productName, styles.productNameFlex]} numberOfLines={2}>{product.name}</Text>
+            {product.occasional ? <Text style={styles.eventualBadge}>Eventual</Text> : null}
+          </View>
+          <Text style={styles.productMeta} numberOfLines={2}>{product.meta}</Text>
+          {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
+          {onChangeInventory && onMarkInventoryMissing && onConsume ? (
+            <InventoryControls product={product} onChange={onChangeInventory} onMarkMissing={onMarkInventoryMissing} onConsume={onConsume} />
+          ) : null}
         </View>
-        <Text style={styles.productMeta} numberOfLines={2}>{product.meta}</Text>
-        {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
-        {onChangeInventory && onMarkInventoryMissing && onConsume ? (
-          <InventoryControls product={product} onChange={onChangeInventory} onMarkMissing={onMarkInventoryMissing} onConsume={onConsume} />
-        ) : null}
       </View>
       <View style={styles.productActions}>
         {onRegisterPrice ? (
@@ -2507,6 +2509,24 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     ...shadow.small,
   },
+  // Card principal de produto: coluna com [foto+texto] em cima e os botões de
+  // ação numa linha própria embaixo, para o nome usar a largura toda.
+  productCard: {
+    flexDirection: 'column',
+    gap: 11,
+    backgroundColor: colors.surface,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.line2,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    ...shadow.small,
+  },
+  productHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 13,
+  },
   productPhoto: {
     width: 44,
     height: 44,
@@ -2600,6 +2620,7 @@ const styles = StyleSheet.create({
   productActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 6,
   },
   productActionButton: {
