@@ -13,7 +13,8 @@
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "casas": "node scripts/casas.mjs"
+    "casas": "node scripts/casas.mjs",
+    "merge-produtos": "node scripts/merge-produtos.mjs"
   },
   "dependencies": {
     "@repona/core": "*",

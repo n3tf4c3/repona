@@ -111,6 +111,20 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           )
         : null;
 
+      if (!row && prod.barcode) {
+        // Casa por código de barras (não-nulo) quando o syncId não bate e antes
+        // do nome; adota o syncId do servidor. Sem código não entra aqui, então
+        // hortifrúti segue só pelo nome. (auditoria #19)
+        const porBarcode = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
+          'SELECT id, name, updated_at FROM products WHERE barcode = ? LIMIT 1',
+          prod.barcode,
+        );
+        if (porBarcode && prod.syncId) {
+          await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porBarcode.id);
+        }
+        row = porBarcode;
+      }
+
       if (!row) {
         const porNome = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
           'SELECT id, name, updated_at FROM products WHERE lower(name) = lower(?) LIMIT 1',

@@ -11,6 +11,7 @@ test("uuidv4: formato v4 (versão 4, variante 8/9/a/b)", () => {
 const maps = (): ProductMatchMaps => ({
   idBySyncId: new Map([["sync-1", 10]]),
   idByName: new Map([["leite", 10], ["café", 20]]),
+  idByBarcode: new Map([["789123", 30]]),
 });
 
 test("matchProduct: casa por syncId primeiro", () => {
@@ -35,6 +36,39 @@ test("matchProduct: nenhum match retorna none", () => {
   assert.deepEqual(matchProduct({ syncId: "sync-x", name: "Novo" }, maps()), {
     id: null,
     matchedBy: "none",
+  });
+});
+
+test("matchProduct: casa por barcode quando syncId não bate e nome diverge", () => {
+  assert.deepEqual(
+    matchProduct({ syncId: "sync-x", name: "Papel Toalha Absoluto", barcode: "789123" }, maps()),
+    { id: 30, matchedBy: "barcode" }
+  );
+});
+
+test("matchProduct: syncId vence o barcode", () => {
+  assert.deepEqual(
+    matchProduct({ syncId: "sync-1", name: "Outro", barcode: "789123" }, maps()),
+    { id: 10, matchedBy: "syncId" }
+  );
+});
+
+test("matchProduct: barcode ausente/nulo não casa (segue pelo nome)", () => {
+  assert.deepEqual(matchProduct({ name: "Café", barcode: null }, maps()), {
+    id: 20,
+    matchedBy: "name",
+  });
+  // Dois itens sem código (NULL) nunca colidem por barcode.
+  assert.deepEqual(matchProduct({ name: "Banana", barcode: "  " }, maps()), {
+    id: null,
+    matchedBy: "none",
+  });
+});
+
+test("matchProduct: barcode desconhecido cai para o nome", () => {
+  assert.deepEqual(matchProduct({ name: "Leite", barcode: "000000" }, maps()), {
+    id: 10,
+    matchedBy: "name",
   });
 });
 

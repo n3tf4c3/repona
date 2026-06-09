@@ -37,18 +37,28 @@ export async function mergeCasaSnapshot(
       id: products.id,
       name: products.name,
       syncId: products.syncId,
+      barcode: products.barcode,
       updatedAt: products.updatedAt,
     })
     .from(products)
     .where(eq(products.casaId, casaId));
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
+  // Só produtos com código não-nulo entram no mapa de barcode (hortifrúti sem
+  // código nunca casa por aqui). (auditoria #19)
+  const idPorBarcode = new Map(
+    existentes.filter((p) => p.barcode).map((p) => [p.barcode as string, p.id])
+  );
   const infoPorId = new Map(existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt }]));
 
   for (const prod of incoming.products) {
-    // Casa por syncId, cai para o nome (legado). Em match, o syncId do servidor
-    // é autoritativo: não sobrescrevemos products.syncId. (auditoria #1)
-    const match = matchProduct(prod, { idBySyncId: idPorSyncId, idByName: idPorNome });
+    // Casa por syncId, depois barcode, cai para o nome (legado). Em match, o
+    // syncId do servidor é autoritativo: não sobrescrevemos products.syncId. (auditoria #1)
+    const match = matchProduct(prod, {
+      idBySyncId: idPorSyncId,
+      idByName: idPorNome,
+      idByBarcode: idPorBarcode,
+    });
     let productId: number;
 
     if (match.id !== null) {
@@ -83,6 +93,7 @@ export async function mergeCasaSnapshot(
         idPorNome.set(productNameKey(nomeFinal), match.id);
       }
       infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt });
+      if (prod.barcode) idPorBarcode.set(prod.barcode, match.id);
       productId = match.id;
     } else {
       const [novo] = await db
@@ -103,6 +114,7 @@ export async function mergeCasaSnapshot(
       productId = novo.id;
       idPorNome.set(productNameKey(prod.name), productId);
       idPorSyncId.set(novo.syncId, productId);
+      if (prod.barcode) idPorBarcode.set(prod.barcode, productId);
       infoPorId.set(productId, {
         name: prod.name.trim(),
         updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : new Date(),

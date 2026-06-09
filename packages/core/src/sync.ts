@@ -87,25 +87,35 @@ export function uuidv4(): string {
   });
 }
 
-// Reconciliação de identidade do produto no merge: casa por syncId primeiro e
-// cai para o nome (legado/transição). Quem chama decide o que fazer com cada
-// caso — no servidor o syncId local vence; no mobile o id do servidor é adotado.
+// Reconciliação de identidade do produto no merge: casa por syncId, depois pelo
+// código de barras, e cai para o nome (legado/transição). Quem chama decide o
+// que fazer com cada caso — no servidor o syncId local vence; no mobile o id do
+// servidor é adotado. idByBarcode é opcional e só contém códigos não-nulos:
+// produtos sem barcode (ex.: hortifrúti) nunca casam por essa via.
 export type ProductMatchMaps = {
   idBySyncId: Map<string, number>;
   idByName: Map<string, number>;
+  idByBarcode?: Map<string, number>;
 };
 
 export type ProductMatch =
-  | { id: number; matchedBy: "syncId" | "name" }
+  | { id: number; matchedBy: "syncId" | "barcode" | "name" }
   | { id: null; matchedBy: "none" };
 
 export function matchProduct(
-  input: { syncId?: string | null; name: string },
+  input: { syncId?: string | null; name: string; barcode?: string | null },
   maps: ProductMatchMaps
 ): ProductMatch {
   if (input.syncId) {
     const porSync = maps.idBySyncId.get(input.syncId);
     if (porSync !== undefined) return { id: porSync, matchedBy: "syncId" };
+  }
+  // Só casa por barcode quando ambos os lados têm código não-vazio: NULL nunca
+  // casa com NULL, então itens sem código seguem pelo nome como antes.
+  const barcode = input.barcode?.trim();
+  if (barcode && maps.idByBarcode) {
+    const porBarcode = maps.idByBarcode.get(barcode);
+    if (porBarcode !== undefined) return { id: porBarcode, matchedBy: "barcode" };
   }
   const porNome = maps.idByName.get(productNameKey(input.name));
   if (porNome !== undefined) return { id: porNome, matchedBy: "name" };
