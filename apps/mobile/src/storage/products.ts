@@ -120,6 +120,24 @@ export async function unarchiveProduct(productId: number) {
   );
 }
 
+// Produto (outro que não o editado) que já tem este código de barras. Usado no
+// cadastro para avisar antes de criar uma duplicata via scanner. Código vazio
+// nunca casa.
+export async function findProductByBarcode(
+  barcode: string,
+  excludeId?: number,
+): Promise<{ id: number; name: string; archived: boolean } | null> {
+  const code = barcode.trim();
+  if (!code) return null;
+  const database = await initializeDatabase();
+  const row = await database.getFirstAsync<{ id: number; name: string; archived: number }>(
+    'SELECT id, name, archived FROM products WHERE barcode = ? AND id <> ? LIMIT 1',
+    code,
+    excludeId ?? -1,
+  );
+  return row ? { id: row.id, name: row.name, archived: row.archived === 1 } : null;
+}
+
 export async function createProduct(input: NewProductInput): Promise<ProductRecord> {
   const database = await initializeDatabase();
   const name = input.name.trim();

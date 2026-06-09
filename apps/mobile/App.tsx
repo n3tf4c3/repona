@@ -34,7 +34,7 @@ import {
 } from './src/storage/shoppingLists';
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
 import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
-import { archiveProduct, createProduct, deleteProduct, listArchivedProducts, listProducts, unarchiveProduct, updateProduct } from './src/storage/products';
+import { archiveProduct, createProduct, deleteProduct, findProductByBarcode, listArchivedProducts, listProducts, unarchiveProduct, updateProduct } from './src/storage/products';
 import { persistPhoto } from './src/storage/photos';
 import { addProductPrice, listRecentPricesByProduct } from './src/storage/priceHistory';
 import { formatCentsBRL, parsePriceToCents } from './src/priceFormat';
@@ -1912,7 +1912,7 @@ function NewProductSheet({
     }
   }
 
-  function handleBarcodeScanned(result: BarcodeScanningResult) {
+  async function handleBarcodeScanned(result: BarcodeScanningResult) {
     if (hasScanned) {
       return;
     }
@@ -1920,6 +1920,16 @@ function NewProductSheet({
     setHasScanned(true);
     setBarcode(result.data);
     setIsScannerVisible(false);
+
+    // Avisa se o código já pertence a outro produto, para evitar duplicata.
+    const existente = await findProductByBarcode(result.data, product?.id);
+    if (existente) {
+      setBarcodeError(
+        existente.archived
+          ? `Já existe (arquivado) "${existente.name}" com este código.`
+          : `Já existe "${existente.name}" com este código.`,
+      );
+    }
   }
 
   async function handleSave() {
