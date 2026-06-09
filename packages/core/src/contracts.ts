@@ -34,6 +34,32 @@ export type NewProductInput = {
   occasional?: boolean;
 };
 
+// Limites de tamanho dos campos que viajam no sync. São o teto vinculante: um
+// valor acima disso faz a validação do snapshot rejeitar o sync INTEIRO da casa.
+// Fonte única usada na criação (web/mobile) e no schema do endpoint de sync, para
+// não divergirem. (auditoria 2026-06-09 #3)
+export const FIELD_LIMITS = {
+  name: 160,
+  category: 80,
+  barcode: 120,
+  quantity: 40,
+  alertThreshold: 40,
+} as const;
+
+// Valida os tamanhos antes de gravar, evitando criar um produto que depois
+// trava o sync. Lança "PRODUCT_FIELD_TOO_LONG" — um código só, mapeado para uma
+// mensagem amigável nas duas UIs.
+export function validateProductFields(input: NewProductInput): void {
+  if (
+    input.name.trim().length > FIELD_LIMITS.name ||
+    (input.category ?? "").length > FIELD_LIMITS.category ||
+    (input.barcode ?? "").length > FIELD_LIMITS.barcode ||
+    (input.alertThreshold ?? "").length > FIELD_LIMITS.alertThreshold
+  ) {
+    throw new Error("PRODUCT_FIELD_TOO_LONG");
+  }
+}
+
 export type ShoppingListDTO = {
   id: number;
   name: string;

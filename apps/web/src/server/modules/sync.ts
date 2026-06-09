@@ -9,7 +9,7 @@ import {
   priceHistory,
   shoppingListItems,
 } from "@/server/db/schema";
-import { productNameKey, matchProduct, shouldApplyIncoming, type SyncSnapshot } from "@repona/core";
+import { productNameKey, matchProduct, shouldApplyIncoming, normalizeQuantity, type SyncSnapshot } from "@repona/core";
 import { garantirListaAtiva } from "@/server/modules/listas";
 
 // Tombstones de item de lista mais antigos que isto são podados (já propagaram a
@@ -196,7 +196,7 @@ async function mesclarCompras(
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .where(eq(products.casaId, casaId));
   const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${e.quantity.trim()}`)
+    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${normalizeQuantity(e.quantity)}`)
   );
 
   for (const compra of incoming) {
@@ -204,7 +204,7 @@ async function mesclarCompras(
     if (!productId) continue;
     const at = new Date(compra.purchasedAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${instanteEmSegundos(at)}|${compra.quantity.trim()}`;
+    const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(compra.quantity)}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await db
@@ -234,7 +234,7 @@ async function mesclarConsumos(
     .innerJoin(products, eq(products.id, inventoryEvents.productId))
     .where(eq(products.casaId, casaId));
   const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.occurredAt)}|${e.quantity.trim()}`)
+    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.occurredAt)}|${normalizeQuantity(e.quantity)}`)
   );
 
   for (const consumo of incoming) {
@@ -242,7 +242,7 @@ async function mesclarConsumos(
     if (!productId) continue;
     const at = new Date(consumo.occurredAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${instanteEmSegundos(at)}|${consumo.quantity.trim()}`;
+    const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(consumo.quantity)}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await db

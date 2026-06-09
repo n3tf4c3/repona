@@ -56,6 +56,12 @@ export const products = pgTable(
   (table) => [
     uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
     uniqueIndex("products_casa_syncid_unique").on(table.casaId, table.syncId),
+    // Um código de barras é único por casa (parcial: NULL não colide, então
+    // hortifrúti sem código fica livre). Fecha a duplicata por barcode na origem,
+    // junto com o casamento por barcode no sync. (auditoria 2026-06-09 #1)
+    uniqueIndex("products_casa_barcode_unique")
+      .on(table.casaId, table.barcode)
+      .where(sql`${table.barcode} is not null`),
     check("products_status_check", sql`${table.status} in ('active', 'missing')`),
     // Alvo das FKs compostas das filhas: garante que o filho fique na mesma casa
     // do produto. (auditoria #14)

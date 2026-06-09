@@ -9,10 +9,12 @@ export type {
   ShoppingListItemDTO,
   PurchaseHistoryDTO,
 } from "./contracts";
+export { FIELD_LIMITS, validateProductFields } from "./contracts";
 export {
   isEmptyQuantity,
   getNextInventoryQuantity,
   getConsumedQuantity,
+  normalizeQuantity,
 } from "./inventory-quantity";
 export type {
   ProductLike,

@@ -1,4 +1,4 @@
-import { isEmptyQuantity, uuidv4 } from '@repona/core';
+import { isEmptyQuantity, uuidv4, validateProductFields } from '@repona/core';
 import { initializeDatabase } from './database';
 import type { NewProductInput } from '../types';
 import type { InventoryStatus } from './inventory';
@@ -146,6 +146,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   if (!name) {
     throw new Error('PRODUCT_NAME_REQUIRED');
   }
+  validateProductFields(input);
 
   const existing = await database.getFirstAsync<{ id: number }>(
     'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
@@ -154,6 +155,11 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
 
   if (existing) {
     throw new Error('PRODUCT_ALREADY_EXISTS');
+  }
+
+  const barcode = input.barcode?.trim() || null;
+  if (barcode && (await findProductByBarcode(barcode))) {
+    throw new Error('PRODUCT_BARCODE_EXISTS');
   }
 
   const now = new Date().toISOString();
@@ -165,7 +171,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
       uuidv4(),
       name,
       category || 'Mercearia',
-      input.barcode ?? null,
+      barcode,
       input.photoUri ?? null,
       input.alertThreshold?.trim() || null,
       input.occasional ? 1 : 0,
@@ -229,6 +235,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   if (!name) {
     throw new Error('PRODUCT_NAME_REQUIRED');
   }
+  validateProductFields(input);
 
   const existing = await database.getFirstAsync<{ id: number }>(
     'SELECT id FROM products WHERE lower(name) = lower(?) AND id <> ? LIMIT 1',
@@ -238,6 +245,11 @@ export async function updateProduct(productId: number, input: NewProductInput): 
 
   if (existing) {
     throw new Error('PRODUCT_ALREADY_EXISTS');
+  }
+
+  const barcode = input.barcode?.trim() || null;
+  if (barcode && (await findProductByBarcode(barcode, productId))) {
+    throw new Error('PRODUCT_BARCODE_EXISTS');
   }
 
   const now = new Date().toISOString();
@@ -254,7 +266,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
       WHERE id = ?`,
     name,
     category || 'Mercearia',
-    input.barcode ?? null,
+    barcode,
     input.photoUri ?? null,
     input.alertThreshold?.trim() || null,
     input.occasional ? 1 : 0,

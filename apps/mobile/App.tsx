@@ -55,6 +55,7 @@ import {
   buildInventoryAlerts,
   buildRebuySuggestion,
   estimateShoppingTotal,
+  FIELD_LIMITS,
   getNextInventoryQuantity,
   summarizePrices,
   type InventoryAlert as CoreInventoryAlert,
@@ -1965,6 +1966,7 @@ function NewProductSheet({
               style={styles.input}
               placeholder="Nome do produto"
               placeholderTextColor={colors.ink3}
+              maxLength={FIELD_LIMITS.name}
             />
           </View>
           {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
@@ -2107,6 +2109,14 @@ function getProductErrorMessage(error: unknown) {
 
     if (error.message === 'PRODUCT_ALREADY_EXISTS') {
       return 'Esse produto já está cadastrado.';
+    }
+
+    if (error.message === 'PRODUCT_BARCODE_EXISTS') {
+      return 'Já existe um produto com esse código de barras.';
+    }
+
+    if (error.message === 'PRODUCT_FIELD_TOO_LONG') {
+      return 'Algum campo ultrapassou o limite de caracteres.';
     }
 
     if (error.message === 'PRODUCT_HAS_HISTORY') {

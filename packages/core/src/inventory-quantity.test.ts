@@ -4,7 +4,17 @@ import {
   isEmptyQuantity,
   getNextInventoryQuantity,
   getConsumedQuantity,
+  normalizeQuantity,
 } from "./inventory-quantity";
+
+test("normalizeQuantity: caixa e espaços viram a mesma chave", () => {
+  assert.equal(normalizeQuantity("1 un"), "1 un");
+  assert.equal(normalizeQuantity("  1   Un "), "1 un");
+  assert.equal(normalizeQuantity("1 UN"), "1 un");
+  assert.equal(normalizeQuantity("500 G"), "500 g");
+  // variações que NÃO unifica (documentado): sem espaço e sinônimo de unidade
+  assert.notEqual(normalizeQuantity("1un"), normalizeQuantity("1 un"));
+});
 
 test("isEmptyQuantity", () => {
   assert.equal(isEmptyQuantity("0 un"), true);

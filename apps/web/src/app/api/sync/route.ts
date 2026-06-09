@@ -1,22 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { FIELD_LIMITS } from "@repona/core";
 import { obterCasaPorCodigo } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
 import { rateLimited } from "@/server/rateLimit";
 
+// Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
+// criação de produto — assim a criação nunca gera um valor que o sync rejeita.
 const snapshotSchema = z.object({
   products: z
     .array(
       z.object({
         syncId: z.string().uuid().optional(),
         updatedAt: z.string().datetime({ offset: true }).optional(),
-        name: z.string().trim().min(1).max(160),
-        category: z.string().max(80),
-        barcode: z.string().max(120).nullable(),
+        name: z.string().trim().min(1).max(FIELD_LIMITS.name),
+        category: z.string().max(FIELD_LIMITS.category),
+        barcode: z.string().max(FIELD_LIMITS.barcode).nullable(),
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),
-        alertThreshold: z.string().max(40).nullable(),
-        inventoryQuantity: z.string().max(40),
+        alertThreshold: z.string().max(FIELD_LIMITS.alertThreshold).nullable(),
+        inventoryQuantity: z.string().max(FIELD_LIMITS.quantity),
         inventoryStatus: z.enum(["in_stock", "missing"]),
         // Clientes antigos não enviam archived/occasional: default mantém compat.
         archived: z.boolean().optional().default(false),
@@ -27,8 +30,8 @@ const snapshotSchema = z.object({
   purchases: z
     .array(
       z.object({
-        productName: z.string().trim().min(1).max(160),
-        quantity: z.string().max(40),
+        productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
+        quantity: z.string().max(FIELD_LIMITS.quantity),
         purchasedAt: z.string().datetime({ offset: true }),
         sourceListName: z.string().max(120).nullish(),
       })
@@ -37,8 +40,8 @@ const snapshotSchema = z.object({
   consumptions: z
     .array(
       z.object({
-        productName: z.string().trim().min(1).max(160),
-        quantity: z.string().max(40),
+        productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
+        quantity: z.string().max(FIELD_LIMITS.quantity),
         occurredAt: z.string().datetime({ offset: true }),
       })
     )
@@ -46,7 +49,7 @@ const snapshotSchema = z.object({
   prices: z
     .array(
       z.object({
-        productName: z.string().trim().min(1).max(160),
+        productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
         priceCents: z.number().int().min(1).max(100_000_000),
         recordedAt: z.string().datetime({ offset: true }),
       })
@@ -56,8 +59,8 @@ const snapshotSchema = z.object({
   listItems: z
     .array(
       z.object({
-        productName: z.string().trim().min(1).max(160),
-        quantity: z.string().max(40),
+        productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
+        quantity: z.string().max(FIELD_LIMITS.quantity),
         checked: z.boolean(),
         deleted: z.boolean(),
         updatedAt: z.string().datetime({ offset: true }),

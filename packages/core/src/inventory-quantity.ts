@@ -2,6 +2,15 @@
 // Compartilhada entre o backend do web e o mobile. Sem dependência de framework.
 // Portado de apps/mobile/src/storage/inventory.ts (comportamento idêntico).
 
+// Forma canônica da quantidade para COMPARAÇÃO/dedupe (não altera o que é
+// exibido): tira espaços das pontas, colapsa espaços internos e ignora caixa.
+// Assim "1 un", "1  Un" e "1 UN" viram a mesma chave e param de acumular no
+// histórico. Não unifica sinônimos de unidade nem "1un" (sem espaço) — isso
+// exigiria parsing. (auditoria 2026-06-09 #4)
+export function normalizeQuantity(quantity: string): string {
+  return quantity.trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+}
+
 export function isEmptyQuantity(quantity: string): boolean {
   const match = quantity.match(/^(\d+(?:[.,]\d+)?)/);
 

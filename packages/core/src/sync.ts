@@ -5,6 +5,7 @@
 // apagado de nenhum lado.
 
 import type { ProductStatus, InventoryStatus } from "./contracts";
+import { normalizeQuantity } from "./inventory-quantity";
 
 export type SyncProduct = {
   // Identidade estável compartilhada (UUID); nome é só atributo. Opcional para
@@ -141,7 +142,7 @@ export function shouldApplyIncoming(
 // formato/precisão de fração de segundo introduzidas no ida-e-volta pela nuvem
 // (ex.: o mesmo instante salvo local e relido do Postgres não bate byte a byte).
 export function eventKey(productName: string, isoDate: string, quantity: string): string {
-  return `${productNameKey(productName)}|${instantKey(isoDate)}|${quantity.trim()}`;
+  return `${productNameKey(productName)}|${instantKey(isoDate)}|${normalizeQuantity(quantity)}`;
 }
 
 function instantKey(isoDate: string): string {

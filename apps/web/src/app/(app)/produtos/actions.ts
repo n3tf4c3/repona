@@ -19,6 +19,8 @@ type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string 
 const MENSAGENS: Record<string, string> = {
   PRODUCT_NAME_REQUIRED: "Informe o nome do produto.",
   PRODUCT_ALREADY_EXISTS: "Já existe um produto com esse nome.",
+  PRODUCT_BARCODE_EXISTS: "Já existe um produto com esse código de barras.",
+  PRODUCT_FIELD_TOO_LONG: "Algum campo ultrapassou o limite de caracteres.",
   PRODUCT_HAS_HISTORY: "Não dá para excluir: este produto tem histórico de compras.",
   PRODUCT_NOT_FOUND: "Produto não encontrado.",
   INVENTORY_ALREADY_MISSING: "Este produto já está em falta.",

@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { isEmptyQuantity, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
+import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents, purchaseHistory } from "@/server/db/schema";
 
@@ -124,11 +124,27 @@ async function nomeJaExiste(casaId: number, name: string, exceptId?: number): Pr
   return Boolean(existente);
 }
 
+// Outro produto da casa já usa este código de barras. Impede duplicata local por
+// barcode (o sync já casa por barcode; aqui fechamos a criação). (auditoria #1)
+async function barcodeJaExiste(casaId: number, barcode: string, exceptId?: number): Promise<boolean> {
+  const condicoes = [eq(products.casaId, casaId), eq(products.barcode, barcode)];
+  if (exceptId !== undefined) condicoes.push(ne(products.id, exceptId));
+  const [existente] = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(and(...condicoes))
+    .limit(1);
+  return Boolean(existente);
+}
+
 export async function createProduto(casaId: number, input: NewProductInput): Promise<ProductDTO> {
   const name = input.name.trim();
   const category = input.category.trim();
   if (!name) throw new Error("PRODUCT_NAME_REQUIRED");
+  validateProductFields(input);
   if (await nomeJaExiste(casaId, name)) throw new Error("PRODUCT_ALREADY_EXISTS");
+  const barcode = input.barcode?.trim() || null;
+  if (barcode && (await barcodeJaExiste(casaId, barcode))) throw new Error("PRODUCT_BARCODE_EXISTS");
 
   const [criado] = await db
     .insert(products)
@@ -136,7 +152,7 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       casaId: casaId,
       name,
       category: category || "Mercearia",
-      barcode: input.barcode ?? null,
+      barcode,
       photoUri: input.photoUri ?? null,
       // Estoque nasce vazio, então o status do produto acompanha (em falta) —
       // evita divergir do que o DTO/lista/snapshot mostram. (auditoria #7)
@@ -165,14 +181,17 @@ export async function updateProduto(
   const name = input.name.trim();
   const category = input.category.trim();
   if (!name) throw new Error("PRODUCT_NAME_REQUIRED");
+  validateProductFields(input);
   if (await nomeJaExiste(casaId, name, id)) throw new Error("PRODUCT_ALREADY_EXISTS");
+  const barcode = input.barcode?.trim() || null;
+  if (barcode && (await barcodeJaExiste(casaId, barcode, id))) throw new Error("PRODUCT_BARCODE_EXISTS");
 
   await db
     .update(products)
     .set({
       name,
       category: category || "Mercearia",
-      barcode: input.barcode ?? null,
+      barcode,
       photoUri: input.photoUri ?? null,
       alertThreshold: input.alertThreshold?.trim() || null,
       occasional: input.occasional ?? false,
