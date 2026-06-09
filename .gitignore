@@ -67,5 +67,8 @@ next-env.d.ts
 # vercel
 .vercel
 
+# backups de dados (dumps de casas) — nunca versionar dados de producao
+apps/web/backups/
+
 # local Claude Code settings (machine-specific)
 .claude/settings.local.json

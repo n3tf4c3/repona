@@ -3,6 +3,7 @@
 // Uso (da pasta apps/web):
 //   node scripts/casas.mjs list                 lista todas as casas + contadores
 //   node scripts/casas.mjs show  <code|id>      detalha uma casa (produtos, etc.)
+//   node scripts/casas.mjs export <code|id>     dump JSON da casa em backups/ (rede de seguranca)
 //   node scripts/casas.mjs delete <code|id>     mostra o que seria apagado (dry-run)
 //   node scripts/casas.mjs delete <code|id> --yes   apaga de verdade (cascade)
 //
@@ -15,6 +16,11 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 import { neon } from "@neondatabase/serverless";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const aqui = dirname(fileURLToPath(import.meta.url));
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
@@ -79,6 +85,37 @@ async function show(ref) {
   }
 }
 
+async function exportar(ref) {
+  const casa = await resolverCasa(ref);
+  if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
+  const id = casa.id;
+  const prodIds = (await sql`SELECT id FROM products WHERE casa_id = ${id}`).map((r) => r.id);
+  const dump = {
+    exportadoEm: new Date().toISOString(),
+    casa: (await sql`SELECT * FROM casas WHERE id = ${id}`)[0],
+    products: await sql`SELECT * FROM products WHERE casa_id = ${id} ORDER BY id`,
+    inventory_items: await sql`SELECT * FROM inventory_items WHERE product_id = ANY(${prodIds}) ORDER BY id`,
+    inventory_events: await sql`SELECT * FROM inventory_events WHERE product_id = ANY(${prodIds}) ORDER BY id`,
+    price_history: await sql`SELECT * FROM price_history WHERE product_id = ANY(${prodIds}) ORDER BY id`,
+    purchase_history: await sql`SELECT * FROM purchase_history WHERE casa_id = ${id} ORDER BY id`,
+    shopping_lists: await sql`SELECT * FROM shopping_lists WHERE casa_id = ${id} ORDER BY id`,
+    shopping_list_items: await sql`SELECT * FROM shopping_list_items WHERE casa_id = ${id} ORDER BY id`,
+  };
+
+  const dir = resolve(aqui, "../backups");
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const file = resolve(dir, `casa-${casa.invite_code}-${stamp}.json`);
+  writeFileSync(file, JSON.stringify(dump, null, 2), "utf8");
+
+  console.log(`Backup de #${casa.id} "${casa.name}" salvo em:`);
+  console.log(`  ${file}`);
+  console.log(
+    `  produtos=${dump.products.length} compras=${dump.purchase_history.length} ` +
+      `precos=${dump.price_history.length} itens_lista=${dump.shopping_list_items.length}`,
+  );
+}
+
 async function del(ref) {
   const casa = await resolverCasa(ref);
   if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
@@ -100,10 +137,15 @@ async function del(ref) {
   console.log(`\nCasa #${casa.id} apagada.`);
 }
 
-const comandos = { list, show: () => show(arg), delete: () => del(arg) };
+const comandos = {
+  list,
+  show: () => show(arg),
+  export: () => exportar(arg),
+  delete: () => del(arg),
+};
 const acao = comandos[cmd];
 if (!acao) {
-  console.log("Comandos: list | show <code|id> | delete <code|id> [--yes]");
+  console.log("Comandos: list | show <code|id> | export <code|id> | delete <code|id> [--yes]");
   process.exit(cmd ? 1 : 0);
 }
 await acao();
