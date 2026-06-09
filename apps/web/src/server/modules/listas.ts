@@ -223,6 +223,28 @@ export async function finalizarCompra(casaId: number): Promise<number> {
 
   if (comprados.length === 0) return 0;
 
+  // Revalida sobre o conjunto efetivamente claimado: entre a leitura inicial e o
+  // claim, uma edição concorrente pode ter zerado uma quantidade. O mobile valida
+  // pós-claim dentro da transação; aqui (sem transação no driver) desfazemos o
+  // claim e rejeitamos. (auditoria 2026-06-09 #10)
+  if (comprados.some((item) => isEmptyQuantity(item.quantity))) {
+    await db
+      .update(shoppingListItems)
+      .set({ deleted: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(shoppingListItems.shoppingListId, lista.id),
+          eq(shoppingListItems.deleted, true),
+          eq(shoppingListItems.updatedAt, now),
+          inArray(
+            shoppingListItems.productId,
+            comprados.map((item) => item.productId)
+          )
+        )
+      );
+    throw new Error("QUANTITY_INVALID");
+  }
+
   // db.batch roda como uma transação: por item comprado grava histórico,
   // incrementa purchase_count e repõe o estoque.
   type Escrita = Parameters<typeof db.batch>[0][number];

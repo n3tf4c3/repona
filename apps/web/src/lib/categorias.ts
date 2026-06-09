@@ -15,7 +15,9 @@ export function corDaCategoria(categoria: string): string {
   return CORES[categoria] ?? COR_PADRAO;
 }
 
-export const CATEGORIAS = ["Hortifrúti", "Laticínios", "Mercearia", "Bebidas", "Limpeza"] as const;
+// Fonte única no @repona/core (compartilhada com os chips do mobile); o
+// re-export preserva os imports existentes. (auditoria 2026-06-09 #5)
+export { CATEGORIAS } from "@repona/core";
 
 export type GrupoItens = {
   category: string;

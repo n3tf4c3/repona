@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { isEmptyQuantity } from "@repona/core";
+import { FIELD_LIMITS, isEmptyQuantity } from "@repona/core";
 import { requireCasa } from "@/server/auth/session";
 import {
   alternarItem,
@@ -14,11 +14,12 @@ import {
 type Resultado = { ok: true } | { ok: false; error: string };
 
 const idSchema = z.number().int().positive();
+// Limite do FIELD_LIMITS (fonte única com o sync). (auditoria 2026-06-09 #5)
 const quantitySchema = z
   .string()
   .trim()
   .min(1)
-  .max(30)
+  .max(FIELD_LIMITS.quantity)
   .regex(/^\d+(?:[.,]\d+)?\s*[A-Za-zÀ-ÿ]+$/)
   .refine((value) => !isEmptyQuantity(value));
 

@@ -34,6 +34,12 @@ export type NewProductInput = {
   occasional?: boolean;
 };
 
+// Categorias de produto — fonte única para os chips do mobile e o enum de
+// validação do web, que antes mantinham cópias separadas da mesma lista.
+// (auditoria 2026-06-09 #5)
+export const CATEGORIAS = ["Hortifrúti", "Laticínios", "Mercearia", "Bebidas", "Limpeza"] as const;
+export type Categoria = (typeof CATEGORIAS)[number];
+
 // Limites de tamanho dos campos que viajam no sync. São o teto vinculante: um
 // valor acima disso faz a validação do snapshot rejeitar o sync INTEIRO da casa.
 // Fonte única usada na criação (web/mobile) e no schema do endpoint de sync, para

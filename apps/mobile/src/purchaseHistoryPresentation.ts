@@ -17,7 +17,6 @@ export type PurchaseHistoryLine = {
 export type PurchaseHistoryItem = {
   id: string;
   title: string;
-  total: string;
   date: string;
   count: string;
   thumbs: PurchaseHistoryThumb[];
@@ -95,7 +94,6 @@ function purchaseToHistoryItem(purchase: Purchase): PurchaseHistoryItem {
   return {
     id: purchase.key,
     title: purchase.sourceListName ?? 'Compra finalizada',
-    total: `${count} ${itemLabel}`,
     date: formatDate(purchase.purchasedAt),
     count: `${count} ${itemLabel}`,
     thumbs: purchase.records.slice(0, 3).map((record) => categoryVisuals[record.category] ?? fallbackThumb),

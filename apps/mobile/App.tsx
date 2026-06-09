@@ -54,6 +54,7 @@ import { colors, radius, shadow, spacing, typography } from './src/theme';
 import {
   buildInventoryAlerts,
   buildRebuySuggestion,
+  CATEGORIAS,
   estimateShoppingTotal,
   FIELD_LIMITS,
   getNextInventoryQuantity,
@@ -245,6 +246,15 @@ export default function App() {
 
     try {
       setProductActionError(null);
+      // Casa pareada: a exclusão física não viaja no sync (não há tombstone de
+      // produto) e o produto "voltaria sozinho" no próximo merge — então
+      // arquivamos, que propaga via flag. Sem pareamento, o dado é só local e a
+      // exclusão de verdade é permitida. (auditoria 2026-06-09 #3)
+      if (await getCasaCode()) {
+        await archiveProduct(product.id);
+        await Promise.all([refreshProducts(), refreshShoppingItems()]);
+        return;
+      }
       await deleteProduct(product.id);
       await Promise.all([refreshProducts(), refreshShoppingItems()]);
     } catch (error) {
@@ -270,7 +280,7 @@ export default function App() {
   function confirmRemoveProduct(product: Product) {
     Alert.alert(
       'Remover produto',
-      `Remover ${product.name} do catálogo? Se tiver histórico de compras, será arquivado (o histórico é preservado).`,
+      `Remover ${product.name} do catálogo? Com a casa sincronizada na nuvem ou histórico de compras, o produto é arquivado (o histórico é preservado).`,
       [
         { text: 'Cancelar', style: 'cancel' },
         { text: 'Remover', style: 'destructive', onPress: () => { void handleRemoveProduct(product); } },
@@ -471,7 +481,7 @@ export default function App() {
               onUnarchiveProduct={handleUnarchiveProduct}
             />
           ) : null}
-          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
+          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} priceSummaries={priceSummaries} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
           {activeTab === 'future' ? (
             <FutureScreen
               onSynced={() => {
@@ -720,7 +730,7 @@ function ProductsScreen({
       <SearchBox placeholder="Buscar produto..." value={searchTerm} onChangeText={setSearchTerm} />
       {errorMessage ? <Text style={styles.productError}>{errorMessage}</Text> : null}
       {onlyNeedsRestock ? <Text style={styles.subtleText}>Mostrando só itens em falta ou com estoque baixo.</Text> : null}
-      <ChipRow chips={['Todos', 'Mercearia', 'Hortifrúti', 'Laticínios', 'Limpeza', 'Bebidas']} selected={selectedCategory} onSelect={setSelectedCategory} />
+      <ChipRow chips={['Todos', ...CATEGORIAS]} selected={selectedCategory} onSelect={setSelectedCategory} />
       {archivedProducts.length > 0 ? (
         <Pressable
           style={[styles.archivedToggle, showArchived ? styles.archivedToggleActive : null]}
@@ -781,10 +791,12 @@ function ArchivedProductRow({ product, onUnarchive }: { product: Product; onUnar
 
 function HistoryScreen({
   historyGroups,
+  priceSummaries,
   isReady,
   onOpenPurchase,
 }: {
   historyGroups: PurchaseHistoryGroup[];
+  priceSummaries: Map<number, PriceSummary>;
   isReady: boolean;
   onOpenPurchase: (item: PurchaseHistoryItem) => void;
 }) {
@@ -797,7 +809,7 @@ function HistoryScreen({
         <View key={group.title}>
           <Text style={styles.historyGroupTitle}>{group.title}</Text>
           {group.items.map((item) => (
-            <HistoryCard key={item.id} item={item} onOpen={onOpenPurchase} />
+            <HistoryCard key={item.id} item={item} priceSummaries={priceSummaries} onOpen={onOpenPurchase} />
           ))}
         </View>
       ))}
@@ -827,6 +839,7 @@ const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], st
   INVALID_NAME: 'Informe um nome para a conta.',
   NETWORK: 'Sem conexão com o servidor. Confira a rede e a URL da API.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
+  BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
   SERVER: 'O servidor recusou a operação. Tente de novo.',
 };
 
@@ -1614,13 +1627,34 @@ function PriceEntryModal({
   );
 }
 
-function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: (item: PurchaseHistoryItem) => void }) {
+function HistoryCard({
+  item,
+  priceSummaries,
+  onOpen,
+}: {
+  item: PurchaseHistoryItem;
+  priceSummaries: Map<number, PriceSummary>;
+  onOpen: (item: PurchaseHistoryItem) => void;
+}) {
+  // Total estimado pelo último preço conhecido, como no card do web; sem preço
+  // registrado, mostra a contagem de itens como antes. (auditoria 2026-06-09 #8)
+  const estimate = useMemo(
+    () =>
+      estimateShoppingTotal(
+        item.lines.map((line) => ({
+          priceCents: priceSummaries.get(line.productId)?.lastCents ?? null,
+          quantity: line.quantity,
+        })),
+      ),
+    [item, priceSummaries],
+  );
+  const totalLabel = estimate.pricedCount > 0 ? formatCentsBRL(estimate.totalCents) : item.count;
   return (
     <Pressable style={styles.historyCard} onPress={() => onOpen(item)}>
       <View style={styles.historyCardTop}>
         <Text style={styles.historyTitle}>{item.title}</Text>
         <View style={styles.historyTopRight}>
-          <Text style={styles.historyTotal}>{item.total}</Text>
+          <Text style={styles.historyTotal}>{totalLabel}</Text>
           <MaterialCommunityIcons name="chevron-right" size={20} color={colors.ink3} />
         </View>
       </View>
@@ -1971,7 +2005,7 @@ function NewProductSheet({
           </View>
           {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
           <Text style={styles.fieldLabel}>Categoria</Text>
-          <ChipRow chips={['Mercearia', 'Hortifrúti', 'Laticínios', 'Bebidas', 'Limpeza']} selected={category} onSelect={setCategory} />
+          <ChipRow chips={[...CATEGORIAS]} selected={category} onSelect={setCategory} />
           <Text style={styles.fieldLabel}>Alerta de estoque (opcional)</Text>
           <View style={styles.inputBox}>
             <MaterialCommunityIcons name="alert-circle-outline" size={20} color={colors.primaryStrong} />

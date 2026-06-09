@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import type { NewProductInput } from "@repona/core";
+import { FIELD_LIMITS, type NewProductInput } from "@repona/core";
 import { CATEGORIAS } from "@/lib/categorias";
 import { requireCasa } from "@/server/auth/session";
 import {
@@ -28,22 +28,25 @@ const MENSAGENS: Record<string, string> = {
 };
 
 const idSchema = z.number().int().positive();
+// Limites do FIELD_LIMITS (fonte única, a mesma da criação no mobile e do
+// endpoint de sync): valores locais divergentes impediam editar no web um
+// produto válido criado no mobile. (auditoria 2026-06-09 #5)
 const quantitySchema = z
   .string()
   .trim()
   .min(1)
-  .max(30)
+  .max(FIELD_LIMITS.quantity)
   .regex(/^\d+(?:[.,]\d+)?\s*[A-Za-zÀ-ÿ]+$/);
 const productInputSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(FIELD_LIMITS.name),
   category: z
     .string()
     .trim()
     .transform((value) => value || "Mercearia")
     .pipe(z.enum(CATEGORIAS)),
-  barcode: z.string().trim().max(80).nullable().optional().transform((value) => value || null),
+  barcode: z.string().trim().max(FIELD_LIMITS.barcode).nullable().optional().transform((value) => value || null),
   photoUri: z.string().trim().max(1000).nullable().optional().transform((value) => value || null),
-  alertThreshold: z.string().trim().max(30).nullable().optional().transform((value) => value || null),
+  alertThreshold: z.string().trim().max(FIELD_LIMITS.alertThreshold).nullable().optional().transform((value) => value || null),
   occasional: z.boolean().optional().default(false),
 });
 

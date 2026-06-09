@@ -3,14 +3,29 @@ import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 import { listPurchaseHistoryRecords } from './purchaseHistory';
 
+// Compras/consumos mais antigos que isto ficam fora do snapshot enviado. O
+// histórico local e o da nuvem permanecem completos (o merge nunca apaga e o
+// dedupe ignora o que não viaja); a janela só impede que o acúmulo append-only
+// estoure o limite de itens do endpoint (10k) e quebre o sync inteiro.
+// (auditoria 2026-06-09 #7)
+const EVENT_WINDOW_MS = 24 * 30 * 24 * 60 * 60 * 1000; // ~24 meses
+
+function dentroDaJanela(isoDate: string, cutoffMs: number): boolean {
+  const ms = new Date(isoDate).getTime();
+  return Number.isNaN(ms) || ms >= cutoffMs;
+}
+
 // Monta o snapshot local (produtos + estoque, compras e consumos). A lista de
 // compras é transitória e fica de fora — só dados duráveis vão pra nuvem.
 export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const database = await initializeDatabase();
+  const cutoffMs = Date.now() - EVENT_WINDOW_MS;
 
   const produtos = await listAllProductsForSync();
-  const compras = await listPurchaseHistoryRecords();
-  const consumos = await database.getAllAsync<{
+  const compras = (await listPurchaseHistoryRecords()).filter((c) =>
+    dentroDaJanela(c.purchasedAt, cutoffMs),
+  );
+  const consumosTodos = await database.getAllAsync<{
     product_name: string;
     quantity: string;
     occurred_at: string;
@@ -20,6 +35,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     INNER JOIN products p ON p.id = ie.product_id
     WHERE ie.event_type = 'consumed'
   `);
+  const consumos = consumosTodos.filter((c) => dentroDaJanela(c.occurred_at, cutoffMs));
   const precos = await database.getAllAsync<{
     product_name: string;
     price_cents: number;
@@ -99,6 +115,13 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
   const now = new Date().toISOString();
 
   await database.withTransactionAsync(async () => {
+    // Nome RECEBIDO → produto local resolvido (syncId/barcode/nome). Os eventos
+    // do snapshot viajam com o nome do servidor, que pode não existir localmente
+    // quando o LWW pula o produto ou um renomeio colide — resolver só pelo nome
+    // local descartava o evento em silêncio ou o atribuía ao produto errado.
+    // (auditoria 2026-06-09 #2)
+    const idPorNomeRecebido = new Map<string, number>();
+
     for (const prod of snapshot.products) {
       const nome = prod.name.trim();
 
@@ -111,13 +134,14 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           )
         : null;
 
-      if (!row && prod.barcode) {
+      if (!row && prod.barcode?.trim()) {
         // Casa por código de barras (não-nulo) quando o syncId não bate e antes
         // do nome; adota o syncId do servidor. Sem código não entra aqui, então
-        // hortifrúti segue só pelo nome. (auditoria #19)
+        // hortifrúti segue só pelo nome. Comparação com trim dos dois lados —
+        // código legado com espaço nunca casaria. (auditoria #19, 2026-06-09 #9)
         const porBarcode = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
-          'SELECT id, name, updated_at FROM products WHERE barcode = ? LIMIT 1',
-          prod.barcode,
+          'SELECT id, name, updated_at FROM products WHERE trim(barcode) = ? LIMIT 1',
+          prod.barcode.trim(),
         );
         if (porBarcode && prod.syncId) {
           await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porBarcode.id);
@@ -139,6 +163,9 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       let productId: number;
 
       if (row) {
+        // Mesmo sem aplicar o produto (LWW abaixo), os eventos do snapshot com
+        // este nome referem-se a este produto local. (auditoria 2026-06-09 #2)
+        idPorNomeRecebido.set(productNameKey(prod.name), row.id);
         // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
         if (!shouldApplyIncoming(prod.updatedAt, row.updated_at)) {
           continue;
@@ -187,6 +214,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           prod.updatedAt ?? now,
         );
         productId = inserido.lastInsertRowId;
+        idPorNomeRecebido.set(productNameKey(prod.name), productId);
       }
 
       await database.runAsync(
@@ -206,12 +234,16 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
     const idPorNome = new Map<string, number>();
     const todos = await database.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM products');
-    for (const p of todos) idPorNome.set(p.name.trim().toLocaleLowerCase('pt-BR'), p.id);
+    for (const p of todos) idPorNome.set(productNameKey(p.name), p.id);
 
-    await aplicarCompras(database, idPorNome, snapshot.purchases);
-    await aplicarConsumos(database, idPorNome, snapshot.consumptions);
-    await aplicarPrecos(database, idPorNome, snapshot.prices);
-    await aplicarItensLista(database, idPorNome, snapshot.listItems ?? []);
+    // O mapeamento dos nomes recebidos (resolvido produto a produto acima) tem
+    // precedência sobre os nomes locais atuais. (auditoria 2026-06-09 #2)
+    const idParaEventos = new Map([...idPorNome, ...idPorNomeRecebido]);
+
+    await aplicarCompras(database, idParaEventos, snapshot.purchases);
+    await aplicarConsumos(database, idParaEventos, snapshot.consumptions);
+    await aplicarPrecos(database, idParaEventos, snapshot.prices);
+    await aplicarItensLista(database, idParaEventos, snapshot.listItems ?? []);
 
     // purchase_count é derivado do histórico (auditoria #3): recalcula após o
     // merge, em vez de confiar no valor do snapshot (que não soma entre

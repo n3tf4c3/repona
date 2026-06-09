@@ -192,33 +192,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   });
 
   const created = await database.getFirstAsync<ProductRow>(
-    `SELECT
-       p.id,
-       p.sync_id,
-       p.name,
-       p.category,
-       p.barcode,
-       p.photo_uri,
-       p.purchase_count,
-       p.status,
-       p.alert_threshold,
-       COALESCE(ii.quantity, '0 un') as inventory_quantity,
-       COALESCE(ii.status, 'missing') as inventory_status,
-       COALESCE(ie.consumption_count, 0) as consumption_count,
-       ie.last_consumed_at,
-       p.archived,
-       p.occasional,
-       p.created_at,
-       p.updated_at
-     FROM products p
-     LEFT JOIN inventory_items ii ON ii.product_id = p.id
-     LEFT JOIN (
-       SELECT product_id, COUNT(*) as consumption_count, MAX(occurred_at) as last_consumed_at
-       FROM inventory_events
-       WHERE event_type = 'consumed'
-       GROUP BY product_id
-     ) ie ON ie.product_id = p.id
-     WHERE p.id = ?`,
+    `${PRODUCT_SELECT} WHERE p.id = ?`,
     productId,
   );
 
@@ -277,33 +251,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   );
 
   const updated = await database.getFirstAsync<ProductRow>(
-    `SELECT
-       p.id,
-       p.sync_id,
-       p.name,
-       p.category,
-       p.barcode,
-       p.photo_uri,
-       p.purchase_count,
-       p.status,
-       p.alert_threshold,
-       COALESCE(ii.quantity, '0 un') as inventory_quantity,
-       COALESCE(ii.status, 'missing') as inventory_status,
-       COALESCE(ie.consumption_count, 0) as consumption_count,
-       ie.last_consumed_at,
-       p.archived,
-       p.occasional,
-       p.created_at,
-       p.updated_at
-     FROM products p
-     LEFT JOIN inventory_items ii ON ii.product_id = p.id
-     LEFT JOIN (
-       SELECT product_id, COUNT(*) as consumption_count, MAX(occurred_at) as last_consumed_at
-       FROM inventory_events
-       WHERE event_type = 'consumed'
-       GROUP BY product_id
-     ) ie ON ie.product_id = p.id
-     WHERE p.id = ?`,
+    `${PRODUCT_SELECT} WHERE p.id = ?`,
     productId,
   );
 

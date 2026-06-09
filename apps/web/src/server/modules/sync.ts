@@ -45,11 +45,22 @@ export async function mergeCasaSnapshot(
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
   // Só produtos com código não-nulo entram no mapa de barcode (hortifrúti sem
-  // código nunca casa por aqui). (auditoria #19)
+  // código nunca casa por aqui). Chave com trim() — o matchProduct também faz
+  // trim no recebido, e um código legado com espaço nunca casaria. (auditoria
+  // #19, 2026-06-09 #9)
   const idPorBarcode = new Map(
-    existentes.filter((p) => p.barcode).map((p) => [p.barcode as string, p.id])
+    existentes
+      .filter((p) => p.barcode?.trim())
+      .map((p) => [(p.barcode as string).trim(), p.id])
   );
   const infoPorId = new Map(existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt }]));
+
+  // Nome RECEBIDO → produto resolvido pelo matchProduct. Os eventos do snapshot
+  // (compras/consumos/preços/itens) viajam com o nome que o device usa, que pode
+  // não existir no banco quando o LWW pula o produto ou um renomeio colide —
+  // resolver só por idPorNome descartava o evento em silêncio ou o atribuía ao
+  // produto errado. (auditoria 2026-06-09 #2)
+  const idPorNomeRecebido = new Map<string, number>();
 
   for (const prod of incoming.products) {
     // Casa por syncId, depois barcode, cai para o nome (legado). Em match, o
@@ -62,6 +73,9 @@ export async function mergeCasaSnapshot(
     let productId: number;
 
     if (match.id !== null) {
+      // Mesmo sem aplicar o produto (LWW abaixo), os eventos deste device
+      // referem-se a este produto. (auditoria 2026-06-09 #2)
+      idPorNomeRecebido.set(productNameKey(prod.name), match.id);
       const info = infoPorId.get(match.id)!;
       // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
       if (!shouldApplyIncoming(prod.updatedAt, info.updatedAt.toISOString())) {
@@ -93,7 +107,7 @@ export async function mergeCasaSnapshot(
         idPorNome.set(productNameKey(nomeFinal), match.id);
       }
       infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt });
-      if (prod.barcode) idPorBarcode.set(prod.barcode, match.id);
+      if (prod.barcode?.trim()) idPorBarcode.set(prod.barcode.trim(), match.id);
       productId = match.id;
     } else {
       const [novo] = await db
@@ -113,8 +127,9 @@ export async function mergeCasaSnapshot(
         .returning({ id: products.id, syncId: products.syncId });
       productId = novo.id;
       idPorNome.set(productNameKey(prod.name), productId);
+      idPorNomeRecebido.set(productNameKey(prod.name), productId);
       idPorSyncId.set(novo.syncId, productId);
-      if (prod.barcode) idPorBarcode.set(prod.barcode, productId);
+      if (prod.barcode?.trim()) idPorBarcode.set(prod.barcode.trim(), productId);
       infoPorId.set(productId, {
         name: prod.name.trim(),
         updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : new Date(),
@@ -130,10 +145,14 @@ export async function mergeCasaSnapshot(
       });
   }
 
-  await mesclarCompras(casaId, idPorNome, incoming.purchases);
-  await mesclarConsumos(casaId, idPorNome, incoming.consumptions);
-  await mesclarPrecos(casaId, idPorNome, incoming.prices);
-  await mesclarItensLista(casaId, idPorNome, incoming.listItems ?? []);
+  // Resolução dos eventos: o mapeamento dos nomes recebidos (via matchProduct)
+  // tem precedência sobre os nomes atuais do banco. (auditoria 2026-06-09 #2)
+  const idParaEventos = new Map([...idPorNome, ...idPorNomeRecebido]);
+
+  await mesclarCompras(casaId, idParaEventos, incoming.purchases);
+  await mesclarConsumos(casaId, idParaEventos, incoming.consumptions);
+  await mesclarPrecos(casaId, idParaEventos, incoming.prices);
+  await mesclarItensLista(casaId, idParaEventos, incoming.listItems ?? []);
 
   // purchase_count é derivado do histórico (auditoria #3): recalcula após o
   // merge das compras, em vez de confiar no valor do snapshot (que não soma
@@ -167,6 +186,7 @@ async function mesclarPrecos(
     existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.recordedAt)}|${e.priceCents}`)
   );
 
+  const tocados = new Set<number>();
   for (const preco of incoming) {
     const productId = idPorNome.get(productNameKey(preco.productName));
     if (!productId) continue;
@@ -178,6 +198,22 @@ async function mesclarPrecos(
     await db
       .insert(priceHistory)
       .values({ productId, priceCents: Math.round(preco.priceCents), recordedAt: at });
+    tocados.add(productId);
+  }
+
+  // Mantém só os 10 preços mais recentes por produto tocado — mesma retenção do
+  // mobile; antes o Postgres acumulava sem limite. (auditoria 2026-06-09 #6)
+  for (const productId of tocados) {
+    await db.execute(sql`
+      DELETE FROM price_history
+      WHERE product_id = ${productId}
+        AND id NOT IN (
+          SELECT id FROM price_history
+          WHERE product_id = ${productId}
+          ORDER BY recorded_at DESC, id DESC
+          LIMIT ${MAX_PRICES_PER_PRODUCT}
+        )
+    `);
   }
 }
 

@@ -181,6 +181,10 @@ export async function createNewActiveShoppingList(): Promise<ShoppingListRecord>
   let createdListId = 0;
 
   await database.withTransactionAsync(async () => {
+    const anterior = await database.getFirstAsync<{ id: number }>(
+      `SELECT id FROM shopping_lists WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
+    );
+
     await database.runAsync(
       `UPDATE shopping_lists
        SET status = 'archived',
@@ -198,6 +202,26 @@ export async function createNewActiveShoppingList(): Promise<ShoppingListRecord>
     );
 
     createdListId = result.lastInsertRowId;
+
+    // O sync só transporta a lista ATIVA, sem identidade de lista: se a nova
+    // nascesse vazia, o servidor (e os outros devices) continuariam com os itens
+    // antigos ativos e o próximo merge re-inseriria tudo aqui ("lista nova que
+    // volta cheia"). Copiamos os itens ativos da lista anterior como tombstones
+    // (deleted=1) na nova — a limpeza propaga via LWW e a lista permanece vazia
+    // em todo lugar. A lista anterior fica intacta. (auditoria 2026-06-09 #4)
+    if (anterior) {
+      await database.runAsync(
+        `INSERT INTO shopping_list_items
+           (shopping_list_id, product_id, quantity, checked, deleted, created_at, updated_at)
+         SELECT ?, product_id, quantity, checked, 1, ?, ?
+         FROM shopping_list_items
+         WHERE shopping_list_id = ? AND deleted = 0`,
+        createdListId,
+        now,
+        now,
+        anterior.id,
+      );
+    }
   });
 
   return {

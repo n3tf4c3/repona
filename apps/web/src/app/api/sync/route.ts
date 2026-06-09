@@ -3,7 +3,7 @@ import { z } from "zod";
 import { FIELD_LIMITS } from "@repona/core";
 import { obterCasaPorCodigo } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
-import { rateLimited } from "@/server/rateLimit";
+import { rateLimited, tryLock, unlock } from "@/server/rateLimit";
 
 // Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
 // criação de produto — assim a criação nunca gera um valor que o sync rejeita.
@@ -97,9 +97,30 @@ export async function POST(req: NextRequest) {
 
   const parsed = snapshotSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
+    // Distingue "snapshot grande demais" (limite de itens dos arrays) de corpo
+    // malformado: o primeiro é acionável (reduzir a janela de envio) e antes era
+    // indistinguível de um bug. (auditoria 2026-06-09 #7)
+    const estourouLimite = parsed.error.issues.some(
+      (issue) => issue.code === "too_big" && issue.origin === "array"
+    );
+    return NextResponse.json(
+      { error: estourouLimite ? "SNAPSHOT_TOO_LARGE" : "INVALID_BODY" },
+      { status: estourouLimite ? 413 : 400 }
+    );
   }
 
-  const merged = await mergeCasaSnapshot(casaId, parsed.data);
-  return NextResponse.json(merged);
+  // Serializa o merge por casa: dois devices sincronizando juntos podem inserir
+  // o mesmo produto e violar os índices únicos no meio do merge (que não roda em
+  // transação no driver neon-http). O merge é idempotente, então o device que
+  // não pegou o lock só precisa tentar de novo. (auditoria 2026-06-09 #1)
+  const lockKey = `sync:lock:${casaId}`;
+  if (!(await tryLock(lockKey, 60))) {
+    return NextResponse.json({ error: "SYNC_IN_PROGRESS" }, { status: 409 });
+  }
+  try {
+    const merged = await mergeCasaSnapshot(casaId, parsed.data);
+    return NextResponse.json(merged);
+  } finally {
+    await unlock(lockKey);
+  }
 }

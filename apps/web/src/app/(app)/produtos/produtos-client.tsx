@@ -164,7 +164,7 @@ export function ProdutosClient({
                   setCriando(false);
                 }}
                 onExcluir={() => {
-                  if (window.confirm(`Excluir ${produto.name}?\n\nSe tiver histórico de compras, será arquivado (some do catálogo, histórico preservado).`))
+                  if (window.confirm(`Remover ${produto.name}?\n\nO produto será arquivado (some do catálogo; histórico e preços preservados).`))
                     executar(() => excluirProdutoAction(produto.id));
                 }}
                 onStock={(dir) =>

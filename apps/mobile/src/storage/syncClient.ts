@@ -9,7 +9,7 @@ const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 
 export type SyncResult =
   | { ok: true; lastSyncAt: string }
-  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'INVALID_NAME' | 'NETWORK' | 'CASA_NOT_FOUND' | 'SERVER' };
+  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'INVALID_NAME' | 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
 
 export async function getCasaCode(): Promise<string | null> {
   return getSetting(CASA_CODE_KEY);
@@ -84,6 +84,9 @@ async function enviarSnapshot(code: string): Promise<SyncResult> {
   }
 
   if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND' };
+  // Outro device da casa está no meio de um merge (lock por casa no servidor);
+  // o merge é idempotente — basta tentar de novo. (auditoria 2026-06-09 #1)
+  if (response.status === 409) return { ok: false, error: 'BUSY' };
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
   const merged = (await response.json()) as SyncSnapshot;

@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
-import { products, inventoryItems, inventoryEvents, purchaseHistory } from "@/server/db/schema";
+import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
 
 // Subconsulta de consumo agregado (eventos 'consumed') por produto.
 function consumoSubquery() {
@@ -205,10 +205,11 @@ export async function updateProduto(
   return dto;
 }
 
-// Produto com histórico de compras não pode ser excluído (a FK de
-// purchase_history não tem cascade e perderíamos o histórico): nesse caso
-// arquivamos (some do catálogo, histórico/preços preservados). Sem histórico,
-// exclui de vez. Devolve o que aconteceu para a UI dar o feedback certo.
+// Remover um produto no web sempre ARQUIVA, nunca exclui: o Postgres é a cópia
+// compartilhada da casa e o contrato de sync não tem tombstone de produto — uma
+// exclusão física seria desfeita no próximo sync de qualquer device que ainda
+// tenha o produto ("excluí e voltou sozinho"). Arquivado propaga via flag
+// `archived` e preserva histórico/preços. (auditoria 2026-06-09 #3)
 export async function excluirOuArquivarProduto(
   casaId: number,
   id: number
@@ -220,22 +221,11 @@ export async function excluirOuArquivarProduto(
     .limit(1);
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
-  const [historico] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(purchaseHistory)
-    .where(eq(purchaseHistory.productId, id));
-
-  if (Number(historico?.count ?? 0) > 0) {
-    await db
-      .update(products)
-      .set({ archived: true, updatedAt: new Date() })
-      .where(and(eq(products.casaId, casaId), eq(products.id, id)));
-    return { arquivado: true };
-  }
-
-  // FKs com ON DELETE CASCADE removem inventory_items/events e itens de lista.
-  await db.delete(products).where(and(eq(products.casaId, casaId), eq(products.id, id)));
-  return { arquivado: false };
+  await db
+    .update(products)
+    .set({ archived: true, updatedAt: new Date() })
+    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
+  return { arquivado: true };
 }
 
 export async function desarquivarProduto(casaId: number, id: number): Promise<void> {

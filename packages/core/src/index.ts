@@ -9,7 +9,8 @@ export type {
   ShoppingListItemDTO,
   PurchaseHistoryDTO,
 } from "./contracts";
-export { FIELD_LIMITS, validateProductFields } from "./contracts";
+export { FIELD_LIMITS, CATEGORIAS, validateProductFields } from "./contracts";
+export type { Categoria } from "./contracts";
 export {
   isEmptyQuantity,
   getNextInventoryQuantity,
