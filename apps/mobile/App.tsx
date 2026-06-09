@@ -7,7 +7,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -1945,6 +1947,10 @@ function NewProductSheet({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <KeyboardAvoidingView
+          style={styles.sheetKeyboardWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
         <Pressable style={styles.modalScrim} onPress={onClose} />
         <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
           <View style={styles.sheetHandle} />
@@ -1999,6 +2005,7 @@ function NewProductSheet({
             <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
           </Pressable>
         </SafeAreaView>
+        </KeyboardAvoidingView>
       </Modal>
       <Modal visible={isScannerVisible} animationType="slide" onRequestClose={() => setIsScannerVisible(false)}>
         <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
@@ -3108,6 +3115,9 @@ const styles = StyleSheet.create({
     ...typography.labelStrong,
     color: colors.surface,
     fontSize: 16,
+  },
+  sheetKeyboardWrap: {
+    flex: 1,
   },
   modalScrim: {
     flex: 1,
