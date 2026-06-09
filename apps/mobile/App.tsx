@@ -1254,10 +1254,10 @@ function ProductRow({
       )}
       <View style={styles.productText}>
         <View style={styles.productNameRow}>
-          <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+          <Text style={[styles.productName, styles.productNameFlex]} numberOfLines={2}>{product.name}</Text>
           {product.occasional ? <Text style={styles.eventualBadge}>Eventual</Text> : null}
         </View>
-        <Text style={styles.productMeta} numberOfLines={1}>{product.meta}</Text>
+        <Text style={styles.productMeta} numberOfLines={2}>{product.meta}</Text>
         {priceSummary ? <PriceSummaryLine summary={priceSummary} /> : null}
         {onChangeInventory && onMarkInventoryMissing && onConsume ? (
           <InventoryControls product={product} onChange={onChangeInventory} onMarkMissing={onMarkInventoryMissing} onConsume={onConsume} />
@@ -2672,6 +2672,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  productNameFlex: {
+    // Deixa o nome encolher/quebrar dentro da linha (e ceder espaço ao badge),
+    // em vez de truncar quando os botões de ação estreitam a coluna.
+    flexShrink: 1,
   },
   eventualBadge: {
     ...typography.label,
