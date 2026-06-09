@@ -14,6 +14,12 @@ export function getDatabase() {
 export async function initializeDatabase() {
   const database = await getDatabase();
 
+  // ATENÇÃO: o bloco CREATE TABLE abaixo é o schema v0 HISTÓRICO. Colunas
+  // adicionadas depois (sync_id, archived, occasional, alert_threshold,
+  // source_list_name, deleted) NÃO estão aqui — entram via runMigrations() logo
+  // abaixo. Uma instalação nova cria o v0 e as migrations o trazem ao schema
+  // atual (idempotente). Ao mudar o schema, adicione um passo em MIGRATIONS, não
+  // edite este bloco. (auditoria 2026-06-09 #7)
   await database.execAsync(`
     PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = WAL;

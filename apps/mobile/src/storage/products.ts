@@ -76,9 +76,11 @@ const PRODUCT_SELECT = `
 async function queryProducts(archived: 0 | 1): Promise<ProductRecord[]> {
   const database = await initializeDatabase();
   const rows = await database.getAllAsync<ProductRow>(
+    // Ordem alfabética (NOCASE): determinística entre dispositivos. Antes era por
+    // created_at desc, que é local e embaralhava após re-pull. (auditoria #6)
     `${PRODUCT_SELECT}
      WHERE p.archived = ?
-     ORDER BY p.created_at DESC, p.name ASC`,
+     ORDER BY p.name COLLATE NOCASE ASC`,
     archived,
   );
   return rows.map(mapProductRow);

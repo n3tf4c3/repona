@@ -53,7 +53,10 @@ const longMonths = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 
 
 export function purchaseHistoryRecordsToGroups(records: PurchaseHistoryRecord[]): PurchaseHistoryGroup[] {
   const purchases = records.reduce<Purchase[]>((items, record) => {
-    const key = `${record.purchasedAt}-${record.sourceListId ?? 'manual'}`;
+    // Agrupa pela verdade compartilhada (nome da lista), não pelo source_list_id
+    // — o id é local a cada device e vem nulo nas compras sincronizadas, então
+    // agrupar por ele divergia entre origens. (auditoria 2026-06-09 #5)
+    const key = `${record.purchasedAt}-${record.sourceListName ?? 'manual'}`;
     const existing = items.find((item) => item.key === key);
 
     if (existing) {
@@ -101,6 +104,10 @@ function purchaseToHistoryItem(purchase: Purchase): PurchaseHistoryItem {
   };
 }
 
+// O rótulo do dia ("Hoje", mês) usa o fuso LOCAL do aparelho de propósito: é o
+// que faz sentido pro usuário ver. O dedupe do sync, por outro lado, usa UTC
+// (segundos de epoch) para ser estável entre dispositivos — são objetivos
+// diferentes, não uma inconsistência. (auditoria 2026-06-09 #8)
 function getGroupTitle(value: string) {
   const date = new Date(value);
 

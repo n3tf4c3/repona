@@ -44,7 +44,9 @@ export function agruparHistorico(
   precoPorProduto?: Map<number, number>
 ): HistoricoGrupo[] {
   const compras = records.reduce<Compra[]>((items, record) => {
-    const key = `${record.purchasedAt}-${record.sourceListId ?? "manual"}`;
+    // Agrupa pela verdade compartilhada (nome da lista), não pelo sourceListId —
+    // o id é local e vem nulo nas compras sincronizadas. (auditoria 2026-06-09 #5)
+    const key = `${record.purchasedAt}-${record.sourceListName ?? "manual"}`;
     const existing = items.find((item) => item.key === key);
     if (existing) {
       existing.records.push(record);
@@ -96,6 +98,9 @@ function compraParaItem(compra: Compra, precoPorProduto?: Map<number, number>): 
   };
 }
 
+// O rótulo do dia usa o fuso LOCAL de propósito (é o que o usuário espera ver);
+// o dedupe do sync usa UTC para ser estável entre dispositivos. Objetivos
+// diferentes, não uma inconsistência. (auditoria 2026-06-09 #8)
 function tituloDoGrupo(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Histórico";

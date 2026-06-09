@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents, purchaseHistory } from "@/server/db/schema";
@@ -92,18 +92,19 @@ function mapProduto(row: ProdutoRow): ProductDTO {
   };
 }
 
+// Ordem alfabética (case-insensitive): determinística entre dispositivos. Antes
+// era por created_at desc, que é local e embaralhava após re-pull. (auditoria
+// 2026-06-09 #6)
 export async function listProdutos(casaId: number): Promise<ProductDTO[]> {
   const rows = await selecionarProdutos(casaId, { arquivado: false }).orderBy(
-    desc(products.createdAt),
-    asc(products.name)
+    asc(sql`lower(${products.name})`)
   );
   return rows.map(mapProduto);
 }
 
 export async function listProdutosArquivados(casaId: number): Promise<ProductDTO[]> {
   const rows = await selecionarProdutos(casaId, { arquivado: true }).orderBy(
-    desc(products.createdAt),
-    asc(products.name)
+    asc(sql`lower(${products.name})`)
   );
   return rows.map(mapProduto);
 }
