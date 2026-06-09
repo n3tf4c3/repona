@@ -1,2 +1,0 @@
-ALTER TABLE "products" ADD COLUMN "sync_id" uuid DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "products_casa_syncid_unique" ON "products" USING btree ("casa_id","sync_id");

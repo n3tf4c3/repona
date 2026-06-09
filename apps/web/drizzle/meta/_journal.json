@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1780876061153,
-      "tag": "0000_common_monster_badoon",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1780933406511,
-      "tag": "0001_mean_roland_deschain",
+      "when": 1781013696619,
+      "tag": "0000_redundant_magma",
       "breakpoints": true
     }
   ]
