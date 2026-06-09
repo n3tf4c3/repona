@@ -2,7 +2,7 @@ import "server-only";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import type { PurchaseHistoryDTO } from "@repona/core";
 import { db } from "@/server/db";
-import { products, shoppingLists, purchaseHistory } from "@/server/db/schema";
+import { products, shoppingLists, purchaseHistory, priceHistory } from "@/server/db/schema";
 
 export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDTO[]> {
   const rows = await db
@@ -34,4 +34,26 @@ export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDT
     sourceListId: row.sourceListId,
     sourceListName: row.sourceListName,
   }));
+}
+
+// Último preço conhecido por produto (centavos), para estimar o total da compra
+// no histórico — mesma base do "Total estimado" do mobile. (auditoria UI)
+export async function ultimoPrecoPorProduto(casaId: number): Promise<Map<number, number>> {
+  const rows = await db
+    .select({
+      productId: priceHistory.productId,
+      priceCents: priceHistory.priceCents,
+      recordedAt: priceHistory.recordedAt,
+    })
+    .from(priceHistory)
+    .innerJoin(products, eq(products.id, priceHistory.productId))
+    .where(eq(products.casaId, casaId))
+    .orderBy(desc(priceHistory.recordedAt));
+
+  const mapa = new Map<number, number>();
+  for (const row of rows) {
+    // Linhas em ordem decrescente: a primeira de cada produto é a mais recente.
+    if (!mapa.has(row.productId)) mapa.set(row.productId, row.priceCents);
+  }
+  return mapa;
 }

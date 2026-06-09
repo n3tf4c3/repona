@@ -1,8 +1,11 @@
-import type { PurchaseHistoryDTO } from "@repona/core";
+import type { PurchaseHistoryDTO, ShoppingTotalEstimate } from "@repona/core";
+import { estimateShoppingTotal } from "@repona/core";
 import { corDaCategoria } from "@/lib/categorias";
 
 // Porte de apps/mobile/src/purchaseHistoryPresentation.ts (sem ícones do Expo;
 // usa cor da categoria como marcador).
+
+export type HistoricoLinha = { name: string; quantity: string };
 
 export type HistoricoItem = {
   id: string;
@@ -11,6 +14,10 @@ export type HistoricoItem = {
   countLabel: string;
   cores: string[];
   more: string | null;
+  // Itens comprados (nome + quantidade) e o total estimado pelo último preço
+  // conhecido de cada produto. total é null quando não há mapa de preços.
+  lines: HistoricoLinha[];
+  total: ShoppingTotalEstimate | null;
 };
 
 export type HistoricoGrupo = {
@@ -32,7 +39,10 @@ type Compra = {
   records: PurchaseHistoryDTO[];
 };
 
-export function agruparHistorico(records: PurchaseHistoryDTO[]): HistoricoGrupo[] {
+export function agruparHistorico(
+  records: PurchaseHistoryDTO[],
+  precoPorProduto?: Map<number, number>
+): HistoricoGrupo[] {
   const compras = records.reduce<Compra[]>((items, record) => {
     const key = `${record.purchasedAt}-${record.sourceListId ?? "manual"}`;
     const existing = items.find((item) => item.key === key);
@@ -51,7 +61,7 @@ export function agruparHistorico(records: PurchaseHistoryDTO[]): HistoricoGrupo[
 
   return compras.reduce<HistoricoGrupo[]>((groups, compra) => {
     const title = tituloDoGrupo(compra.purchasedAt);
-    const item = compraParaItem(compra);
+    const item = compraParaItem(compra, precoPorProduto);
     const existing = groups.find((group) => group.title === title);
     if (existing) {
       existing.items.push(item);
@@ -62,9 +72,18 @@ export function agruparHistorico(records: PurchaseHistoryDTO[]): HistoricoGrupo[
   }, []);
 }
 
-function compraParaItem(compra: Compra): HistoricoItem {
+function compraParaItem(compra: Compra, precoPorProduto?: Map<number, number>): HistoricoItem {
   const count = compra.records.length;
   const label = count === 1 ? "item" : "itens";
+  const lines = compra.records.map((r) => ({ name: r.productName, quantity: r.quantity }));
+  const total = precoPorProduto
+    ? estimateShoppingTotal(
+        compra.records.map((r) => ({
+          priceCents: precoPorProduto.get(r.productId) ?? null,
+          quantity: r.quantity,
+        }))
+      )
+    : null;
   return {
     id: compra.key,
     title: compra.sourceListName ?? "Compra finalizada",
@@ -72,6 +91,8 @@ function compraParaItem(compra: Compra): HistoricoItem {
     countLabel: `${count} ${label}`,
     cores: compra.records.slice(0, 3).map((r) => corDaCategoria(r.category)),
     more: count > 3 ? `+${count - 3}` : null,
+    lines,
+    total,
   };
 }
 
