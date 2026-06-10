@@ -1,7 +1,14 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ShoppingBasket, ArrowRight } from "lucide-react";
+import { getAuthSession } from "@/server/auth/session";
 
-export default function HomePage() {
+export default async function HomePage() {
+  // Quem já tem sessão (cookie de 30 dias) vai direto pro app, sem ver o
+  // "Entrar com token". Se a sessão estiver inválida, o layout do (app)
+  // devolve pro /login.
+  const session = await getAuthSession();
+  if (session?.user?.id) redirect("/inicio");
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center gap-6 p-8 text-center">
       <span className="flex h-16 w-16 items-center justify-center rounded-3xl bg-primary-soft text-primary-strong">
