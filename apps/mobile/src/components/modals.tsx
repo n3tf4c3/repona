@@ -61,6 +61,10 @@ export function PriceEntryModal({
 
   return (
     <Modal visible={product !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={styles.sheetKeyboardWrap}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <Pressable style={styles.modalScrim} onPress={onClose} />
       <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
         <View style={styles.sheetHandle} />
@@ -85,6 +89,7 @@ export function PriceEntryModal({
           <Text style={styles.saveButtonText}>Salvar preço</Text>
         </Pressable>
       </SafeAreaView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -629,6 +634,10 @@ export function ScanToListModal({
         </SafeAreaView>
       </Modal>
       <Modal visible={visible && foundProduct !== null} transparent animationType="slide" onRequestClose={onClose}>
+        <KeyboardAvoidingView
+          style={styles.sheetKeyboardWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
         <Pressable style={styles.modalScrim} onPress={onClose} />
         <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
           <View style={styles.sheetHandle} />
@@ -654,6 +663,7 @@ export function ScanToListModal({
             <Text style={styles.saveButtonText}>Adicionar à lista</Text>
           </Pressable>
         </SafeAreaView>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
@@ -693,6 +703,10 @@ export function QuantityEntryModal({
 
   return (
     <Modal visible={item !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={styles.sheetKeyboardWrap}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <Pressable style={styles.modalScrim} onPress={onClose} />
       <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
         <View style={styles.sheetHandle} />
@@ -717,6 +731,7 @@ export function QuantityEntryModal({
           <Text style={styles.saveButtonText}>Salvar</Text>
         </Pressable>
       </SafeAreaView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
