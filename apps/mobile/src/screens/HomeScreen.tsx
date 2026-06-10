@@ -21,6 +21,8 @@ export function HomeScreen({
   onOpenList,
   onOpenHistory,
   onOpenProducts,
+  onOpenEstoque,
+  onOpenPerfil,
   onNewProduct,
   onNewList,
   onAddProductToList,
@@ -36,6 +38,8 @@ export function HomeScreen({
   onOpenList: () => void;
   onOpenHistory: () => void;
   onOpenProducts: () => void;
+  onOpenEstoque: () => void;
+  onOpenPerfil: () => void;
   onNewProduct: () => void;
   onNewList: () => void;
   onAddProductToList: (product: Product) => void;
@@ -68,12 +72,13 @@ export function HomeScreen({
           <>
             <IconButton icon="magnify" onPress={onOpenProducts} />
             <IconButton icon="bell-outline" badge={inventoryAlerts.length > 0} onPress={handleShowAlerts} />
+            <IconButton icon="account-outline" onPress={onOpenPerfil} />
           </>
         }
       />
       <ActiveListCard title={activeListName} checkedCount={checkedCount} totalCount={totalCount} onOpen={onOpenList} />
       <QuickActions onNewProduct={onNewProduct} onNewList={onNewList} onHistory={onOpenHistory} />
-      <InventoryAlertsCard alerts={inventoryAlerts} isReady={isProductsReady} onOpenProducts={onOpenProducts} />
+      <InventoryAlertsCard alerts={inventoryAlerts} isReady={isProductsReady} onOpenEstoque={onOpenEstoque} />
       <SuggestionCard suggestion={rebuySuggestion} onAdd={onAddSuggestionToList} />
       <SectionTitle title="Você costuma comprar" action="Ver tudo" onAction={onOpenProducts} />
       <ProductListPreview products={products} isReady={isProductsReady} onAdd={onAddProductToList} />
@@ -164,11 +169,11 @@ function QuickAction({
 function InventoryAlertsCard({
   alerts,
   isReady,
-  onOpenProducts,
+  onOpenEstoque,
 }: {
   alerts: InventoryAlert[];
   isReady: boolean;
-  onOpenProducts: () => void;
+  onOpenEstoque: () => void;
 }) {
   if (!isReady) {
     return (
@@ -201,7 +206,7 @@ function InventoryAlertsCard({
           <Text style={styles.inventoryAlertLabel}>Alertas de estoque</Text>
           <Text style={styles.inventoryAlertTitle}>{alerts.length} {alerts.length === 1 ? 'item precisa' : 'itens precisam'} de atenção</Text>
         </View>
-        <Pressable style={styles.inventoryAlertAction} onPress={onOpenProducts}>
+        <Pressable style={styles.inventoryAlertAction} onPress={onOpenEstoque}>
           <Text style={styles.inventoryAlertActionText}>Ver</Text>
         </Pressable>
       </View>

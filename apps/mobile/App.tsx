@@ -22,10 +22,12 @@ import {
   PriceEntryModal,
   PurchaseDetailModal,
   QuantityEntryModal,
+  ScanToListModal,
 } from './src/components/modals';
 import { productRecordToProduct } from './src/productPresentation';
 import { purchaseHistoryRecordsToGroups } from './src/purchaseHistoryPresentation';
 import type { PurchaseHistoryGroup, PurchaseHistoryItem } from './src/purchaseHistoryPresentation';
+import { EstoqueScreen } from './src/screens/EstoqueScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { FutureScreen } from './src/screens/PerfilScreen';
@@ -64,7 +66,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home');
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [activeShoppingListName, setActiveShoppingListName] = useState('Compra da Semana');
+  const [activeShoppingListName, setActiveShoppingListName] = useState('Lista de Compras');
   const [shoppingItems, setShoppingItems] = useState<ShoppingItem[]>([]);
   const [isShoppingListReady, setIsShoppingListReady] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
@@ -80,6 +82,10 @@ export default function App() {
   const [priceError, setPriceError] = useState<string | null>(null);
   const [selectedPurchase, setSelectedPurchase] = useState<PurchaseHistoryItem | null>(null);
   const [editingQuantityItem, setEditingQuantityItem] = useState<ShoppingItem | null>(null);
+  const [isScanToListVisible, setIsScanToListVisible] = useState(false);
+  // Código lido no scanner da compra sem produto correspondente: pré-preenche o
+  // cadastro e faz o produto novo já entrar na lista ao salvar.
+  const [scanBarcodeToRegister, setScanBarcodeToRegister] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -186,6 +192,16 @@ export default function App() {
     setProductFormError(null);
     setProductActionError(null);
     setEditingProduct(null);
+    setScanBarcodeToRegister(null);
+    setShowNewProduct(true);
+  }
+
+  function openRegisterFromScan(barcode: string) {
+    setIsScanToListVisible(false);
+    setProductFormError(null);
+    setProductActionError(null);
+    setEditingProduct(null);
+    setScanBarcodeToRegister(barcode);
     setShowNewProduct(true);
   }
 
@@ -209,13 +225,19 @@ export default function App() {
         await updateProduct(editingProduct.id, persisted);
         await Promise.all([refreshProducts(), refreshShoppingItems(), refreshHistory()]);
       } else {
-        await createProduct(persisted);
+        const created = await createProduct(persisted);
         await refreshProducts();
+        // Cadastro vindo do scanner da compra: o produto novo já entra na lista.
+        if (scanBarcodeToRegister) {
+          await addProductToActiveShoppingList(created.id);
+          await refreshShoppingItems();
+        }
       }
 
       setShowNewProduct(false);
       setEditingProduct(null);
-      setActiveTab('products');
+      setActiveTab(scanBarcodeToRegister ? 'list' : 'products');
+      setScanBarcodeToRegister(null);
     } catch (error) {
       setProductFormError(getProductErrorMessage(error));
     }
@@ -295,6 +317,14 @@ export default function App() {
     await addProductToActiveShoppingList(product.id);
     await refreshShoppingItems();
     setActiveTab('list');
+  }
+
+  // Scanner na compra: produto identificado pelo código de barras entra na
+  // lista ativa já com a quantidade escolhida.
+  async function handleScanAddToList(productId: number, quantity: string) {
+    setIsScanToListVisible(false);
+    await addProductToActiveShoppingList(productId, quantity);
+    await refreshShoppingItems();
   }
 
   async function handleChangeProductInventory(product: Product, direction: 1 | -1) {
@@ -419,6 +449,8 @@ export default function App() {
               onOpenList={() => setActiveTab('list')}
               onOpenHistory={() => setActiveTab('history')}
               onOpenProducts={() => setActiveTab('products')}
+              onOpenEstoque={() => setActiveTab('estoque')}
+              onOpenPerfil={() => setActiveTab('future')}
               onNewProduct={openNewProduct}
               onNewList={confirmCreateNewShoppingList}
               onAddProductToList={handleAddProductToList}
@@ -439,6 +471,7 @@ export default function App() {
               listName={activeShoppingListName}
               priceSummaries={priceSummaries}
               onBack={() => setActiveTab('home')}
+              onScan={() => setIsScanToListVisible(true)}
               onToggleItem={toggleItem}
               onChangeQuantity={changeItemQuantity}
               onEditQuantity={setEditingQuantityItem}
@@ -456,11 +489,19 @@ export default function App() {
               onAddProductToList={handleAddProductToList}
               onEditProduct={openEditProduct}
               onRemoveProduct={confirmRemoveProduct}
+              onRegisterPrice={openPriceModal}
+              onUnarchiveProduct={handleUnarchiveProduct}
+            />
+          ) : null}
+          {activeTab === 'estoque' ? (
+            <EstoqueScreen
+              products={products}
+              isReady={isProductsReady}
+              errorMessage={productActionError}
+              onAddProductToList={handleAddProductToList}
               onChangeInventory={handleChangeProductInventory}
               onMarkInventoryMissing={handleMarkProductMissing}
               onConsumeProduct={handleConsumeProduct}
-              onRegisterPrice={openPriceModal}
-              onUnarchiveProduct={handleUnarchiveProduct}
             />
           ) : null}
           {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} priceSummaries={priceSummaries} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
@@ -487,10 +528,12 @@ export default function App() {
         <NewProductSheet
           visible={showNewProduct}
           product={editingProduct}
+          initialBarcode={scanBarcodeToRegister}
           errorMessage={productFormError}
           onClose={() => {
             setShowNewProduct(false);
             setEditingProduct(null);
+            setScanBarcodeToRegister(null);
           }}
           onSave={handleSaveProduct}
         />
@@ -503,6 +546,15 @@ export default function App() {
         />
 
         <PurchaseDetailModal purchase={selectedPurchase} priceSummaries={priceSummaries} onClose={() => setSelectedPurchase(null)} />
+
+        <ScanToListModal
+          visible={isScanToListVisible}
+          onClose={() => setIsScanToListVisible(false)}
+          onAdd={(productId, quantity) => {
+            void handleScanAddToList(productId, quantity);
+          }}
+          onRegister={openRegisterFromScan}
+        />
 
         <QuantityEntryModal
           item={editingQuantityItem}

@@ -358,6 +358,24 @@ export const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.ink3,
   },
+  estoqueCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.line2,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    ...shadow.small,
+  },
+  estoquePhoto: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: colors.bg2,
+  },
   inventoryControls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1039,6 +1057,10 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: spacing.screen,
     paddingVertical: 16,
+  },
+  scannerRetryButton: {
+    marginHorizontal: spacing.screen,
+    marginBottom: 16,
   },
   photoCaptureBar: {
     alignItems: 'center',

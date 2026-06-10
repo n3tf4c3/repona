@@ -58,7 +58,7 @@ export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
   try {
     const result = await database.runAsync(
       `INSERT INTO shopping_lists (name, status, created_at, updated_at)
-       VALUES ('Compra da Semana', 'active', ?, ?)`,
+       VALUES ('Lista de Compras', 'active', ?, ?)`,
       now,
       now,
     );
@@ -77,7 +77,7 @@ export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
 
   return {
     id: createdListId,
-    name: 'Compra da Semana',
+    name: 'Lista de Compras',
     status: 'active',
     createdAt: now,
     updatedAt: now,
@@ -107,10 +107,32 @@ export async function listActiveShoppingItems(): Promise<ShoppingListItemRecord[
   return rows.map(mapShoppingListItemRow);
 }
 
-export async function addProductToActiveShoppingList(productId: number) {
+export async function addProductToActiveShoppingList(productId: number, quantity?: string) {
   const database = await initializeDatabase();
   const activeList = await ensureActiveShoppingList();
   const now = new Date().toISOString();
+
+  // Com quantidade explícita (fluxo do scanner na compra), ela vale mesmo se o
+  // item já está na lista. Sem ela, item existente preserva a quantidade.
+  if (quantity) {
+    await database.runAsync(
+      `INSERT INTO shopping_list_items
+        (shopping_list_id, product_id, quantity, checked, deleted, created_at, updated_at)
+       VALUES (?, ?, ?, 0, 0, ?, ?)
+       ON CONFLICT(shopping_list_id, product_id)
+       DO UPDATE SET
+         quantity = excluded.quantity,
+         checked = CASE WHEN deleted = 1 THEN 0 ELSE checked END,
+         deleted = 0,
+         updated_at = excluded.updated_at`,
+      activeList.id,
+      productId,
+      quantity,
+      now,
+      now,
+    );
+    return;
+  }
 
   await database.runAsync(
     `INSERT INTO shopping_list_items

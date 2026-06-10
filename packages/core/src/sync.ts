@@ -17,6 +17,8 @@ export type SyncProduct = {
   updatedAt?: string;
   name: string;
   category: string;
+  // Marca do produto. Opcional para tolerar clientes/servidores antigos.
+  brand?: string | null;
   barcode: string | null;
   // Foto NÃO entra no sync: é uma URI local do dispositivo, sem valor em outro
   // aparelho/nuvem. Fica estritamente local no mobile. (auditoria #6)

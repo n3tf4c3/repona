@@ -27,6 +27,7 @@ export function ShoppingListScreen({
   listName,
   priceSummaries,
   onBack,
+  onScan,
   onToggleItem,
   onChangeQuantity,
   onEditQuantity,
@@ -38,6 +39,7 @@ export function ShoppingListScreen({
   listName: string;
   priceSummaries: Map<number, PriceSummary>;
   onBack: () => void;
+  onScan: () => void;
   onToggleItem: (id: number) => void;
   onChangeQuantity: (item: ShoppingItem, direction: 1 | -1) => void;
   onEditQuantity: (item: ShoppingItem) => void;
@@ -65,7 +67,10 @@ export function ShoppingListScreen({
             <Text style={styles.titleText}>{listName}</Text>
           </View>
         </View>
-        <IconButton icon="dots-vertical" onPress={handleOpenMenu} />
+        <View style={styles.rowCenter}>
+          <IconButton icon="barcode-scan" onPress={onScan} />
+          <IconButton icon="dots-vertical" onPress={handleOpenMenu} />
+        </View>
       </View>
       <ProgressBar progress={progress} />
       {!isReady ? <EmptyState title="Carregando lista" description="Buscando os itens salvos localmente." /> : null}

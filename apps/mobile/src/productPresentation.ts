@@ -52,6 +52,7 @@ export function productRecordToProduct(record: ProductRecord): Product {
     id: record.id,
     name: record.name,
     category: record.category,
+    brand: record.brand,
     barcode: record.barcode,
     photoUri: record.photoUri,
     purchaseCount: record.purchaseCount,
@@ -68,17 +69,20 @@ export function productRecordToProduct(record: ProductRecord): Product {
 }
 
 function buildProductMeta(record: ProductRecord): string {
+  // Marca na frente, quando existe: "Urbano · Mercearia · 1 kg em casa".
+  const prefixo = record.brand ? `${record.brand} · ` : '';
+
   if (record.status === 'missing' || record.inventoryStatus === 'missing') {
-    return `${record.category} · em falta`;
+    return `${prefixo}${record.category} · em falta`;
   }
 
   if (record.inventoryQuantity && record.inventoryQuantity !== '0 un') {
-    return `${record.category} · ${record.inventoryQuantity} em casa`;
+    return `${prefixo}${record.category} · ${record.inventoryQuantity} em casa`;
   }
 
   if (record.purchaseCount > 0) {
-    return `${record.category} · ${record.purchaseCount} compras`;
+    return `${prefixo}${record.category} · ${record.purchaseCount} compras`;
   }
 
-  return `${record.category} · novo`;
+  return `${prefixo}${record.category} · novo`;
 }

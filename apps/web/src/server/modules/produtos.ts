@@ -22,6 +22,7 @@ type ProdutoRow = {
   id: number;
   name: string;
   category: string;
+  brand: string | null;
   barcode: string | null;
   photoUri: string | null;
   purchaseCount: number;
@@ -48,6 +49,7 @@ function selecionarProdutos(casaId: number, opts?: { id?: number; arquivado?: bo
       id: products.id,
       name: products.name,
       category: products.category,
+      brand: products.brand,
       barcode: products.barcode,
       photoUri: products.photoUri,
       purchaseCount: products.purchaseCount,
@@ -74,6 +76,7 @@ function mapProduto(row: ProdutoRow): ProductDTO {
     id: row.id,
     name: row.name,
     category: row.category,
+    brand: row.brand,
     barcode: row.barcode,
     photoUri: row.photoUri,
     purchaseCount: row.purchaseCount,
@@ -153,6 +156,7 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       casaId: casaId,
       name,
       category: category || "Mercearia",
+      brand: input.brand?.trim() || null,
       barcode,
       photoUri: input.photoUri ?? null,
       // Estoque nasce vazio, então o status do produto acompanha (em falta) —
@@ -192,6 +196,7 @@ export async function updateProduto(
     .set({
       name,
       category: category || "Mercearia",
+      brand: input.brand?.trim() || null,
       barcode,
       photoUri: input.photoUri ?? null,
       alertThreshold: input.alertThreshold?.trim() || null,

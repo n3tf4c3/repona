@@ -75,6 +75,44 @@ export function ProductRow({
   );
 }
 
+// Linha compacta da tela Estoque: só nome e controles de quantidade, sem as
+// ações de catálogo — cabe mais itens por tela.
+export function EstoqueRow({
+  product,
+  onAdd,
+  onChangeInventory,
+  onMarkInventoryMissing,
+  onConsume,
+}: {
+  product: Product;
+  onAdd: (product: Product) => void;
+  onChangeInventory: (product: Product, direction: 1 | -1) => void;
+  onMarkInventoryMissing: (product: Product) => void;
+  onConsume: (product: Product) => void;
+}) {
+  return (
+    <View style={styles.estoqueCard}>
+      {product.photoUri ? (
+        <Image source={{ uri: product.photoUri }} style={styles.estoquePhoto} />
+      ) : (
+        <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={34} />
+      )}
+      <View style={styles.productText}>
+        <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
+        <InventoryControls
+          product={product}
+          onChange={onChangeInventory}
+          onMarkMissing={onMarkInventoryMissing}
+          onConsume={onConsume}
+        />
+      </View>
+      <Pressable style={styles.addMini} onPress={() => onAdd(product)}>
+        <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
+      </Pressable>
+    </View>
+  );
+}
+
 export function InventoryControls({
   product,
   onChange,
@@ -161,9 +199,9 @@ export function ProductList({
   onAdd: (product: Product) => void;
   onEdit: (product: Product) => void;
   onRemove: (product: Product) => void;
-  onChangeInventory: (product: Product, direction: 1 | -1) => void;
-  onMarkInventoryMissing: (product: Product) => void;
-  onConsume: (product: Product) => void;
+  onChangeInventory?: (product: Product, direction: 1 | -1) => void;
+  onMarkInventoryMissing?: (product: Product) => void;
+  onConsume?: (product: Product) => void;
   onRegisterPrice: (product: Product) => void;
 }) {
   if (!isReady) {
@@ -192,6 +230,20 @@ export function ProductList({
       onRegisterPrice={onRegisterPrice}
     />
   ));
+}
+
+// Filtro por nome/código e categoria, compartilhado entre Produtos e Estoque.
+export function filterProducts(products: Product[], searchTerm: string, selectedCategory: string) {
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
+
+  return products.filter((product) => {
+    const matchesCategory = selectedCategory === 'Todos' || product.category === selectedCategory;
+    const matchesSearch = !normalizedSearch
+      || product.name.toLocaleLowerCase('pt-BR').includes(normalizedSearch)
+      || (product.barcode?.includes(normalizedSearch) ?? false);
+
+    return matchesCategory && matchesSearch;
+  });
 }
 
 export function ArchivedProductRow({ product, onUnarchive }: { product: Product; onUnarchive: (product: Product) => void }) {

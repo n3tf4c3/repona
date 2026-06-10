@@ -72,6 +72,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       updatedAt: p.updatedAt,
       name: p.name,
       category: p.category,
+      brand: p.brand,
       barcode: p.barcode,
       purchaseCount: p.purchaseCount,
       status: p.status,
@@ -183,11 +184,12 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         }
         await database.runAsync(
           `UPDATE products SET
-             name = ?, category = ?, barcode = ?,
+             name = ?, category = ?, brand = ?, barcode = ?,
              status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
            WHERE id = ?`,
           nomeFinal,
           prod.category,
+          prod.brand ?? null,
           prod.barcode,
           prod.status,
           prod.alertThreshold,
@@ -200,11 +202,12 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       } else {
         const inserido = await database.runAsync(
           `INSERT INTO products
-             (sync_id, name, category, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (sync_id, name, category, brand, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           prod.syncId ?? uuidv4(),
           nome,
           prod.category,
+          prod.brand ?? null,
           prod.barcode,
           prod.status,
           prod.alertThreshold,
@@ -275,7 +278,7 @@ async function aplicarItensLista(
     const agora = new Date().toISOString();
     const res = await database.runAsync(
       `INSERT INTO shopping_lists (name, status, created_at, updated_at)
-       VALUES ('Compra da Semana', 'active', ?, ?)`,
+       VALUES ('Lista de Compras', 'active', ?, ?)`,
       agora,
       agora,
     );

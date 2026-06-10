@@ -2,7 +2,7 @@
 // (extraída de App.tsx, auditoria 2026-06-09 #12.1).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
 
 import { Header, IconBubble, ScreenScroll } from '../components/ui';
 import {
@@ -19,17 +19,24 @@ import { colors } from '../theme';
 
 export function FutureScreen({ onSynced }: { onSynced: () => void }) {
   return (
-    <ScreenScroll>
-      <Header eyebrow="No horizonte" title="Casa Repona" />
-      <View style={styles.futureHero}>
-        <IconBubble icon="home-variant-outline" background="rgba(127,217,160,0.18)" tint="#7FD9A0" size={52} />
-        <Text style={styles.futureHeroTitle}>Feito para famílias brasileiras</Text>
-        <Text style={styles.futureHeroText}>
-          O MVP funciona offline e já prepara espaço para estoque doméstico, scanner e compartilhamento familiar.
-        </Text>
-      </View>
-      <CasaSyncCard onSynced={onSynced} />
-    </ScreenScroll>
+    // Sem o KeyboardAvoidingView o teclado do Android cobre os campos de conta
+    // e token; com ele o scroll encolhe e o campo focado fica visível.
+    <KeyboardAvoidingView
+      style={styles.sheetKeyboardWrap}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScreenScroll>
+        <Header eyebrow="No horizonte" title="Casa Repona" />
+        <View style={styles.futureHero}>
+          <IconBubble icon="home-variant-outline" background="rgba(127,217,160,0.18)" tint="#7FD9A0" size={52} />
+          <Text style={styles.futureHeroTitle}>Feito para famílias brasileiras</Text>
+          <Text style={styles.futureHeroText}>
+            O MVP funciona offline e já prepara espaço para estoque doméstico, scanner e compartilhamento familiar.
+          </Text>
+        </View>
+        <CasaSyncCard onSynced={onSynced} />
+      </ScreenScroll>
+    </KeyboardAvoidingView>
   );
 }
 

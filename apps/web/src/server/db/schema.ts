@@ -43,6 +43,7 @@ export const products = pgTable(
     syncId: uuid("sync_id").notNull().defaultRandom(),
     name: text("name").notNull(),
     category: text("category").notNull(),
+    brand: text("brand"),
     barcode: text("barcode"),
     photoUri: text("photo_uri"),
     purchaseCount: integer("purchase_count").notNull().default(0),

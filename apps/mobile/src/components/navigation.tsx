@@ -7,11 +7,12 @@ import { styles } from '../styles';
 import { colors } from '../theme';
 import type { IconName, TabKey } from '../types';
 
+// Perfil não fica na barra: abre pelo ícone no topo da tela Início.
 const tabs: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'home', label: 'Início', icon: 'home-variant-outline' },
   { key: 'list', label: 'Listas', icon: 'format-list-checks' },
+  { key: 'estoque', label: 'Estoque', icon: 'fridge-outline' },
   { key: 'products', label: 'Produtos', icon: 'package-variant-closed' },
-  { key: 'future', label: 'Perfil', icon: 'account-outline' },
 ];
 const historyTab: { key: TabKey; label: string; icon: IconName } = { key: 'history', label: 'Histórico', icon: 'history' };
 

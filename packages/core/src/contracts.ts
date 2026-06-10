@@ -10,6 +10,8 @@ export type ProductDTO = {
   id: number;
   name: string;
   category: string;
+  // Marca do produto (digitada ou vinda do Open Food Facts via scanner).
+  brand: string | null;
   barcode: string | null;
   photoUri: string | null;
   purchaseCount: number;
@@ -28,6 +30,7 @@ export type ProductDTO = {
 export type NewProductInput = {
   name: string;
   category: string;
+  brand?: string | null;
   barcode?: string | null;
   photoUri?: string | null;
   alertThreshold?: string | null;
@@ -47,6 +50,7 @@ export type Categoria = (typeof CATEGORIAS)[number];
 export const FIELD_LIMITS = {
   name: 160,
   category: 80,
+  brand: 80,
   barcode: 120,
   quantity: 40,
   alertThreshold: 40,
@@ -59,6 +63,7 @@ export function validateProductFields(input: NewProductInput): void {
   if (
     input.name.trim().length > FIELD_LIMITS.name ||
     (input.category ?? "").length > FIELD_LIMITS.category ||
+    (input.brand ?? "").length > FIELD_LIMITS.brand ||
     (input.barcode ?? "").length > FIELD_LIMITS.barcode ||
     (input.alertThreshold ?? "").length > FIELD_LIMITS.alertThreshold
   ) {

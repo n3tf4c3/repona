@@ -234,6 +234,14 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       );
     }
   },
+
+  // v6: marca do produto (digitada ou vinda do Open Food Facts pelo scanner).
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
+    if (!cols.some((c) => c.name === 'brand')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN brand TEXT;');
+    }
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

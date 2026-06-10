@@ -6,7 +6,7 @@ import type {
   RebuySuggestion as CoreRebuySuggestion,
 } from '@repona/core';
 
-export type TabKey = 'home' | 'list' | 'products' | 'history' | 'future';
+export type TabKey = 'home' | 'list' | 'estoque' | 'products' | 'history' | 'future';
 
 export type IconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -14,6 +14,7 @@ export type Product = {
   id?: number;
   name: string;
   category?: string;
+  brand?: string | null;
   barcode?: string | null;
   photoUri?: string | null;
   purchaseCount?: number;

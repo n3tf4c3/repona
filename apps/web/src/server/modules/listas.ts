@@ -32,7 +32,7 @@ export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDT
   try {
     [criada] = await db
       .insert(shoppingLists)
-      .values({ casaId: casaId, name: "Compra da Semana", status: "active" })
+      .values({ casaId: casaId, name: "Lista de Compras", status: "active" })
       .returning();
   } catch {
     [criada] = await db

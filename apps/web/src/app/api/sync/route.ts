@@ -15,6 +15,8 @@ const snapshotSchema = z.object({
         updatedAt: z.string().datetime({ offset: true }).optional(),
         name: z.string().trim().min(1).max(FIELD_LIMITS.name),
         category: z.string().max(FIELD_LIMITS.category),
+        // Clientes antigos não enviam brand: default mantém compat.
+        brand: z.string().max(FIELD_LIMITS.brand).nullish().default(null),
         barcode: z.string().max(FIELD_LIMITS.barcode).nullable(),
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),

@@ -234,6 +234,7 @@ function ProductCard({
           <div>
             <p className="font-bold leading-tight">{produto.name}</p>
             <p className="text-xs text-ink-faint">
+              {produto.brand ? `${produto.brand} · ` : ""}
               {produto.category} · comprado {produto.purchaseCount}x
             </p>
           </div>
@@ -293,6 +294,7 @@ function ArchivedCard({
         <div>
           <p className="font-bold leading-tight text-ink-soft">{produto.name}</p>
           <p className="text-xs text-ink-faint">
+            {produto.brand ? `${produto.brand} · ` : ""}
             {produto.category} · comprado {produto.purchaseCount}x · arquivado
           </p>
         </div>
@@ -387,6 +389,7 @@ function ProdutoModal({
 }) {
   const [name, setName] = useState(produto?.name ?? "");
   const [category, setCategory] = useState(produto?.category ?? CATEGORIAS[0]);
+  const [brand, setBrand] = useState(produto?.brand ?? "");
   const [alertThreshold, setAlertThreshold] = useState(produto?.alertThreshold ?? "");
   const [occasional, setOccasional] = useState(produto?.occasional ?? false);
 
@@ -425,6 +428,15 @@ function ProdutoModal({
             </select>
           </label>
           <label className="block">
+            <span className="text-sm font-semibold text-ink-soft">Marca (opcional)</span>
+            <input
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+              placeholder="ex.: Urbano"
+              className="mt-1 w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
+            />
+          </label>
+          <label className="block">
             <span className="text-sm font-semibold text-ink-soft">Alerta de estoque baixo (opcional)</span>
             <input
               value={alertThreshold}
@@ -461,6 +473,7 @@ function ProdutoModal({
               onSalvar({
                 name,
                 category,
+                brand: brand.trim() || null,
                 alertThreshold,
                 occasional,
                 barcode: produto?.barcode ?? null,

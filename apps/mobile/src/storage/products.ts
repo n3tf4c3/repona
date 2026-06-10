@@ -10,6 +10,7 @@ export type ProductRecord = {
   syncId: string;
   name: string;
   category: string;
+  brand: string | null;
   barcode: string | null;
   photoUri: string | null;
   purchaseCount: number;
@@ -30,6 +31,7 @@ type ProductRow = {
   sync_id: string;
   name: string;
   category: string;
+  brand: string | null;
   barcode: string | null;
   photo_uri: string | null;
   purchase_count: number;
@@ -51,6 +53,7 @@ const PRODUCT_SELECT = `
       p.sync_id,
       p.name,
       p.category,
+      p.brand,
       p.barcode,
       p.photo_uri,
       p.purchase_count,
@@ -168,11 +171,12 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   let productId = 0;
   await database.withTransactionAsync(async () => {
     const result = await database.runAsync(
-      `INSERT INTO products (sync_id, name, category, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      `INSERT INTO products (sync_id, name, category, brand, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
       uuidv4(),
       name,
       category || 'Mercearia',
+      input.brand?.trim() || null,
       barcode,
       input.photoUri ?? null,
       input.alertThreshold?.trim() || null,
@@ -234,6 +238,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
     `UPDATE products
      SET name = ?,
           category = ?,
+          brand = ?,
           barcode = ?,
           photo_uri = ?,
           alert_threshold = ?,
@@ -242,6 +247,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
       WHERE id = ?`,
     name,
     category || 'Mercearia',
+    input.brand?.trim() || null,
     barcode,
     input.photoUri ?? null,
     input.alertThreshold?.trim() || null,
@@ -288,6 +294,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
     syncId: row.sync_id,
     name: row.name,
     category: row.category,
+    brand: row.brand,
     barcode: row.barcode,
     photoUri: row.photo_uri,
     purchaseCount: row.purchase_count,
