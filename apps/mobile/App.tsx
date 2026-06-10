@@ -30,7 +30,6 @@ import {
   finalizeActiveShoppingList,
   listActiveShoppingItems,
   removeShoppingListItem,
-  seedActiveShoppingList,
   toggleShoppingListItem,
   updateShoppingListItemQuantity,
 } from './src/storage/shoppingLists';
@@ -103,7 +102,6 @@ export default function App() {
 
     async function loadInitialProducts() {
       try {
-        await seedActiveShoppingList();
         const activeList = await ensureActiveShoppingList();
         const records = await listProducts();
         const archivedRecords = await listArchivedProducts();

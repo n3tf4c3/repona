@@ -39,13 +39,6 @@ type ShoppingListItemRow = {
   checked: number;
 };
 
-const initialListItems = [
-  { productName: 'Maçã Fuji', quantity: '1 kg', checked: true },
-  { productName: 'Cenoura', quantity: '500 g', checked: false },
-  { productName: 'Leite integral', quantity: '2 un', checked: true },
-  { productName: 'Café torrado', quantity: '1 un', checked: false },
-];
-
 export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
   const database = await initializeDatabase();
   const existing = await database.getFirstAsync<ShoppingListRow>(`
@@ -89,43 +82,6 @@ export async function ensureActiveShoppingList(): Promise<ShoppingListRecord> {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-export async function seedActiveShoppingList() {
-  const database = await initializeDatabase();
-  const listCount = await database.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM shopping_lists');
-  const activeList = await ensureActiveShoppingList();
-
-  if ((listCount?.count ?? 0) > 0) {
-    return;
-  }
-
-  const now = new Date().toISOString();
-
-  await database.withTransactionAsync(async () => {
-    for (const item of initialListItems) {
-      const product = await database.getFirstAsync<{ id: number }>(
-        'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
-        item.productName,
-      );
-
-      if (!product) {
-        continue;
-      }
-
-      await database.runAsync(
-        `INSERT OR IGNORE INTO shopping_list_items
-          (shopping_list_id, product_id, quantity, checked, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        activeList.id,
-        product.id,
-        item.quantity,
-        item.checked ? 1 : 0,
-        now,
-        now,
-      );
-    }
-  });
 }
 
 export async function listActiveShoppingItems(): Promise<ShoppingListItemRecord[]> {
