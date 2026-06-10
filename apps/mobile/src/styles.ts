@@ -946,6 +946,14 @@ export const styles = StyleSheet.create({
     paddingBottom: 18,
     gap: 12,
   },
+  // Sheet com formulário longo: encolhe quando o teclado abre (o conteúdo
+  // rola via ScrollView com sheetScrollContent).
+  sheetShellShrink: {
+    flexShrink: 1,
+  },
+  sheetScrollContent: {
+    gap: 12,
+  },
   sheetHandle: {
     alignSelf: 'center',
     width: 44,

@@ -342,8 +342,15 @@ export function NewProductSheet({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
         <Pressable style={styles.modalScrim} onPress={onClose} />
-        <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
+        {/* flexShrink + ScrollView: com o teclado aberto o sheet encolhe e o
+            formulário rola, em vez de os campos de baixo ficarem cobertos. */}
+        <SafeAreaView edges={['bottom']} style={[styles.sheetShell, styles.sheetShellShrink]}>
           <View style={styles.sheetHandle} />
+          <ScrollView
+            contentContainerStyle={styles.sheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
           <Text style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
           <Text style={styles.sheetSubtitle}>{product ? 'Ajuste nome e categoria do produto cadastrado.' : 'Só o nome já basta. O resto é opcional.'}</Text>
           <Text style={styles.fieldLabel}>Nome do produto</Text>
@@ -415,6 +422,7 @@ export function NewProductSheet({
             <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
             <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
           </Pressable>
+          </ScrollView>
         </SafeAreaView>
         </KeyboardAvoidingView>
       </Modal>
