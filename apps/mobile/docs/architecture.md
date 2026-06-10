@@ -12,9 +12,11 @@ A persistencia local existe para produtos, lista ativa, itens da lista, historic
 
 ## Estrutura
 
-- `App.tsx`: entrada do app, navegacao local por estado, telas e componentes visuais.
+- `App.tsx`: entrada do app — estado, carregamento dos dados locais e handlers; a composicao visual vive em `src/screens` e `src/components`.
+- `src/screens/`: uma tela por arquivo (Home, ShoppingList, Products, History, Perfil).
+- `src/components/`: componentes reutilizaveis (`ui.tsx`), navegacao inferior, linhas de produto e modais.
+- `src/styles.ts`: StyleSheet unico compartilhado pelas telas e componentes.
 - `src/theme.ts`: tokens visuais, cores, tipografia, raios e sombras.
-- `src/data.ts`: dados auxiliares de UI e copia de recursos futuros; parte dos mocks antigos permanece sem uso nos fluxos principais.
 - `src/types.ts`: tipos compartilhados da UI.
 - `src/storage/database.ts`: abertura do SQLite e criacao das tabelas iniciais.
 - `src/storage/products.ts`: seed, listagem, cadastro, edicao e remocao de produtos.

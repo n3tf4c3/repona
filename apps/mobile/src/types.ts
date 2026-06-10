@@ -1,6 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
-import type { NewProductInput as CoreNewProductInput } from '@repona/core';
+import type {
+  InventoryAlert as CoreInventoryAlert,
+  NewProductInput as CoreNewProductInput,
+  RebuySuggestion as CoreRebuySuggestion,
+} from '@repona/core';
 
 export type TabKey = 'home' | 'list' | 'products' | 'history' | 'future';
 
@@ -27,6 +31,11 @@ export type Product = {
 };
 
 export type NewProductInput = CoreNewProductInput;
+
+// Aliases das regras do core especializados no Product enriquecido do mobile
+// (ícone/cores), usados pelo App e pela tela Início.
+export type InventoryAlert = CoreInventoryAlert<Product>;
+export type RebuySuggestion = CoreRebuySuggestion<Product>;
 
 export type ShoppingItem = {
   id: number;
