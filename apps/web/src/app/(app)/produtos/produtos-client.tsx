@@ -14,9 +14,19 @@ import {
   PackageOpen,
   Archive,
   ArchiveRestore,
+  TrendingUp,
+  TrendingDown,
+  X,
 } from "lucide-react";
-import { getNextInventoryQuantity, type ProductDTO, type NewProductInput } from "@repona/core";
+import {
+  getNextInventoryQuantity,
+  summarizePrices,
+  type PricePoint,
+  type ProductDTO,
+  type NewProductInput,
+} from "@repona/core";
 import { CATEGORIAS } from "@/lib/categorias";
+import { formatCentsBRL } from "@/lib/preco";
 import { CategoriaBolha } from "@/components/categoria-icone";
 import {
   criarProdutoAction,
@@ -34,9 +44,11 @@ type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string 
 export function ProdutosClient({
   produtos,
   arquivados,
+  precos,
 }: {
   produtos: ProductDTO[];
   arquivados: ProductDTO[];
+  precos: Record<number, PricePoint[]>;
 }) {
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState("Todos");
@@ -44,6 +56,7 @@ export function ProdutosClient({
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<ProductDTO | null>(null);
   const [criando, setCriando] = useState(false);
+  const [vendoPrecos, setVendoPrecos] = useState<ProductDTO | null>(null);
   const [pending, startTransition] = useTransition();
 
   const filtrados = useMemo(() => {
@@ -157,7 +170,9 @@ export function ProdutosClient({
               <ProductCard
                 key={produto.id}
                 produto={produto}
+                pontosPreco={precos[produto.id] ?? []}
                 pending={pending}
+                onVerPrecos={() => setVendoPrecos(produto)}
                 onAddLista={() => executar(() => adicionarAListaAction(produto.id))}
                 onEditar={() => {
                   setEditando(produto);
@@ -177,6 +192,14 @@ export function ProdutosClient({
               />
             ))}
       </div>
+
+      {vendoPrecos && (
+        <PrecoModal
+          produto={vendoPrecos}
+          pontos={precos[vendoPrecos.id] ?? []}
+          onFechar={() => setVendoPrecos(null)}
+        />
+      )}
 
       {(criando || editando) && (
         <ProdutoModal
@@ -208,7 +231,9 @@ export function ProdutosClient({
 
 function ProductCard({
   produto,
+  pontosPreco,
   pending,
+  onVerPrecos,
   onAddLista,
   onEditar,
   onExcluir,
@@ -217,7 +242,9 @@ function ProductCard({
   onConsumir,
 }: {
   produto: ProductDTO;
+  pontosPreco: PricePoint[];
   pending: boolean;
+  onVerPrecos: () => void;
   onAddLista: () => void;
   onEditar: () => void;
   onExcluir: () => void;
@@ -226,6 +253,7 @@ function ProductCard({
   onConsumir: () => void;
 }) {
   const emFalta = produto.inventoryStatus === "missing";
+  const resumoPreco = summarizePrices(pontosPreco);
   return (
     <div className="rounded-card border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -237,6 +265,21 @@ function ProductCard({
               {produto.brand ? `${produto.brand} · ` : ""}
               {produto.category} · comprado {produto.purchaseCount}x
             </p>
+            {resumoPreco && (
+              <button
+                onClick={onVerPrecos}
+                className="mt-1 flex items-center gap-1 text-xs font-semibold text-ink-soft transition hover:text-primary-strong"
+              >
+                {formatCentsBRL(resumoPreco.lastCents)}
+                {resumoPreco.trend === "up" && <TrendingUp size={13} className="text-danger" />}
+                {resumoPreco.trend === "down" && (
+                  <TrendingDown size={13} className="text-primary-strong" />
+                )}
+                <span className="font-normal text-ink-faint underline decoration-dotted underline-offset-2">
+                  ver evolução
+                </span>
+              </button>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
@@ -309,6 +352,159 @@ function ArchivedCard({
       </button>
     </div>
   );
+}
+
+// Evolução de preço do produto: ajuda a decidir se vale comprar agora.
+function PrecoModal({
+  produto,
+  pontos,
+  onFechar,
+}: {
+  produto: ProductDTO;
+  pontos: PricePoint[];
+  onFechar: () => void;
+}) {
+  // Ordem cronológica para o gráfico (o servidor manda mais recentes primeiro).
+  const ordenados = useMemo(
+    () => [...pontos].sort((a, b) => a.recordedAt.localeCompare(b.recordedAt)),
+    [pontos]
+  );
+  const resumo = summarizePrices(pontos);
+  const primeiro = ordenados[0];
+  const ultimo = ordenados[ordenados.length - 1];
+  const variacaoPeriodo =
+    primeiro && ultimo && primeiro.priceCents > 0
+      ? ((ultimo.priceCents - primeiro.priceCents) / primeiro.priceCents) * 100
+      : null;
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
+      <div className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-black">Evolução de preço</h2>
+            <p className="text-sm text-ink-faint">{produto.name}</p>
+          </div>
+          <button
+            onClick={onFechar}
+            aria-label="Fechar"
+            className="rounded-lg border border-line p-1.5 text-ink-soft transition hover:bg-bg"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {ordenados.length < 2 ? (
+          <p className="mt-4 rounded-xl bg-bg px-4 py-3 text-sm text-ink-soft">
+            {ordenados.length === 0
+              ? "Nenhum preço registrado ainda. Registre preços pelo app na hora da compra."
+              : `Só um preço registrado (${formatCentsBRL(ordenados[0].priceCents)} em ${formatarData(ordenados[0].recordedAt)}). O gráfico aparece a partir do segundo registro.`}
+          </p>
+        ) : (
+          <>
+            <GraficoPreco pontos={ordenados} />
+            <div className="mt-1 flex justify-between text-xs text-ink-faint">
+              <span>{formatarData(primeiro.recordedAt)}</span>
+              <span>{formatarData(ultimo.recordedAt)}</span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+              <ResumoItem rotulo="Último preço" valor={formatCentsBRL(ultimo.priceCents)} />
+              <ResumoItem
+                rotulo="No período"
+                valor={
+                  variacaoPeriodo === null
+                    ? "—"
+                    : `${variacaoPeriodo > 0 ? "+" : ""}${variacaoPeriodo.toFixed(1).replace(".", ",")}%`
+                }
+                destaque={variacaoPeriodo === null ? undefined : variacaoPeriodo > 0 ? "alta" : variacaoPeriodo < 0 ? "queda" : undefined}
+              />
+              {resumo && (
+                <>
+                  <ResumoItem rotulo="Menor registrado" valor={formatCentsBRL(resumo.minCents)} />
+                  <ResumoItem rotulo="Maior registrado" valor={formatCentsBRL(resumo.maxCents)} />
+                </>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-ink-faint">
+              {ordenados.length} registros · preços anotados pelo app na hora da compra.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResumoItem({
+  rotulo,
+  valor,
+  destaque,
+}: {
+  rotulo: string;
+  valor: string;
+  destaque?: "alta" | "queda";
+}) {
+  return (
+    <div className="rounded-xl bg-bg px-3 py-2">
+      <p className="text-xs text-ink-faint">{rotulo}</p>
+      <p
+        className={`font-bold ${
+          destaque === "alta" ? "text-danger" : destaque === "queda" ? "text-primary-strong" : ""
+        }`}
+      >
+        {valor}
+      </p>
+    </div>
+  );
+}
+
+// Gráfico de linha simples em SVG (sem dependência): X = ordem dos registros,
+// Y = preço. Pontos marcados; linhas-guia no menor e maior preço.
+function GraficoPreco({ pontos }: { pontos: PricePoint[] }) {
+  const w = 320;
+  const h = 150;
+  const padX = 10;
+  const padY = 16;
+  const valores = pontos.map((p) => p.priceCents);
+  const min = Math.min(...valores);
+  const max = Math.max(...valores);
+  const faixa = max - min || 1;
+  const x = (i: number) => padX + (i * (w - 2 * padX)) / (pontos.length - 1);
+  const y = (cents: number) => padY + ((max - cents) * (h - 2 * padY)) / faixa;
+  const linha = pontos.map((p, i) => `${x(i)},${y(p.priceCents)}`).join(" ");
+
+  return (
+    <div className="mt-4">
+      <div className="flex justify-between text-xs font-semibold text-ink-faint">
+        <span>{formatCentsBRL(max)}</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img" aria-label="Gráfico de preços">
+        <line x1={padX} y1={y(max)} x2={w - padX} y2={y(max)} className="stroke-line" strokeDasharray="4 4" />
+        <line x1={padX} y1={y(min)} x2={w - padX} y2={y(min)} className="stroke-line" strokeDasharray="4 4" />
+        <polyline
+          points={linha}
+          fill="none"
+          strokeWidth={2.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          className="stroke-primary"
+        />
+        {pontos.map((p, i) => (
+          <circle key={`${p.recordedAt}-${i}`} cx={x(i)} cy={y(p.priceCents)} r={3.5} className="fill-primary" />
+        ))}
+      </svg>
+      <div className="flex justify-between text-xs font-semibold text-ink-faint">
+        <span>{formatCentsBRL(min)}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatarData(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`;
 }
 
 function Stepper({
