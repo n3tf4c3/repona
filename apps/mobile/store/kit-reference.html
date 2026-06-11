@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Repona — Kit Google Play</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  :root{
+    --bg:#F6F5EF;--bg-2:#EFEEE6;--surface:#fff;--ink:#212418;--ink-2:#5C604F;--ink-3:#8E9180;
+    --line:#E7E5D9;--line-2:#EFEDE3;
+    --primary:#2E8B57;--primary-strong:#236B43;--primary-soft:#E2F0E5;
+    --amber:#E0913B;--amber-soft:#FBEAD4;--coral:#E0604A;--coral-soft:#FAE1DB;
+    --indigo:#6471DE;--indigo-soft:#E7E9FB;
+    --shadow-sm:0 1px 2px rgba(33,36,24,.05),0 2px 8px rgba(33,36,24,.04);
+    --shadow-md:0 8px 24px rgba(33,36,24,.08),0 2px 6px rgba(33,36,24,.04);
+    --sans:'Plus Jakarta Sans',sans-serif;--display:'Bricolage Grotesque',var(--sans);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+  header.top{padding:54px 0 10px}
+  .brand{display:flex;align-items:center;gap:12px;font-family:var(--display);font-weight:800;font-size:22px}
+  .brand .mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(150deg,#3FA86B,#236B43);display:grid;place-items:center;color:#fff}
+  .brand .mark i{width:21px;height:21px}
+  h1{font-family:var(--display);font-size:44px;font-weight:700;letter-spacing:-.02em;line-height:1.05;margin:22px 0 12px}
+  .sub{font-size:18px;color:var(--ink-2);max-width:640px}
+  .pillrow{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:100px;padding:8px 16px;font-size:13.5px;font-weight:700;color:var(--ink-2);box-shadow:var(--shadow-sm)}
+  .pill i{width:15px;height:15px;color:var(--primary-strong)}
+
+  section{padding:46px 0 6px}
+  .sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .sec-h .n{font-family:var(--display);font-weight:800;font-size:14px;color:var(--primary-strong);background:var(--primary-soft);padding:5px 11px;border-radius:9px}
+  .sec-h h2{font-family:var(--display);font-size:28px;font-weight:700;letter-spacing:-.015em}
+  .sec-d{color:var(--ink-2);font-size:15.5px;margin-bottom:24px;max-width:720px}
+
+  .grid{display:grid;gap:18px}
+  .grid.assets{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--surface);border:1px solid var(--line-2);border-radius:20px;box-shadow:var(--shadow-sm);overflow:hidden}
+  .card .thumb{background:var(--bg-2);display:grid;place-items:center;padding:20px;border-bottom:1px solid var(--line-2)}
+  .card .thumb img{max-width:100%;height:auto;border-radius:12px;display:block}
+  .card .thumb.icon img{width:128px;border-radius:28px}
+  .card .thumb.dark{background:#1d2017}
+  .card .meta{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .card .meta .t b{font-family:var(--display);font-size:15.5px;display:block}
+  .card .meta .t small{font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .dl{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--primary-strong);background:var(--primary-soft);border:none;border-radius:10px;padding:9px 13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+  .dl i{width:15px;height:15px}
+  .dl:hover{background:#d4e8d9}
+
+  .shots{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+
+  /* listing texts */
+  .txt-card{background:var(--surface);border:1px solid var(--line-2);border-radius:20px;box-shadow:var(--shadow-sm);padding:24px 26px;margin-bottom:18px}
+  .txt-card .th{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .txt-card .th b{font-family:var(--display);font-size:17px}
+  .txt-card .th .count{font-size:12.5px;font-weight:700;color:var(--ink-3)}
+  .txt-card .th .count.ok{color:var(--primary-strong)}
+  .copybtn{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--ink-2);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:7px 12px;cursor:pointer}
+  .copybtn i{width:14px;height:14px}
+  .copybtn:hover{background:var(--bg-2)}
+  .copybtn.copied{color:var(--primary-strong);border-color:var(--primary-soft);background:var(--primary-soft)}
+  .txt-body{font-size:15px;color:var(--ink-2);background:var(--bg);border:1px solid var(--line-2);border-radius:13px;padding:16px 18px;white-space:pre-wrap}
+  .txt-body b{color:var(--ink)}
+  .meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .meta-grid .txt-card{margin-bottom:0}
+  .kv{font-size:15px;color:var(--ink-2)}
+  .kv b{font-family:var(--display);color:var(--ink);display:block;font-size:18px;margin-top:2px}
+
+  /* checklist */
+  .check-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .check-card{background:var(--surface);border:1px solid var(--line-2);border-radius:20px;box-shadow:var(--shadow-sm);padding:22px 24px}
+  .check-card h3{font-family:var(--display);font-size:17px;margin-bottom:14px;display:flex;align-items:center;gap:9px}
+  .check-card h3 i{width:18px;height:18px;color:var(--primary-strong)}
+  .ck{display:flex;gap:11px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line-2);cursor:pointer}
+  .ck:first-of-type{border-top:none}
+  .ck .box{width:21px;height:21px;flex:0 0 21px;border-radius:7px;border:2px solid var(--line);display:grid;place-items:center;margin-top:1px;color:transparent;transition:all .2s}
+  .ck .box i{width:13px;height:13px}
+  .ck.done .box{background:var(--primary);border-color:var(--primary);color:#fff}
+  .ck p{font-size:14.5px;color:var(--ink-2)}
+  .ck p b{color:var(--ink)}
+  .ck.done p{color:var(--ink-3);text-decoration:line-through}
+  .ck p code{font-size:12.5px;background:var(--bg-2);padding:2px 7px;border-radius:6px;font-weight:600}
+
+  .note{display:flex;gap:12px;align-items:flex-start;background:var(--amber-soft);border:1px solid #F2DCBC;border-radius:16px;padding:16px 20px;margin-top:18px;font-size:14.5px;color:#7A4E14;font-weight:500}
+  .note i{width:18px;height:18px;flex:0 0 18px;margin-top:2px}
+
+  footer{margin-top:70px;padding:30px 0 50px;border-top:1px solid var(--line);color:var(--ink-3);font-size:13.5px}
+  footer .wrap{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+  footer a{color:var(--primary-strong);font-weight:700;text-decoration:none}
+
+  @media(max-width:980px){
+    .grid.assets,.meta-grid{grid-template-columns:1fr}
+    .shots{grid-template-columns:repeat(2,1fr)}
+    .check-grid{grid-template-columns:1fr}
+    h1{font-size:34px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><span class="mark"><i data-lucide="sprout"></i></span>Repona</div>
+    <h1>Kit de publicação — Google Play</h1>
+    <p class="sub">Tudo o que a listagem da loja pede, pronto para upload: assets visuais nos tamanhos exigidos, textos da listagem, política de privacidade e o checklist do Play Console.</p>
+    <div class="pillrow">
+      <span class="pill"><i data-lucide="image"></i>7 assets prontos</span>
+      <span class="pill"><i data-lucide="type"></i>Textos da listagem</span>
+      <span class="pill"><i data-lucide="shield-check"></i>Política de privacidade</span>
+      <span class="pill"><i data-lucide="list-checks"></i>Checklist do Console</span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 1. ASSETS ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-h"><span class="n">01</span><h2>Assets visuais</h2></div>
+    <p class="sec-d">Clique em "Baixar" em cada um. Os tamanhos são exatamente os exigidos pelo Play Console.</p>
+    <div class="grid assets">
+      <div class="card">
+        <div class="thumb icon dark"><img src="assets/icon-512.png?v=3" alt="Ícone do app 512x512"></div>
+        <div class="meta">
+          <span class="t"><b>Ícone do app</b><small>512 × 512 px · PNG 32-bit</small></span>
+          <a class="dl" href="assets/icon-512.png" download="repona-icon-512.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb icon" style="background:#2E8B57"><img src="assets/icon-adaptive-foreground.png?v=3" alt="Adaptive icon foreground" style="border-radius:0"></div>
+        <div class="meta">
+          <span class="t"><b>Adaptive icon — foreground</b><small>512 × 512 px · fundo #2E8B57</small></span>
+          <a class="dl" href="assets/icon-adaptive-foreground.png" download="repona-adaptive-foreground.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb"><img src="assets/feature-1024x500.png?v=3" alt="Gráfico de destaque"></div>
+        <div class="meta">
+          <span class="t"><b>Gráfico de destaque</b><small>1024 × 500 px</small></span>
+          <a class="dl" href="assets/feature-1024x500.png" download="repona-feature-1024x500.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:18px"></div>
+    <div class="shots">
+      <div class="card">
+        <div class="thumb" style="padding:14px"><img src="assets/screenshot-1-inicio.png?v=3" alt="Screenshot 1 — Início"></div>
+        <div class="meta">
+          <span class="t"><b>1 · Início</b><small>1080 × 1920 px</small></span>
+          <a class="dl" href="assets/screenshot-1-inicio.png" download="repona-screenshot-1-inicio.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb" style="padding:14px"><img src="assets/screenshot-2-lista.png?v=3" alt="Screenshot 2 — Lista de compras"></div>
+        <div class="meta">
+          <span class="t"><b>2 · Lista de compras</b><small>1080 × 1920 px</small></span>
+          <a class="dl" href="assets/screenshot-2-lista.png" download="repona-screenshot-2-lista.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb" style="padding:14px"><img src="assets/screenshot-3-historico.png?v=3" alt="Screenshot 3 — Histórico"></div>
+        <div class="meta">
+          <span class="t"><b>3 · Histórico</b><small>1080 × 1920 px</small></span>
+          <a class="dl" href="assets/screenshot-3-historico.png" download="repona-screenshot-3-historico.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb" style="padding:14px"><img src="assets/screenshot-4-cadastro.png?v=3" alt="Screenshot 4 — Cadastro de produto"></div>
+        <div class="meta">
+          <span class="t"><b>4 · Cadastro</b><small>1080 × 1920 px</small></span>
+          <a class="dl" href="assets/screenshot-4-cadastro.png" download="repona-screenshot-4-cadastro.png"><i data-lucide="download"></i>Baixar</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. TEXTOS ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-h"><span class="n">02</span><h2>Textos da listagem</h2></div>
+    <p class="sec-d">Limites do Play Console respeitados. Use o botão "Copiar" e cole direto no Console.</p>
+
+    <div class="meta-grid" style="margin-bottom:18px">
+      <div class="txt-card"><span class="kv">Categoria recomendada<b>Estilo de vida (Lifestyle)</b></span></div>
+      <div class="txt-card"><span class="kv">Classificação esperada<b>Livre (L) — sem conteúdo sensível</b></span></div>
+      <div class="txt-card"><span class="kv">Preço / anúncios<b>Grátis · Sem anúncios · Sem compras</b></span></div>
+    </div>
+
+    <div class="txt-card">
+      <div class="th"><b>Nome do app <span style="color:var(--ink-3);font-weight:600">(máx. 30)</span></b><div style="display:flex;gap:10px;align-items:center"><span class="count ok" id="c1">24/30</span><button class="copybtn" data-copy="t1"><i data-lucide="copy"></i>Copiar</button></div></div>
+      <div class="txt-body" id="t1">Repona: Lista de Compras</div>
+    </div>
+
+    <div class="txt-card">
+      <div class="th"><b>Descrição curta <span style="color:var(--ink-3);font-weight:600">(máx. 80)</span></b><div style="display:flex;gap:10px;align-items:center"><span class="count ok" id="c2">72/80</span><button class="copybtn" data-copy="t2"><i data-lucide="copy"></i>Copiar</button></div></div>
+      <div class="txt-body" id="t2">Organize as compras da família: produtos, lista e histórico num só app.</div>
+    </div>
+
+    <div class="txt-card">
+      <div class="th"><b>Descrição completa <span style="color:var(--ink-3);font-weight:600">(máx. 4000)</span></b><div style="display:flex;gap:10px;align-items:center"><span class="count ok" id="c3">—</span><button class="copybtn" data-copy="t3"><i data-lucide="copy"></i>Copiar</button></div></div>
+      <div class="txt-body" id="t3">A casa sempre abastecida, a família sempre em sintonia.
+
+O Repona é o jeito simples e acolhedor de organizar as compras do mercado. Cadastre os produtos da sua casa uma única vez e, a partir daí, montar a lista da semana leva segundos.
+
+O QUE O REPONA FAZ
+
+• Catálogo da casa — cadastre produtos com nome, categoria, quantidade e foto opcional. O app avisa se um item parecido já existe, para evitar duplicatas.
+• Lista de compras viva — itens agrupados por categoria, do jeito que você anda pelo mercado. Toque para marcar como comprado, ajuste quantidades na hora e acompanhe o total estimado.
+• Em falta em destaque — marque o que acabou em casa e veja esses itens com destaque na próxima lista.
+• Histórico automático — toda compra finalizada vira registro, com data, itens e valor. Repetir uma compra antiga é um toque.
+• Sugestões de recompra — o app aprende seu ritmo e lembra quando o café (ou qualquer outro item) costuma acabar.
+
+POR QUE VOCÊ VAI GOSTAR
+
+• 100% em português, feito para famílias brasileiras
+• Funciona offline — seus dados ficam no seu aparelho
+• Sem cadastro, sem anúncios, sem enrolação
+• Leve, rápido e fácil de usar para todas as idades
+
+EM BREVE
+
+Scanner de código de barras, cadastro por foto, controle de estoque doméstico, compartilhamento com a família em tempo real e sugestões ainda mais inteligentes.
+
+Baixe grátis e deixe a lista de papel no passado.</div>
+    </div>
+
+    <div class="txt-card">
+      <div class="th"><b>Palavras-chave / tags sugeridas</b><button class="copybtn" data-copy="t4"><i data-lucide="copy"></i>Copiar</button></div>
+      <div class="txt-body" id="t4">lista de compras, lista de mercado, supermercado, compras da família, organização doméstica, despensa, casa, economia doméstica, lista offline, shopping list</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. POLÍTICA ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-h"><span class="n">03</span><h2>Política de privacidade</h2></div>
+    <p class="sec-d">O Play Console exige uma URL pública de política de privacidade. A página está pronta — hospede-a em qualquer endereço (GitHub Pages, seu site) e informe a URL no Console.</p>
+    <div class="card" style="max-width:560px">
+      <div class="meta" style="padding:20px 22px">
+        <span class="t"><b>Política de Privacidade — Repona</b><small>Português · pronta para hospedar · offline-first</small></span>
+        <a class="dl" href="Política de Privacidade.html" target="_blank"><i data-lucide="external-link"></i>Abrir página</a>
+      </div>
+    </div>
+    <div class="note"><i data-lucide="triangle-alert"></i><span>Antes de publicar, troque o e-mail de contato <b>privacidade@repona.app</b> pelo seu e-mail real — ele aparece na página e deve funcionar.</span></div>
+  </div>
+</section>
+
+<!-- ============ 4. CHECKLIST ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-h"><span class="n">04</span><h2>Checklist de publicação</h2></div>
+    <p class="sec-d">A ordem real do Google Play Console. Clique para marcar o que já fez — o progresso fica salvo neste navegador.</p>
+    <div class="check-grid">
+      <div class="check-card">
+        <h3><i data-lucide="user-round"></i>Conta e app</h3>
+        <div class="ck" data-k="ck1"><span class="box"><i data-lucide="check"></i></span><p>Criar conta de desenvolvedor no <b>Play Console</b> (taxa única de US$ 25) e verificar identidade</p></div>
+        <div class="ck" data-k="ck2"><span class="box"><i data-lucide="check"></i></span><p>Criar o app no Console: nome <b>Repona: Lista de Compras</b>, idioma padrão <b>Português (Brasil)</b>, tipo <b>App</b>, <b>Gratuito</b></p></div>
+        <div class="ck" data-k="ck3"><span class="box"><i data-lucide="check"></i></span><p>Definir o ID do aplicativo (ex.: <code>br.com.repona.app</code>) — não pode ser alterado depois</p></div>
+      </div>
+
+      <div class="check-card">
+        <h3><i data-lucide="package"></i>Binário (feito no Android Studio)</h3>
+        <div class="ck" data-k="ck4"><span class="box"><i data-lucide="check"></i></span><p>Gerar o <b>Android App Bundle (.aab)</b> assinado em modo release</p></div>
+        <div class="ck" data-k="ck5"><span class="box"><i data-lucide="check"></i></span><p>Ativar o <b>Play App Signing</b> (recomendado) e guardar a keystore com segurança</p></div>
+        <div class="ck" data-k="ck6"><span class="box"><i data-lucide="check"></i></span><p>Testar o .aab em um <b>teste interno</b> antes da produção</p></div>
+      </div>
+
+      <div class="check-card">
+        <h3><i data-lucide="image"></i>Listagem da loja</h3>
+        <div class="ck" data-k="ck7"><span class="box"><i data-lucide="check"></i></span><p>Subir <b>ícone 512×512</b> e <b>gráfico de destaque 1024×500</b> (seção 01)</p></div>
+        <div class="ck" data-k="ck8"><span class="box"><i data-lucide="check"></i></span><p>Subir as <b>4 screenshots de telefone</b> (mín. 2 exigidas; estas têm 1080×1920)</p></div>
+        <div class="ck" data-k="ck9"><span class="box"><i data-lucide="check"></i></span><p>Colar <b>nome, descrição curta e completa</b> (seção 02)</p></div>
+        <div class="ck" data-k="ck10"><span class="box"><i data-lucide="check"></i></span><p>Selecionar categoria <b>Estilo de vida</b> e adicionar e-mail de contato</p></div>
+      </div>
+
+      <div class="check-card">
+        <h3><i data-lucide="shield-check"></i>Conteúdo do app</h3>
+        <div class="ck" data-k="ck11"><span class="box"><i data-lucide="check"></i></span><p>Informar a <b>URL da política de privacidade</b> (seção 03)</p></div>
+        <div class="ck" data-k="ck12"><span class="box"><i data-lucide="check"></i></span><p>Preencher <b>Segurança dos dados</b>: nenhum dado coletado/compartilhado; dados ficam no dispositivo</p></div>
+        <div class="ck" data-k="ck13"><span class="box"><i data-lucide="check"></i></span><p>Preencher o questionário de <b>classificação etária</b> (utilitário → Livre)</p></div>
+        <div class="ck" data-k="ck14"><span class="box"><i data-lucide="check"></i></span><p>Declarar <b>público-alvo</b> (18+ ou geral; sem direcionamento a crianças) e <b>sem anúncios</b></p></div>
+      </div>
+
+      <div class="check-card" style="grid-column:1/-1">
+        <h3><i data-lucide="rocket"></i>Lançamento</h3>
+        <div class="ck" data-k="ck15"><span class="box"><i data-lucide="check"></i></span><p>Criar a release de <b>Produção</b>, anexar o .aab e escrever as notas da versão ("Primeira versão do Repona 🌱" — sem emoji se preferir)</p></div>
+        <div class="ck" data-k="ck16"><span class="box"><i data-lucide="check"></i></span><p>Revisar avisos do Console e <b>enviar para análise</b> — a primeira revisão costuma levar de 1 a 7 dias</p></div>
+      </div>
+    </div>
+
+    <div class="note"><i data-lucide="info"></i><span>O kit cobre os <b>assets e textos</b>. O arquivo <b>.aab</b> (o app em si, em Kotlin/Jetpack Compose) precisa ser compilado e assinado no Android Studio — isso fica fora do alcance desta página.</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Repona · Kit de publicação Google Play</span>
+    <a href="../Repona - Landing Page.html">Ver a landing page →</a>
+  </div>
+</footer>
+
+<script>
+  lucide.createIcons();
+
+  // char counters
+  const lim = {c1:[document.getElementById('t1'),30], c2:[document.getElementById('t2'),80], c3:[document.getElementById('t3'),4000]};
+  for(const [cid,[el,max]] of Object.entries(lim)){
+    const n = el.textContent.trim().length;
+    const c = document.getElementById(cid);
+    c.textContent = n + '/' + max;
+    c.classList.toggle('ok', n <= max);
+  }
+
+  // copy buttons
+  document.querySelectorAll('.copybtn[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const el = document.getElementById(btn.dataset.copy);
+      try{ await navigator.clipboard.writeText(el.textContent.trim()); }catch(e){
+        const r=document.createRange(); r.selectNodeContents(el); const s=getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); s.removeAllRanges();
+      }
+      const old = btn.innerHTML;
+      btn.classList.add('copied');
+      btn.innerHTML = '<i data-lucide="check"></i>Copiado!';
+      lucide.createIcons();
+      setTimeout(()=>{ btn.classList.remove('copied'); btn.innerHTML = old; lucide.createIcons(); }, 1600);
+    });
+  });
+
+  // checklist persistence
+  const KEY='repona-play-checklist';
+  let state={};
+  try{ state = JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){ state={}; }
+  document.querySelectorAll('.ck').forEach(ck=>{
+    if(state[ck.dataset.k]) ck.classList.add('done');
+    ck.addEventListener('click', ()=>{
+      ck.classList.toggle('done');
+      state[ck.dataset.k] = ck.classList.contains('done');
+      localStorage.setItem(KEY, JSON.stringify(state));
+    });
+  });
+</script>
+</body>
+</html>
