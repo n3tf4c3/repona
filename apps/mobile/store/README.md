@@ -2,10 +2,17 @@
 
 Tudo necessário para publicar o Repona no Google Play Console.
 
+## 👉 Comece por aqui
+
+Abra **`index.html`** no navegador (duplo clique). É um painel com tudo do kit:
+baixar cada asset, copiar os textos da listagem (com contador de caracteres) e
+um checklist interativo da publicação que salva o progresso no navegador.
+
 ## Estrutura
 
 ```
 store/
+├── index.html                       # Painel — abra primeiro: previews, download e checklist
 ├── assets/                          # Imagens para upload no Play Console
 │   ├── icon-512.png                 # Ícone do app (512×512 px)
 │   ├── icon-adaptive-foreground.png # Adaptive icon foreground (512×512 px, fundo #2E8B57)
