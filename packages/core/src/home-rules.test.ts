@@ -8,6 +8,7 @@ function produto(over: Partial<ProductDTO>): ProductDTO {
     id: 1,
     name: "Produto",
     category: "Mercearia",
+    brand: null,
     barcode: null,
     photoUri: null,
     purchaseCount: 0,
