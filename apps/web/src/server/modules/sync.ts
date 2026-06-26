@@ -41,6 +41,13 @@ type Escrita = Parameters<typeof db.batch>[0][number];
 // lista, podas e purchase_count — vão num único db.batch. Se o batch falhar,
 // só os produtos novos persistem, e o retry os reconcilia por syncId (o merge é
 // idempotente). O lock por casa na rota já impede merges concorrentes.
+//
+// (auditoria #26, ABERTO/aceito) O estado parcial — produto novo sem o resto do
+// merge — é auto-curável: o próximo sync casa por syncId e completa, e nada fica
+// quebrado (o snapshot/listagem fazem coalesce do estoque ausente). Eliminar de
+// vez o parcial exigiria transação interativa (indisponível no driver neon-http)
+// ou reescrever o merge em CTEs resolvendo ids gerados — risco alto para um
+// caminho já idempotente. Mantido aceito; revisitar se trocarmos de driver.
 export async function mergeCasaSnapshot(
   casaId: number,
   incoming: SyncSnapshot

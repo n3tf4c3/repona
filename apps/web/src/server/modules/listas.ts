@@ -286,7 +286,29 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   }
 
   // db.batch exige uma tupla não-vazia; já garantimos comprados.length > 0 acima.
-  await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
+  // O claim (tombstone) já foi gravado num round-trip separado; se os efeitos
+  // falharem aqui, os itens sumiriam da lista sem histórico/estoque/contador —
+  // perda de dados. Sem transação interativa (neon-http), desfazemos o claim
+  // (mesmo undo do caso de quantidade inválida) e propagamos o erro. (auditoria #22)
+  try {
+    await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
+  } catch (error) {
+    await db
+      .update(shoppingListItems)
+      .set({ deleted: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(shoppingListItems.shoppingListId, lista.id),
+          eq(shoppingListItems.deleted, true),
+          eq(shoppingListItems.updatedAt, now),
+          inArray(
+            shoppingListItems.productId,
+            comprados.map((item) => item.productId)
+          )
+        )
+      );
+    throw error;
+  }
 
   return comprados.length;
 }
