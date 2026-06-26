@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { criarContaNuvem } from "@/server/modules/casa";
+import { criarContaNuvem, excluirCasa, obterCasaPorCodigo } from "@/server/modules/casa";
 import { rateLimited } from "@/server/rateLimit";
 
 const bodySchema = z.object({
@@ -31,4 +31,22 @@ export async function POST(req: NextRequest) {
 
   const conta = await criarContaNuvem(parsed.data.nome);
   return NextResponse.json(conta, { status: 201 });
+}
+
+// Exclusão de conta self-service pelo app (exigência da Play). Autenticada pelo
+// token da casa no header, como o sync. Apaga a casa e todos os dados.
+export async function DELETE(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
+  if (await rateLimited(`casa-del:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
+    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+  }
+
+  const code = req.headers.get("x-casa-code")?.trim().toUpperCase() ?? "";
+  const casaId = await obterCasaPorCodigo(code);
+  if (!casaId) {
+    return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });
+  }
+
+  await excluirCasa(casaId);
+  return NextResponse.json({ ok: true });
 }

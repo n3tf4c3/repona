@@ -2,7 +2,7 @@ import "server-only";
 import { randomInt } from "crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { casas } from "@/server/db/schema";
+import { casas, purchaseHistory } from "@/server/db/schema";
 
 export type CasaDTO = {
   id: number;
@@ -116,4 +116,14 @@ export async function renomearCasa(casaId: number, name: string): Promise<void> 
   const nome = name.trim();
   if (!nome) throw new Error("NOME_INVALIDO");
   await db.update(casas).set({ name: nome }).where(eq(casas.id, casaId));
+}
+
+// Exclui a conta (casa) e todos os dados associados. O driver neon-http não
+// roda transação, então são dois passos: purchase_history primeiro — sua FK
+// para products não tem onDelete cascade (schema.ts), logo bloquearia a
+// remoção dos produtos — e depois a casa, que cascateia produtos, listas,
+// estoque e itens. (exclusão de conta exigida pela Play)
+export async function excluirCasa(casaId: number): Promise<void> {
+  await db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId));
+  await db.delete(casas).where(eq(casas.id, casaId));
 }

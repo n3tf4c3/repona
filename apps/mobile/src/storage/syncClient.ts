@@ -11,6 +11,10 @@ export type SyncResult =
   | { ok: true; lastSyncAt: string }
   | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'INVALID_NAME' | 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
 
+export type DeleteResult =
+  | { ok: true }
+  | { ok: false; error: 'NOT_PAIRED' | 'NETWORK' | 'CASA_NOT_FOUND' | 'SERVER' };
+
 export async function getCasaCode(): Promise<string | null> {
   return getSetting(CASA_CODE_KEY);
 }
@@ -67,6 +71,30 @@ export async function pairAndSync(code: string): Promise<SyncResult> {
     await setSetting(CASA_CODE_KEY, normalized);
   }
   return result;
+}
+
+// Exclui a conta na nuvem (todos os dados, para todos os aparelhos com este
+// token) e desconecta este aparelho. Os dados locais permanecem. (exigência da
+// Play: exclusão de conta self-service)
+export async function excluirConta(): Promise<DeleteResult> {
+  const code = await getCasaCode();
+  if (!code) return { ok: false, error: 'NOT_PAIRED' };
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/casa`, {
+      method: 'DELETE',
+      headers: { 'x-casa-code': code },
+    });
+  } catch {
+    return { ok: false, error: 'NETWORK' };
+  }
+
+  if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND' };
+  if (!response.ok) return { ok: false, error: 'SERVER' };
+
+  await unpairCasa();
+  return { ok: true };
 }
 
 async function enviarSnapshot(code: string): Promise<SyncResult> {

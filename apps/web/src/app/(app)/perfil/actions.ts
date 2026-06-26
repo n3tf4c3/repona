@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireCasa } from "@/server/auth/session";
-import { regenerarCodigo, renomearCasa } from "@/server/modules/casa";
+import { excluirCasa, regenerarCodigo, renomearCasa } from "@/server/modules/casa";
 
 type Resultado = { ok: true } | { ok: false; error: string };
 
@@ -23,6 +23,16 @@ export async function regenerarCodigoAction(): Promise<Resultado> {
   try {
     await regenerarCodigo(casaId);
     revalidatePath("/perfil");
+    return { ok: true };
+  } catch (error) {
+    return tratar(error);
+  }
+}
+
+export async function excluirContaAction(): Promise<Resultado> {
+  const { casaId } = await requireCasa();
+  try {
+    await excluirCasa(casaId);
     return { ok: true };
   } catch (error) {
     return tratar(error);

@@ -7,6 +7,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View
 import { Header, IconBubble, ScreenScroll } from '../components/ui';
 import {
   criarConta,
+  excluirConta,
   getCasaCode,
   getLastSyncAt,
   pairAndSync,
@@ -114,6 +115,35 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
     handleResult(result);
   }
 
+  function handleDeleteAccount() {
+    Alert.alert(
+      'Excluir conta da nuvem',
+      'Isso apaga a conta e todos os dados na nuvem (produtos, estoque e histórico), para todos os aparelhos com este token. Não há como desfazer. Os dados deste aparelho permanecem.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setBusy(true);
+              setMessage(null);
+              const result = await excluirConta();
+              setBusy(false);
+              if (result.ok) {
+                setPairedCode(null);
+                setLastSyncAt(null);
+                setMessage({ kind: 'ok', text: 'Conta excluída da nuvem.' });
+              } else {
+                setMessage({ kind: 'error', text: SYNC_ERROR_MESSAGES[result.error] });
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }
+
   function handleUnpair() {
     Alert.alert('Desconectar da casa', 'Os dados locais continuam no aparelho. Deseja desconectar?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -164,6 +194,9 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
           </Pressable>
           <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handleUnpair}>
             <Text style={styles.syncUnpairText}>Desconectar</Text>
+          </Pressable>
+          <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handleDeleteAccount}>
+            <Text style={styles.syncUnpairText}>Excluir conta da nuvem</Text>
           </Pressable>
         </>
       ) : (

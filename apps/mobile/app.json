@@ -2,7 +2,7 @@
   "expo": {
     "name": "Repona",
     "slug": "repona",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "repona",
@@ -15,7 +15,9 @@
     "android": {
       "package": "com.repona.app",
       "permissions": [
-        "android.permission.CAMERA",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ]
     },

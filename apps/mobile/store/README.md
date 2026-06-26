@@ -28,9 +28,6 @@ store/
 │   ├── full-description.txt         # Descrição completa (< 4000 chars)
 │   └── keywords.txt                 # Palavras-chave / tags sugeridas
 │
-├── privacy-policy/                  # Política de privacidade
-│   └── index.html                   # Página pronta para hospedar (GitHub Pages, etc.)
-│
 └── README.md                        # Este arquivo
 ```
 
@@ -41,10 +38,10 @@ store/
 | Categoria               | Estilo de vida (Lifestyle)                 |
 | Classificação           | Livre (L) — sem conteúdo sensível          |
 | Preço                   | Grátis · Sem anúncios · Sem compras in-app |
-| ID do app (sugerido)    | `br.com.repona.app`                        |
+| ID do app               | `com.repona.app`                           |
 
 ## ⚠️ Antes de publicar
 
-1. **Política de privacidade**: troque `privacidade@repona.app` pelo seu e-mail real em `privacy-policy/index.html`
-2. **Hospedagem da política**: suba `privacy-policy/index.html` em uma URL pública (GitHub Pages, Vercel, etc.) e informe a URL no Console
+1. **Política de privacidade**: hospedada pelo app web em `https://repona.vercel.app/privacidade` — informe essa URL no Console
+2. **Exclusão de conta**: instruções em `https://repona.vercel.app/excluir-conta` — informe no formulário "Data deletion" do Console
 3. **App Bundle (.aab)**: o binário assinado precisa ser gerado via EAS Build ou Android Studio — não está incluído neste kit
