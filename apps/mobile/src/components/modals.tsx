@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { CATEGORIAS, estimateShoppingTotal, FIELD_LIMITS, type PriceSummary } from '@repona/core';
+import { buildQuantityString, CATEGORIAS, estimateShoppingTotal, FIELD_LIMITS, type PriceSummary } from '@repona/core';
 
 import { formatCentsBRL, parsePriceToCents } from '../priceFormat';
 import type { PurchaseHistoryItem } from '../purchaseHistoryPresentation';
@@ -573,12 +573,12 @@ export function ScanToListModal({
     if (!foundProduct) {
       return;
     }
-    const num = Number(value.replace(',', '.'));
-    if (!Number.isFinite(num) || num <= 0) {
+    const quantidade = buildQuantityString(value, unit);
+    if (!quantidade) {
       setQuantityError('Informe uma quantidade válida (ex.: 2).');
       return;
     }
-    onAdd(foundProduct.id, `${`${num}`.replace('.', ',')} ${unit}`);
+    onAdd(foundProduct.id, quantidade);
   }
 
   return (
@@ -692,13 +692,12 @@ export function QuantityEntryModal({
   }, [item]);
 
   function handleSave() {
-    const num = Number(value.replace(',', '.'));
-    if (!Number.isFinite(num) || num <= 0) {
+    const quantidade = buildQuantityString(value, unit);
+    if (!quantidade) {
       setError('Informe uma quantidade válida (ex.: 0,8).');
       return;
     }
-    const formatted = `${num}`.replace('.', ',');
-    if (item) onSave(item.id, `${formatted} ${unit}`);
+    if (item) onSave(item.id, quantidade);
   }
 
   return (

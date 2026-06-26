@@ -337,16 +337,17 @@ async function aplicarItensLista(
 }
 
 async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
-  const existentes = await database.getAllAsync<{ name: string; quantity: string; purchased_at: string }>(`
-    SELECT p.name, ph.quantity, ph.purchased_at
-    FROM purchase_history ph INNER JOIN products p ON p.id = ph.product_id
+  // Dedupe por productId (estável), não pelo nome: após um renomeio o mesmo
+  // evento podia chegar com nome antigo e ser inserido de novo. (auditoria #28)
+  const existentes = await database.getAllAsync<{ product_id: number; quantity: string; purchased_at: string }>(`
+    SELECT product_id, quantity, purchased_at FROM purchase_history
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(e.name, e.purchased_at, e.quantity)));
+  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.purchased_at, e.quantity)));
 
   for (const compra of compras) {
     const productId = idPorNome.get(compra.productName.trim().toLocaleLowerCase('pt-BR'));
     if (!productId) continue;
-    const chave = eventKey(compra.productName, compra.purchasedAt, compra.quantity);
+    const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await database.runAsync(
@@ -361,17 +362,17 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
 }
 
 async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, precos: SyncSnapshot['prices']) {
-  const existentes = await database.getAllAsync<{ name: string; price_cents: number; recorded_at: string }>(`
-    SELECT p.name, ph.price_cents, ph.recorded_at
-    FROM price_history ph INNER JOIN products p ON p.id = ph.product_id
+  // Dedupe por productId (estável), não pelo nome. (auditoria #28)
+  const existentes = await database.getAllAsync<{ product_id: number; price_cents: number; recorded_at: string }>(`
+    SELECT product_id, price_cents, recorded_at FROM price_history
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(e.name, e.recorded_at, String(e.price_cents))));
+  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.recorded_at, String(e.price_cents))));
   const tocados = new Set<number>();
 
   for (const preco of precos) {
     const productId = idPorNome.get(preco.productName.trim().toLocaleLowerCase('pt-BR'));
     if (!productId) continue;
-    const chave = eventKey(preco.productName, preco.recordedAt, String(preco.priceCents));
+    const chave = eventKey(String(productId), preco.recordedAt, String(preco.priceCents));
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await database.runAsync(
@@ -401,17 +402,18 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
 }
 
 async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, consumos: SyncSnapshot['consumptions']) {
-  const existentes = await database.getAllAsync<{ name: string; quantity: string; occurred_at: string }>(`
-    SELECT p.name, ie.quantity, ie.occurred_at
-    FROM inventory_events ie INNER JOIN products p ON p.id = ie.product_id
-    WHERE ie.event_type = 'consumed'
+  // Dedupe por productId (estável), não pelo nome. (auditoria #28)
+  const existentes = await database.getAllAsync<{ product_id: number; quantity: string; occurred_at: string }>(`
+    SELECT product_id, quantity, occurred_at
+    FROM inventory_events
+    WHERE event_type = 'consumed'
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(e.name, e.occurred_at, e.quantity)));
+  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.occurred_at, e.quantity)));
 
   for (const consumo of consumos) {
     const productId = idPorNome.get(consumo.productName.trim().toLocaleLowerCase('pt-BR'));
     if (!productId) continue;
-    const chave = eventKey(consumo.productName, consumo.occurredAt, consumo.quantity);
+    const chave = eventKey(String(productId), consumo.occurredAt, consumo.quantity);
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     await database.runAsync(

@@ -41,8 +41,12 @@ export const authOptions: NextAuthOptions = {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
+        // Prefere x-real-ip (IP real da plataforma); o primeiro valor de
+        // x-forwarded-for é forjável pelo cliente. (auditoria #32)
+        const real = req?.headers?.["x-real-ip"];
         const xff = req?.headers?.["x-forwarded-for"];
-        const ip = (typeof xff === "string" ? xff.split(",")[0] : "").trim() || "desconhecido";
+        const fallback = typeof xff === "string" ? xff.split(",").map((p) => p.trim()).filter(Boolean).pop() : "";
+        const ip = (typeof real === "string" && real.trim() ? real.trim() : fallback) || "desconhecido";
         if (await rateLimited(`login:ip:${ip}`, LOGIN_MAX_POR_IP, LOGIN_JANELA_SEG)) return null;
         if (await rateLimited(`login:token:${parsed.data.token}`, LOGIN_MAX_POR_TOKEN, LOGIN_JANELA_SEG))
           return null;

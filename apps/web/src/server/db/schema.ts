@@ -159,6 +159,13 @@ export const purchaseHistory = pgTable(
       foreignColumns: [products.id, products.casaId],
       name: "ph_product_casa_fk",
     }),
+    // A FK simples de source_list_id é ON DELETE SET NULL (preserva o histórico
+    // ao remover a lista, auditoria #17); esta composta fica NO ACTION. A
+    // diferença só "conflitaria" num DELETE físico de shopping_lists — que o app
+    // nunca faz (listas são arquivadas, status 'archived', nunca apagadas), então
+    // o conflito não dispara. O valor durável da origem é sourceListName.
+    // Normalização (dropar esta composta redundante) fica para uma migration
+    // dedicada, fora do db:push de rotina. (auditoria #31, DOCUMENTADO)
     foreignKey({
       columns: [table.sourceListId, table.casaId],
       foreignColumns: [shoppingLists.id, shoppingLists.casaId],

@@ -5,6 +5,8 @@ import {
   getNextInventoryQuantity,
   getConsumedQuantity,
   normalizeQuantity,
+  buildQuantityString,
+  MAX_QUANTITY_VALUE,
 } from "./inventory-quantity";
 
 test("normalizeQuantity: caixa e espaços viram a mesma chave", () => {
@@ -41,6 +43,27 @@ test("getNextInventoryQuantity: gramas usam passo de 100", () => {
 test("getNextInventoryQuantity: string inválida", () => {
   assert.equal(getNextInventoryQuantity("", 1), "1 un");
   assert.equal(getNextInventoryQuantity("", -1), "0 un");
+});
+
+test("buildQuantityString: monta forma canônica com vírgula", () => {
+  assert.equal(buildQuantityString("2", "un"), "2 un");
+  assert.equal(buildQuantityString("0,8", "kg"), "0,8 kg");
+  assert.equal(buildQuantityString("0.8", "kg"), "0,8 kg");
+  // unidade vazia cai para "un"
+  assert.equal(buildQuantityString("3", ""), "3 un");
+});
+
+test("buildQuantityString: rejeita inválidos e notação científica (auditoria #30)", () => {
+  assert.equal(buildQuantityString("0", "un"), null);
+  assert.equal(buildQuantityString("-1", "un"), null);
+  assert.equal(buildQuantityString("abc", "un"), null);
+  // valor que viraria 1e+21 no String(num) — acima do teto, rejeitado
+  assert.equal(buildQuantityString("1e21", "un"), null);
+  assert.equal(buildQuantityString(String(MAX_QUANTITY_VALUE + 1), "un"), null);
+  // o teto em si é aceito e não usa notação científica
+  const noLimite = buildQuantityString(String(MAX_QUANTITY_VALUE), "un");
+  assert.equal(noLimite, `${MAX_QUANTITY_VALUE} un`);
+  assert.ok(!noLimite!.includes("e"));
 });
 
 test("getConsumedQuantity", () => {

@@ -11,6 +11,24 @@ export function normalizeQuantity(quantity: string): string {
   return quantity.trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
 }
 
+// Maior valor numérico aceito numa quantidade digitada. Limite doméstico que
+// também evita que o número vire notação científica ("1e+21") no String(num) —
+// formato que o validador de quantidade do web rejeita. (auditoria #30)
+export const MAX_QUANTITY_VALUE = 1_000_000;
+
+// Monta a string canônica de quantidade ("0,8 kg") a partir do valor digitado e
+// da unidade, validando para casar com o que o web aceita (decimal com vírgula,
+// sem notação científica). Devolve null se inválida. Fonte única dos modais do
+// mobile, no lugar de montar "${num} unidade" à mão. (auditoria #30)
+export function buildQuantityString(value: string, unit: string): string | null {
+  const num = Number(value.replace(",", "."));
+  if (!Number.isFinite(num) || num <= 0 || num > MAX_QUANTITY_VALUE) return null;
+  const unidade = unit.trim() || "un";
+  // num <= 1e6 nunca usa notação científica em String(num).
+  const formatado = String(num).replace(".", ",");
+  return `${formatado} ${unidade}`;
+}
+
 export function isEmptyQuantity(quantity: string): boolean {
   const match = quantity.match(/^(\d+(?:[.,]\d+)?)/);
 

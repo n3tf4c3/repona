@@ -56,6 +56,11 @@ export const FIELD_LIMITS = {
   alertThreshold: 40,
 } as const;
 
+// Teto de preço (em centavos) aceito no sync — o mesmo validado no endpoint e na
+// gravação local do mobile, para um preço fora do limite não travar o snapshot
+// inteiro da casa. (auditoria #29)
+export const MAX_PRICE_CENTS = 100_000_000;
+
 // Valida os tamanhos antes de gravar, evitando criar um produto que depois
 // trava o sync. Lança "PRODUCT_FIELD_TOO_LONG" — um código só, mapeado para uma
 // mensagem amigável nas duas UIs.

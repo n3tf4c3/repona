@@ -10,6 +10,24 @@ const kvConfigurado = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST
 
 const memoria = new Map<string, { count: number; resetAt: number }>();
 
+// IP confiável da requisição para a chave de rate limit (auditoria #32). Na
+// Vercel, `x-real-ip` é o IP real do cliente definido pela plataforma. Já o
+// primeiro valor de `x-forwarded-for` é enviado pelo cliente e pode ser forjado
+// para variar a chave e furar o limite — então preferimos `x-real-ip` e, no
+// fallback, usamos o último valor do XFF (o mais próximo do servidor) em vez do
+// primeiro.
+export function ipDaRequest(headers: Headers): string {
+  const real = headers.get("x-real-ip")?.trim();
+  if (real) return real;
+  const partes =
+    headers
+      .get("x-forwarded-for")
+      ?.split(",")
+      .map((p) => p.trim())
+      .filter(Boolean) ?? [];
+  return partes[partes.length - 1] || "desconhecido";
+}
+
 export async function rateLimited(
   chave: string,
   max: number,

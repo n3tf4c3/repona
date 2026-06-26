@@ -50,30 +50,40 @@ export async function marcarEmFalta(casaId: number, produtoId: number): Promise<
 }
 
 export async function consumir(casaId: number, produtoId: number): Promise<void> {
-  const atual = await obterEstoqueAtual(casaId, produtoId);
-  if (isEmptyQuantity(atual)) throw new Error("INVENTORY_ALREADY_MISSING");
+  // Decremento com compare-and-set para evitar lost update: duas chamadas
+  // concorrentes liam a mesma quantidade e gravavam o mesmo valor absoluto,
+  // perdendo um decremento (mas registrando dois eventos). O UPDATE só vence se
+  // a quantidade ainda for a lida; quem perde a corrida tenta de novo com o
+  // valor novo. Mesmo padrão de claim+efeitos de finalizarCompra. (auditoria #27)
+  for (let tentativa = 0; tentativa < 5; tentativa++) {
+    const atual = await obterEstoqueAtual(casaId, produtoId);
+    if (isEmptyQuantity(atual)) throw new Error("INVENTORY_ALREADY_MISSING");
 
-  const consumida = getConsumedQuantity(atual);
-  const proxima = getNextInventoryQuantity(atual, -1);
-  const status = isEmptyQuantity(proxima) ? "missing" : "in_stock";
-  const productStatus = status === "missing" ? "missing" : "active";
-  const now = new Date();
+    const consumida = getConsumedQuantity(atual);
+    const proxima = getNextInventoryQuantity(atual, -1);
+    const status = isEmptyQuantity(proxima) ? "missing" : "in_stock";
+    const productStatus = status === "missing" ? "missing" : "active";
+    const now = new Date();
 
-  // Atômico: registra o evento de consumo + upsert do estoque + status do produto.
-  await db.batch([
-    db
-      .insert(inventoryEvents)
-      .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
-    db
-      .insert(inventoryItems)
-      .values({ productId: produtoId, quantity: proxima, status, updatedAt: now })
-      .onConflictDoUpdate({
-        target: inventoryItems.productId,
-        set: { quantity: proxima, status, updatedAt: now },
-      }),
-    db
-      .update(products)
-      .set({ status: productStatus, updatedAt: now })
-      .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
-  ]);
+    // Claim do estoque: decrementa só se a quantidade não mudou desde a leitura.
+    const claim = await db
+      .update(inventoryItems)
+      .set({ quantity: proxima, status, updatedAt: now })
+      .where(and(eq(inventoryItems.productId, produtoId), eq(inventoryItems.quantity, atual)))
+      .returning({ productId: inventoryItems.productId });
+    if (claim.length === 0) continue; // outra consumir venceu; recomputa
+
+    // Só após vencer o claim: registra o evento e o status do produto.
+    await db.batch([
+      db
+        .insert(inventoryEvents)
+        .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
+      db
+        .update(products)
+        .set({ status: productStatus, updatedAt: now })
+        .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
+    ]);
+    return;
+  }
+  throw new Error("INVENTORY_CONFLICT");
 }

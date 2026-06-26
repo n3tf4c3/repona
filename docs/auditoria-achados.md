@@ -29,13 +29,13 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 23 | Migrations/metadata divergem do schema atual: coluna products.brand ausente | Alta | DOCUMENTADO | Fluxo canonico e db:push (schema.ts tem brand); 0000_* marcado obsoleto. 2026-06-26. |
 | 24 | Web descarta brand em create/update de produto | Alta | RESOLVIDO | brand adicionado ao productInputSchema (produtos/actions.ts). Resolvido 2026-06-26. |
 | 25 | Typecheck do monorepo falha por resolucao de @repona/core no mobile | Alta | RESOLVIDO | paths no tsconfig do mobile; typecheck dos 3 workspaces verde. Resolvido 2026-06-26. |
-| 26 | Merge de sync persiste produtos novos antes do batch principal | Media | ABERTO | Auditoria 2026-06-26. |
-| 27 | Consumo de estoque sofre lost update em concorrencia | Media | ABERTO | Auditoria 2026-06-26. |
-| 28 | Mobile deduplica eventos por nome do produto e pode duplicar apos renomeio | Media | ABERTO | Auditoria 2026-06-26. |
-| 29 | Mobile aceita preco acima do limite do endpoint de sync | Media | ABERTO | Auditoria 2026-06-26. |
-| 30 | Mobile pode gravar quantidade em notacao cientifica rejeitada pelo web | Media | ABERTO | Auditoria 2026-06-26. |
-| 31 | FKs de purchase_history.source_list_id tem politica de delete conflitante | Media | ABERTO | Auditoria 2026-06-26. |
-| 32 | Rate limit confia diretamente em x-forwarded-for | Media | ABERTO | Auditoria 2026-06-26. |
+| 26 | Merge de sync persiste produtos novos antes do batch principal | Media | ABERTO | Auditoria 2026-06-26. Onda dedicada (transacao/neon-http). |
+| 27 | Consumo de estoque sofre lost update em concorrencia | Media | RESOLVIDO | compare-and-set com retry no consumir (estoque.ts). Resolvido 2026-06-26. |
+| 28 | Mobile deduplica eventos por nome do produto e pode duplicar apos renomeio | Media | RESOLVIDO | Dedupe por productId em sync.ts (compras/precos/consumos). Resolvido 2026-06-26. |
+| 29 | Mobile aceita preco acima do limite do endpoint de sync | Media | RESOLVIDO | MAX_PRICE_CENTS no core, validado em web/mobile. Resolvido 2026-06-26. |
+| 30 | Mobile pode gravar quantidade em notacao cientifica rejeitada pelo web | Media | RESOLVIDO | buildQuantityString no core usado nos modais; +2 testes. Resolvido 2026-06-26. |
+| 31 | FKs de purchase_history.source_list_id tem politica de delete conflitante | Media | DOCUMENTADO | Listas sao arquivadas, nunca deletadas; conflito nao dispara. Comentario no schema.ts. 2026-06-26. |
+| 32 | Rate limit confia diretamente em x-forwarded-for | Media | RESOLVIDO | Helper ipDaRequest prioriza x-real-ip (sync/casa/login). Resolvido 2026-06-26. |
 | 33 | Validacao inicial de finalizacao considera tombstones antigos | Baixa | RESOLVIDO | Filtro deleted=false na validacao inicial (listas.ts). Resolvido 2026-06-26. |
 | 34 | Headers de seguranca HTTP nao estao configurados explicitamente | Baixa | RESOLVIDO | HSTS/X-Frame/nosniff/Referrer/Permissions/CSP frame-ancestors (next.config.ts). Resolvido 2026-06-26. |
 | 35 | npm audit reporta vulnerabilidades moderadas em dependencias | Media | ABERTO | Auditoria 2026-06-26. |

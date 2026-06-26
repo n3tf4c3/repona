@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { criarContaNuvem, excluirCasa, obterCasaPorCodigo } from "@/server/modules/casa";
-import { rateLimited } from "@/server/rateLimit";
+import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 
 const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
@@ -12,7 +12,7 @@ const JANELA_SEG = 60 * 60;
 const MAX_POR_JANELA = 20;
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
+  const ip = ipDaRequest(req.headers);
   if (await rateLimited(`casa:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 // Exclusão de conta self-service pelo app (exigência da Play). Autenticada pelo
 // token da casa no header, como o sync. Apaga a casa e todos os dados.
 export async function DELETE(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
+  const ip = ipDaRequest(req.headers);
   if (await rateLimited(`casa-del:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }

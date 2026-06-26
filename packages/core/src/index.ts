@@ -9,13 +9,15 @@ export type {
   ShoppingListItemDTO,
   PurchaseHistoryDTO,
 } from "./contracts";
-export { FIELD_LIMITS, CATEGORIAS, validateProductFields } from "./contracts";
+export { FIELD_LIMITS, MAX_PRICE_CENTS, CATEGORIAS, validateProductFields } from "./contracts";
 export type { Categoria } from "./contracts";
 export {
   isEmptyQuantity,
   getNextInventoryQuantity,
   getConsumedQuantity,
   normalizeQuantity,
+  buildQuantityString,
+  MAX_QUANTITY_VALUE,
 } from "./inventory-quantity";
 export type {
   ProductLike,

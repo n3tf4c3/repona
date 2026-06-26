@@ -1,5 +1,6 @@
 // Preços trafegam em centavos (inteiro). Aqui ficam só formatação/parse para a
 // UI do app.
+import { MAX_PRICE_CENTS } from '@repona/core';
 
 export function formatCentsBRL(cents: number): string {
   const valor = (cents / 100).toFixed(2).replace('.', ',');
@@ -13,5 +14,8 @@ export function parsePriceToCents(text: string): number | null {
   if (!limpo) return null;
   const valor = Number(limpo);
   if (!Number.isFinite(valor) || valor <= 0) return null;
-  return Math.round(valor * 100);
+  const cents = Math.round(valor * 100);
+  // Acima do teto do sync o preço travaria o snapshot inteiro da casa. (auditoria #29)
+  if (cents > MAX_PRICE_CENTS) return null;
+  return cents;
 }

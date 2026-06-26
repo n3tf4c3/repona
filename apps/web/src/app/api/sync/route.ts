@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { FIELD_LIMITS } from "@repona/core";
+import { FIELD_LIMITS, MAX_PRICE_CENTS } from "@repona/core";
 import { obterCasaPorCodigo } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
-import { rateLimited, tryLock, unlock } from "@/server/rateLimit";
+import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
 
 // Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
 // criação de produto — assim a criação nunca gera um valor que o sync rejeita.
@@ -52,7 +52,7 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        priceCents: z.number().int().min(1).max(100_000_000),
+        priceCents: z.number().int().min(1).max(MAX_PRICE_CENTS),
         recordedAt: z.string().datetime({ offset: true }),
       })
     )
@@ -78,8 +78,7 @@ const JANELA_SEG = 60;
 const MAX_POR_JANELA = 30;
 
 export async function POST(req: NextRequest) {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "desconhecido";
+  const ip = ipDaRequest(req.headers);
   if (await rateLimited(`sync:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }

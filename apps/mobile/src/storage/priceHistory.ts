@@ -1,4 +1,4 @@
-import type { PricePoint } from '@repona/core';
+import { MAX_PRICE_CENTS, type PricePoint } from '@repona/core';
 import { initializeDatabase } from './database';
 
 const MAX_PRICES_PER_PRODUCT = 10;
@@ -6,7 +6,9 @@ const MAX_PRICES_PER_PRODUCT = 10;
 // Registra um preço do produto (em centavos) com a data de agora e mantém
 // apenas os 10 mais recentes.
 export async function addProductPrice(productId: number, priceCents: number) {
-  if (!Number.isFinite(priceCents) || priceCents <= 0) {
+  // Teto igual ao do endpoint de sync: um preço acima travaria o snapshot inteiro
+  // da casa na nuvem. (auditoria #29)
+  if (!Number.isFinite(priceCents) || priceCents <= 0 || priceCents > MAX_PRICE_CENTS) {
     throw new Error('PRICE_INVALID');
   }
 
