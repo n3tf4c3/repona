@@ -17,8 +17,8 @@
     "merge-produtos": "node scripts/merge-produtos.mjs"
   },
   "dependencies": {
-    "@repona/core": "*",
     "@neondatabase/serverless": "^1.1.0",
+    "@repona/core": "*",
     "@vercel/kv": "^3.0.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
@@ -26,8 +26,8 @@
     "lucide-react": "^0.460.0",
     "next": "16.2.6",
     "next-auth": "^4.24.14",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "server-only": "^0.0.1",
     "zod": "^4.4.3"
   },
@@ -40,8 +40,8 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "~19.1.10",
+    "@types/react-dom": "19.1.9",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "globals": "^14.0.0",

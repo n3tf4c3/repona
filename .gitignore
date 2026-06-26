@@ -32,9 +32,6 @@ build/
 # Local audit/report output
 relatorios/
 
-# OpenCode local dependencies
-.opencode/node_modules/
-
 # misc
 .DS_Store
 Thumbs.db
