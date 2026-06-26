@@ -2,10 +2,19 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { z } from "zod";
 import { autenticarCasa } from "@/server/modules/casa";
+import { rateLimited } from "@/server/rateLimit";
 
 const loginSchema = z.object({
   token: z.string().trim().toUpperCase().regex(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/),
 });
+
+// Throttle do login (auditoria #20): o token de 8 chars é a única credencial da
+// casa. Diferente de /api/sync e /api/casa, o fluxo de credentials do NextAuth
+// não passava por rateLimited — tentativas online ficavam sem limite. Limita por
+// IP e por token normalizado.
+const LOGIN_JANELA_SEG = 60;
+const LOGIN_MAX_POR_IP = 30;
+const LOGIN_MAX_POR_TOKEN = 10;
 
 export const authOptions: NextAuthOptions = {
   // Getter: valida o segredo em runtime (quando o NextAuth o lê), não no build.
@@ -28,9 +37,15 @@ export const authOptions: NextAuthOptions = {
         token: { label: "Código de acesso", type: "text" },
       },
       // A credencial é o token (código da casa) gerado no mobile. Sem senha.
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
+
+        const xff = req?.headers?.["x-forwarded-for"];
+        const ip = (typeof xff === "string" ? xff.split(",")[0] : "").trim() || "desconhecido";
+        if (await rateLimited(`login:ip:${ip}`, LOGIN_MAX_POR_IP, LOGIN_JANELA_SEG)) return null;
+        if (await rateLimited(`login:token:${parsed.data.token}`, LOGIN_MAX_POR_TOKEN, LOGIN_JANELA_SEG))
+          return null;
 
         const casa = await autenticarCasa(parsed.data.token);
         if (!casa) return null;

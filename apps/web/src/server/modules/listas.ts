@@ -185,6 +185,10 @@ export async function finalizarCompra(casaId: number): Promise<number> {
       and(
         eq(shoppingListItems.shoppingListId, lista.id),
         eq(shoppingListItems.checked, true),
+        // Ignora tombstones: um item deleted=true (checked antigo, quantidade
+        // vazia) não deve disparar QUANTITY_INVALID na validação inicial — o
+        // claim abaixo já filtra deleted=false. (auditoria #33)
+        eq(shoppingListItems.deleted, false),
         eq(products.casaId, casaId),
         // Arquivado não é comprado mesmo que tenha ficado marcado. (auditoria #8)
         eq(products.archived, false)

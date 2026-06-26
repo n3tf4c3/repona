@@ -116,13 +116,14 @@ export async function POST(req: NextRequest) {
   // transação no driver neon-http). O merge é idempotente, então o device que
   // não pegou o lock só precisa tentar de novo. (auditoria 2026-06-09 #1)
   const lockKey = `sync:lock:${casaId}`;
-  if (!(await tryLock(lockKey, 60))) {
+  const lockToken = await tryLock(lockKey, 60);
+  if (!lockToken) {
     return NextResponse.json({ error: "SYNC_IN_PROGRESS" }, { status: 409 });
   }
   try {
     const merged = await mergeCasaSnapshot(casaId, parsed.data);
     return NextResponse.json(merged);
   } finally {
-    await unlock(lockKey);
+    await unlock(lockKey, lockToken);
   }
 }

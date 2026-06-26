@@ -1,3 +1,7 @@
+-- OBSOLETO — NÃO É A FONTE DE VERDADE. (auditoria #23)
+-- Este projeto aplica o schema com `db:push` a partir de src/server/db/schema.ts,
+-- não com `db:migrate`. Este arquivo é histórico e está DESATUALIZADO (ex.: falta
+-- products.brand). Veja drizzle/README.md. Não use para criar o banco.
 CREATE TABLE "casas" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"name" text DEFAULT 'Minha casa' NOT NULL,

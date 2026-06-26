@@ -44,6 +44,10 @@ const productInputSchema = z.object({
     .trim()
     .transform((value) => value || "Mercearia")
     .pipe(z.enum(CATEGORIAS)),
+  // brand precisa estar no schema: z.object remove chaves desconhecidas, então
+  // sem isto a marca enviada pela UI era descartada antes de chegar no módulo
+  // (que já persiste brand), apagando a marca em create/update. (auditoria #24)
+  brand: z.string().trim().max(FIELD_LIMITS.brand).nullable().optional().transform((value) => value || null),
   barcode: z.string().trim().max(FIELD_LIMITS.barcode).nullable().optional().transform((value) => value || null),
   photoUri: z.string().trim().max(1000).nullable().optional().transform((value) => value || null),
   alertThreshold: z.string().trim().max(FIELD_LIMITS.alertThreshold).nullable().optional().transform((value) => value || null),
