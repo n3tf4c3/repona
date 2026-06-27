@@ -17,7 +17,13 @@ const snapshotSchema = z.object({
         category: z.string().max(FIELD_LIMITS.category),
         // Clientes antigos não enviam brand: default mantém compat.
         brand: z.string().max(FIELD_LIMITS.brand).nullish().default(null),
-        barcode: z.string().max(FIELD_LIMITS.barcode).nullable(),
+        // Normaliza: trim e vazio -> null, para "789" e " 789 " não virarem
+        // códigos distintos e o índice único bater no valor limpo. (auditoria #37)
+        barcode: z
+          .string()
+          .max(FIELD_LIMITS.barcode)
+          .nullable()
+          .transform((v) => (v && v.trim() ? v.trim() : null)),
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),
         alertThreshold: z.string().max(FIELD_LIMITS.alertThreshold).nullable(),

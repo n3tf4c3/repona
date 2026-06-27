@@ -1,6 +1,10 @@
 import { isEmptyQuantity } from '@repona/core';
 import { initializeDatabase } from './database';
 
+// Janela de tombstone (igual à poda do sync): tombstones mais novos que isto
+// ainda precisam propagar a deleção. (auditoria #40)
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export type ShoppingListRecord = {
   id: number;
   name: string;
@@ -187,17 +191,25 @@ export async function createNewActiveShoppingList(): Promise<ShoppingListRecord>
     // volta cheia"). Copiamos os itens ativos da lista anterior como tombstones
     // (deleted=1) na nova — a limpeza propaga via LWW e a lista permanece vazia
     // em todo lugar. A lista anterior fica intacta. (auditoria 2026-06-09 #4)
+    //
+    // Tombstones recentes da lista anterior também são copiados, preservando
+    // deleted=1 e o updated_at original: uma remoção feita offline antes de criar
+    // a nova lista precisa viajar, senão outro device/servidor ressuscita o item.
+    // (auditoria #40)
     if (anterior) {
+      const cutoff = new Date(Date.now() - TOMBSTONE_TTL_MS).toISOString();
       await database.runAsync(
         `INSERT INTO shopping_list_items
            (shopping_list_id, product_id, quantity, checked, deleted, created_at, updated_at)
-         SELECT ?, product_id, quantity, checked, 1, ?, ?
+         SELECT ?, product_id, quantity, checked, 1, ?,
+                CASE WHEN deleted = 1 THEN updated_at ELSE ? END
          FROM shopping_list_items
-         WHERE shopping_list_id = ? AND deleted = 0`,
+         WHERE shopping_list_id = ? AND (deleted = 0 OR updated_at >= ?)`,
         createdListId,
         now,
         now,
         anterior.id,
+        cutoff,
       );
     }
   });

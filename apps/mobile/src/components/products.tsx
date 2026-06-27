@@ -1,6 +1,7 @@
 // Linhas e listas de produto do catálogo (extraídas de App.tsx, auditoria
 // 2026-06-09 #12.1).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useState } from 'react';
 import { Image, Pressable, Text, View } from 'react-native';
 
 import type { PriceSummary } from '@repona/core';
@@ -120,26 +121,37 @@ export function InventoryControls({
   onConsume,
 }: {
   product: Product;
-  onChange: (product: Product, direction: 1 | -1) => void;
-  onMarkMissing: (product: Product) => void;
-  onConsume: (product: Product) => void;
+  onChange: (product: Product, direction: 1 | -1) => void | Promise<void>;
+  onMarkMissing: (product: Product) => void | Promise<void>;
+  onConsume: (product: Product) => void | Promise<void>;
 }) {
   const isMissing = product.inventoryStatus === 'missing';
+  // Serializa as ações deste produto: enquanto uma estiver em andamento (até o
+  // refresh do estado), os botões ficam travados. Sem isso, dois toques rápidos
+  // calculavam a próxima quantidade a partir do mesmo valor stale, perdendo
+  // incrementos ou registrando dois consumos com uma só baixa. (auditoria #39)
+  const [busy, setBusy] = useState(false);
+  function run(fn: () => void | Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    void Promise.resolve(fn()).finally(() => setBusy(false));
+  }
 
   return (
     <View style={styles.inventoryControls}>
       <View style={[styles.inventoryQuantityPill, isMissing ? styles.inventoryMissingPill : null]}>
-        <Pressable style={styles.inventoryMiniButton} onPress={() => onChange(product, -1)}>
+        <Pressable style={styles.inventoryMiniButton} disabled={busy} onPress={() => run(() => onChange(product, -1))}>
           <MaterialCommunityIcons name="minus" size={13} color={colors.ink2} />
         </Pressable>
         <Text style={styles.inventoryQuantityText}>{product.inventoryQuantity ?? '0 un'}</Text>
-        <Pressable style={styles.inventoryMiniButton} onPress={() => onChange(product, 1)}>
+        <Pressable style={styles.inventoryMiniButton} disabled={busy} onPress={() => run(() => onChange(product, 1))}>
           <MaterialCommunityIcons name="plus" size={13} color={colors.ink2} />
         </Pressable>
       </View>
       <Pressable
         style={[styles.inventoryMissingButton, isMissing ? styles.inventoryMissingButtonActive : null]}
-        onPress={() => onMarkMissing(product)}
+        disabled={busy}
+        onPress={() => run(() => onMarkMissing(product))}
       >
         <Text style={[styles.inventoryMissingButtonText, isMissing ? styles.inventoryMissingButtonTextActive : null]}>
           {isMissing ? 'Em falta' : 'Falta'}
@@ -147,8 +159,8 @@ export function InventoryControls({
       </Pressable>
       <Pressable
         style={[styles.inventoryConsumeButton, isMissing ? styles.inventoryConsumeButtonDisabled : null]}
-        disabled={isMissing}
-        onPress={() => onConsume(product)}
+        disabled={isMissing || busy}
+        onPress={() => run(() => onConsume(product))}
       >
         <Text style={styles.inventoryConsumeButtonText}>{isMissing ? 'Sem estoque' : 'Consumir'}</Text>
       </Pressable>

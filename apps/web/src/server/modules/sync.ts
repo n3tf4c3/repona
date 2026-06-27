@@ -73,7 +73,9 @@ export async function mergeCasaSnapshot(
       .filter((p) => p.barcode?.trim())
       .map((p) => [(p.barcode as string).trim(), p.id])
   );
-  const infoPorId = new Map(existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt }]));
+  const infoPorId = new Map(
+    existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt, barcode: p.barcode }])
+  );
 
   // Nome RECEBIDO → produto resolvido pelo matchProduct. Os eventos do snapshot
   // (compras/consumos/preços/itens) viajam com o nome que o device usa, que pode
@@ -108,6 +110,12 @@ export async function mergeCasaSnapshot(
       const donoDoNome = idPorNome.get(productNameKey(prod.name));
       const nomeColide = donoDoNome !== undefined && donoDoNome !== match.id;
       const nomeFinal = nomeColide ? info.name : prod.name.trim();
+      // Mesmo tratamento para o barcode: se o código recebido já pertence a OUTRO
+      // produto da casa, manter o local — senão o índice único estoura e derruba o
+      // sync inteiro. O barcode já vem normalizado (trim/null) do schema. (auditoria #37)
+      const donoBarcode = prod.barcode ? idPorBarcode.get(prod.barcode) : undefined;
+      const barcodeColide = donoBarcode !== undefined && donoBarcode !== match.id;
+      const barcodeFinal = barcodeColide ? info.barcode : prod.barcode;
       const novoUpdatedAt = prod.updatedAt ? new Date(prod.updatedAt) : new Date();
 
       escritas.push(
@@ -117,7 +125,7 @@ export async function mergeCasaSnapshot(
             name: nomeFinal,
             category: prod.category,
             brand: prod.brand ?? null,
-            barcode: prod.barcode,
+            barcode: barcodeFinal,
             status: prod.status,
             alertThreshold: prod.alertThreshold,
             archived: prod.archived,
@@ -131,8 +139,8 @@ export async function mergeCasaSnapshot(
         idPorNome.delete(productNameKey(info.name));
         idPorNome.set(productNameKey(nomeFinal), match.id);
       }
-      infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt });
-      if (prod.barcode?.trim()) idPorBarcode.set(prod.barcode.trim(), match.id);
+      infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt, barcode: barcodeFinal });
+      if (barcodeFinal && !barcodeColide) idPorBarcode.set(barcodeFinal, match.id);
       productId = match.id;
     } else {
       // Insert individual: o id retornado é necessário já no loop (estoque e
@@ -161,6 +169,7 @@ export async function mergeCasaSnapshot(
       infoPorId.set(productId, {
         name: prod.name.trim(),
         updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : new Date(),
+        barcode: prod.barcode,
       });
     }
 

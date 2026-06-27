@@ -40,9 +40,9 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 34 | Headers de seguranca HTTP nao estao configurados explicitamente | Baixa | RESOLVIDO | HSTS/X-Frame/nosniff/Referrer/Permissions/CSP frame-ancestors (next.config.ts). Resolvido 2026-06-26. |
 | 35 | npm audit reporta vulnerabilidades moderadas em dependencias | Media | ABERTO (aceito) | 23 moderadas em tooling de build/prebuild e uuid transitivo nao-alcancavel; unico fix e downgrade breaking do next-auth. Revisitar. 2026-06-26. |
 | 36 | Script db:migrate continua exposto apesar de migration obsoleta | Media | RESOLVIDO | Script substituido por guard que falha orientando db:push (package.json). Resolvido 2026-06-26. |
-| 37 | Sync nao normaliza nem protege colisao de barcode | Media | ABERTO | Auditoria 2026-06-26 19:54. Proximo passe (merge). |
+| 37 | Sync nao normaliza nem protege colisao de barcode | Media | RESOLVIDO | Barcode normalizado no schema; merge preserva local em colisao (sync.ts). Resolvido 2026-06-26. |
 | 38 | Scripts administrativos imprimem token da casa e usam token em nomes de backup | Baixa | RESOLVIDO | Token mascarado por padrao (flag --show-token) e casa.id nos backups. Resolvido 2026-06-26. |
-| 39 | Estoque mobile usa quantidade stale em acoes rapidas | Media | ABERTO | Auditoria 2026-06-26 19:54. Proximo passe (concorrencia mobile). |
-| 40 | Nova lista ativa no mobile nao propaga tombstones offline anteriores | Media | ABERTO | Auditoria 2026-06-26 19:54. Proximo passe (sync mobile). |
+| 39 | Estoque mobile usa quantidade stale em acoes rapidas | Media | RESOLVIDO | InventoryControls trava botoes do produto enquanto a acao esta pendente (products.tsx). Resolvido 2026-06-26. |
+| 40 | Nova lista ativa no mobile nao propaga tombstones offline anteriores | Media | RESOLVIDO | createNewActiveShoppingList copia tombstones recentes preservando updated_at (shoppingLists.ts). Resolvido 2026-06-26. |
 | 41 | Snapshot mobile pode enviar precos legados invalidos ou excessivos | Media | RESOLVIDO | buildLocalSnapshot filtra faixa valida e top 10/produto (sync.ts). Resolvido 2026-06-26. |
 | 42 | Consumo web baixa estoque antes de registrar evento/status sem rollback | Media | RESOLVIDO | try/catch desfaz claim do estoque via compare-and-set (estoque.ts). Resolvido 2026-06-26. |
