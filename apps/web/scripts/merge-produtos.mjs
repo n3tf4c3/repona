@@ -33,6 +33,13 @@ const sql = neon(process.env.DATABASE_URL);
 const [casaRef, dupRef, canonRef, ...rest] = process.argv.slice(2);
 const confirmado = rest.includes("--yes");
 
+// invite_code é credencial: mascarado no stdout por padrão. (auditoria #38)
+const revelarToken = rest.includes("--show-token");
+function token(code) {
+  if (revelarToken) return code;
+  return code.length <= 4 ? "****" : `${code.slice(0, 2)}****${code.slice(-2)}`;
+}
+
 if (!casaRef || !dupRef || !canonRef) {
   console.log("Uso: node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> [--yes]");
   process.exit(0);
@@ -84,14 +91,14 @@ async function contar(id) {
 const cB = await contar(B.id);
 const cA = await contar(A.id);
 
-console.log(`Casa #${casa.id} "${casa.name}" code=${casa.invite_code}`);
+console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
 console.log(`  DUPLICADO (some): #${B.id} "${B.name}"${B.archived ? " [ARQ]" : ""}  ${JSON.stringify(cB)}`);
 console.log(`  CANONICO (fica):  #${A.id} "${A.name}"${A.archived ? " [ARQ]" : ""}  ${JSON.stringify(cA)}`);
 console.log(`\n  -> compras/precos/consumos de #${B.id} viram de #${A.id} (deduplicados); itens de lista de #${B.id} sao removidos; #${B.id} e apagado.`);
 
 if (!confirmado) {
   console.log(`\nDRY-RUN. Nada alterado. Para aplicar (com backup antes):`);
-  console.log(`  node scripts/merge-produtos.mjs ${casa.invite_code} ${B.id} ${A.id} --yes`);
+  console.log(`  node scripts/merge-produtos.mjs ${casa.id} ${B.id} ${A.id} --yes`);
   process.exit(0);
 }
 
@@ -112,7 +119,7 @@ const dump = {
 const dir = resolve(aqui, "../backups");
 mkdirSync(dir, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const file = resolve(dir, `merge-${casa.invite_code}-${B.id}-into-${A.id}-${stamp}.json`);
+const file = resolve(dir, `merge-${casa.id}-${B.id}-into-${A.id}-${stamp}.json`);
 writeFileSync(file, JSON.stringify(dump, null, 2), "utf8");
 console.log(`\nBackup salvo em:\n  ${file}`);
 

@@ -31,6 +31,16 @@ const sql = neon(process.env.DATABASE_URL);
 const [cmd, arg, ...rest] = process.argv.slice(2);
 const confirmado = rest.includes("--yes");
 
+// O invite_code é a credencial da casa: por padrão é mascarado no stdout e nos
+// nomes de backup, para não vazar em logs/CI/prints. --show-token revela.
+// (auditoria #38)
+const revelarToken = rest.includes("--show-token");
+if (revelarToken) console.warn("AVISO: --show-token exibe a credencial da casa em texto puro.\n");
+function token(code) {
+  if (revelarToken) return code;
+  return code.length <= 4 ? "****" : `${code.slice(0, 2)}****${code.slice(-2)}`;
+}
+
 // Resolve a casa por invite_code (8 chars) ou id numerico.
 async function resolverCasa(ref) {
   if (!ref) return null;
@@ -63,7 +73,7 @@ async function list() {
     const n = await contadores(c.id);
     const criada = new Date(c.created_at).toLocaleDateString("pt-BR");
     console.log(
-      `#${c.id}  "${c.name}"  code=${c.invite_code}  criada=${criada}\n` +
+      `#${c.id}  "${c.name}"  code=${token(c.invite_code)}  criada=${criada}\n` +
         `      produtos=${n.produtos} (arq ${n.arquivados})  compras=${n.compras}  ` +
         `listas=${n.listas} (itens ${n.itens_lista})  precos=${n.precos}`,
     );
@@ -74,7 +84,7 @@ async function show(ref) {
   const casa = await resolverCasa(ref);
   if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${casa.invite_code}`);
+  console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
   console.log(`  ${JSON.stringify(n)}`);
   const prods = await sql`
     SELECT id, name, category, status, archived FROM products WHERE casa_id = ${casa.id}
@@ -105,7 +115,7 @@ async function exportar(ref) {
   const dir = resolve(aqui, "../backups");
   mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = resolve(dir, `casa-${casa.invite_code}-${stamp}.json`);
+  const file = resolve(dir, `casa-${casa.id}-${stamp}.json`);
   writeFileSync(file, JSON.stringify(dump, null, 2), "utf8");
 
   console.log(`Backup de #${casa.id} "${casa.name}" salvo em:`);
@@ -120,12 +130,12 @@ async function del(ref) {
   const casa = await resolverCasa(ref);
   if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${casa.invite_code}`);
+  console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
   console.log(`  Sera apagado (cascade): ${JSON.stringify(n)}`);
 
   if (!confirmado) {
     console.log("\nDRY-RUN. Para apagar de verdade, repita com --yes:");
-    console.log(`  node scripts/casas.mjs delete ${casa.invite_code} --yes`);
+    console.log(`  node scripts/casas.mjs delete ${casa.id} --yes`);
     return;
   }
 

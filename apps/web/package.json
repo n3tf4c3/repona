@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). As migrations 0000_* sao historicas e estao desatualizadas.'); process.exit(1)\"",
     "casas": "node scripts/casas.mjs",
     "merge-produtos": "node scripts/merge-produtos.mjs"
   },

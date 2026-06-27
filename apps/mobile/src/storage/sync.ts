@@ -1,4 +1,4 @@
-import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, type SyncSnapshot } from '@repona/core';
+import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, MAX_PRICE_CENTS, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 import { listPurchaseHistoryRecords } from './purchaseHistory';
@@ -36,15 +36,23 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     WHERE ie.event_type = 'consumed'
   `);
   const consumos = consumosTodos.filter((c) => dentroDaJanela(c.occurred_at, cutoffMs));
+  // Só preços dentro da faixa válida (1..MAX_PRICE_CENTS) e os 10 mais recentes
+  // por produto. Dados legados/corrompidos (preço fora do teto, criados antes da
+  // correção #29) travavam o sync inteiro com INVALID_BODY; e o histórico podia
+  // estourar o limite do snapshot. (auditoria #41)
   const precos = await database.getAllAsync<{
     product_name: string;
     price_cents: number;
     recorded_at: string;
-  }>(`
-    SELECT p.name as product_name, ph.price_cents, ph.recorded_at
-    FROM price_history ph
-    INNER JOIN products p ON p.id = ph.product_id
-  `);
+  }>(
+    `SELECT product_name, price_cents, recorded_at FROM (
+       SELECT p.name as product_name, ph.price_cents, ph.recorded_at,
+              ROW_NUMBER() OVER (PARTITION BY ph.product_id ORDER BY ph.recorded_at DESC, ph.id DESC) AS rn
+       FROM price_history ph INNER JOIN products p ON p.id = ph.product_id
+       WHERE ph.price_cents BETWEEN 1 AND ?
+     ) WHERE rn <= 10`,
+    MAX_PRICE_CENTS,
+  );
 
   // Itens da lista ativa, inclusive tombstones (deleted), para a deleção
   // propagar para os outros devices. (auditoria #9)

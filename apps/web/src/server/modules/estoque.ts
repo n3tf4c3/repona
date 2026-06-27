@@ -73,16 +73,28 @@ export async function consumir(casaId: number, produtoId: number): Promise<void>
       .returning({ productId: inventoryItems.productId });
     if (claim.length === 0) continue; // outra consumir venceu; recomputa
 
-    // Só após vencer o claim: registra o evento e o status do produto.
-    await db.batch([
-      db
-        .insert(inventoryEvents)
-        .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
-      db
-        .update(products)
-        .set({ status: productStatus, updatedAt: now })
-        .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
-    ]);
+    // Só após vencer o claim: registra o evento e o status do produto. Se o batch
+    // falhar, o estoque já baixou sem evento/status — desfaz o claim (compare-and
+    // -set: só reverte se a quantidade ainda for a que gravamos). Mesma família do
+    // #22, sem transação interativa no neon-http. (auditoria #42)
+    try {
+      await db.batch([
+        db
+          .insert(inventoryEvents)
+          .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
+        db
+          .update(products)
+          .set({ status: productStatus, updatedAt: now })
+          .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
+      ]);
+    } catch (error) {
+      // atual é não-vazio (checado acima), então o estoque revertido é in_stock.
+      await db
+        .update(inventoryItems)
+        .set({ quantity: atual, status: "in_stock", updatedAt: new Date() })
+        .where(and(eq(inventoryItems.productId, produtoId), eq(inventoryItems.quantity, proxima)));
+      throw error;
+    }
     return;
   }
   throw new Error("INVENTORY_CONFLICT");
