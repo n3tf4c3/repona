@@ -30,11 +30,15 @@ Copie `apps/web/.env.example` para `apps/web/.env.local` e preencha:
 - `DATABASE_URL` — conexão Neon/PostgreSQL
 - `AUTH_SECRET` (e `NEXTAUTH_SECRET` com o mesmo valor) — segredo do NextAuth
 - `NEXTAUTH_URL` — `http://localhost:3000` em dev
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN` — Vercel KV; obrigatórios em produção,
+  opcionais em dev (rate limit e lock de sync caem para memória sem eles)
 
-Com o banco configurado, aplique as migrations:
+Com o banco configurado, aplique o schema com `db:push` (fluxo canônico do
+projeto). **Não use `db:migrate`** — o script está desativado e as migrations
+`drizzle/0000_*` são históricas/obsoletas (veja `apps/web/drizzle/README.md`):
 
 ```bash
-npm run db:migrate --workspace apps/web
+npm run db:push --workspace apps/web
 ```
 
 ## Deploy na Vercel
@@ -43,6 +47,7 @@ O projeto da Vercel deve apontar para o app web dentro do monorepo:
 
 1. **Settings → General → Root Directory** = `apps/web`.
 2. **Settings → Environment Variables**: defina `DATABASE_URL`, `AUTH_SECRET`,
-   `NEXTAUTH_SECRET` e `NEXTAUTH_URL` (a URL do deploy).
+   `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (a URL do deploy) e o KV
+   (`KV_REST_API_URL`/`KV_REST_API_TOKEN`, obrigatório em produção).
 3. Build/Install commands: padrão — a Vercel detecta os workspaces, instala na raiz
    e builda em `apps/web`.

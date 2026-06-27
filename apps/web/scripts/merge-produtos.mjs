@@ -21,6 +21,7 @@ import { neon } from "@neondatabase/serverless";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 
@@ -47,10 +48,10 @@ if (!casaRef || !dupRef || !canonRef) {
 
 async function resolverCasa(ref) {
   const porId = /^\d+$/.test(ref)
-    ? await sql`SELECT id, name, invite_code FROM casas WHERE id = ${Number(ref)}`
+    ? await sql`SELECT id, name, invite_code_enc FROM casas WHERE id = ${Number(ref)}`
     : [];
   if (porId.length) return porId[0];
-  const porCode = await sql`SELECT id, name, invite_code FROM casas WHERE invite_code = ${ref.trim().toUpperCase()}`;
+  const porCode = await sql`SELECT id, name, invite_code_enc FROM casas WHERE invite_code_enc = ${cifrarCodigo(ref.trim().toUpperCase())}`;
   return porCode[0] ?? null;
 }
 
@@ -91,7 +92,7 @@ async function contar(id) {
 const cB = await contar(B.id);
 const cA = await contar(A.id);
 
-console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
+console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
 console.log(`  DUPLICADO (some): #${B.id} "${B.name}"${B.archived ? " [ARQ]" : ""}  ${JSON.stringify(cB)}`);
 console.log(`  CANONICO (fica):  #${A.id} "${A.name}"${A.archived ? " [ARQ]" : ""}  ${JSON.stringify(cA)}`);
 console.log(`\n  -> compras/precos/consumos de #${B.id} viram de #${A.id} (deduplicados); itens de lista de #${B.id} sao removidos; #${B.id} e apagado.`);

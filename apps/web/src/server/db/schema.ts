@@ -14,13 +14,17 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// Casa (household) = a conta. Criada no mobile, identificada pelo inviteCode
-// (token). É a unidade de compartilhamento: produtos, lista, estoque e
-// histórico são escopados por casa. O login do web é só o token.
+// Casa (household) = a conta. Criada no mobile, identificada pelo token. É a
+// unidade de compartilhamento: produtos, lista, estoque e histórico são
+// escopados por casa. O login do web é só o token.
 export const casas = pgTable("casas", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().default("Minha casa"),
-  inviteCode: text("invite_code").notNull().unique(),
+  // Token de acesso cifrado em repouso (auditoria #43): AES-256-GCM
+  // determinístico (ver server/inviteToken.ts). Determinístico para permitir
+  // lookup por igualdade e manter o índice único; reversível para reexibir o
+  // token na tela de perfil. Nunca guardamos o token em claro.
+  inviteCodeEnc: text("invite_code_enc").notNull().unique(),
   // Versão da credencial: incrementa ao regenerar o token. O JWT da sessão web
   // guarda o valor de quando logou; se divergir do banco, a sessão é encerrada.
   // Assim regenerar o código também revoga as sessões web ativas. (auditoria #13)

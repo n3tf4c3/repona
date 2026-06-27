@@ -8,6 +8,20 @@ import { kv } from "@vercel/kv";
 // memória — que NÃO é global, mas mantém o endpoint utilizável fora da Vercel.
 const kvConfigurado = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 
+// Em produção o fallback em memória é inseguro: por instância e zerado a cada
+// cold start, ele abre brecha para brute force do token e corrida de sync entre
+// instâncias (auditoria #44). Então exigimos KV em produção e falhamos fechado
+// — a chamada estoura em vez de degradar silenciosamente. Fora de produção
+// (dev/local), o fallback em memória mantém o endpoint utilizável. A checagem é
+// em tempo de chamada (não no import) para não quebrar o build sem env.
+function exigirKvConfigurado(): void {
+  if (!kvConfigurado && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "KV obrigatório em produção: configure KV_REST_API_URL e KV_REST_API_TOKEN."
+    );
+  }
+}
+
 const memoria = new Map<string, { count: number; resetAt: number }>();
 
 // IP confiável da requisição para a chave de rate limit (auditoria #32). Na
@@ -40,6 +54,7 @@ export async function rateLimited(
     return atual > max;
   }
 
+  exigirKvConfigurado();
   const agora = Date.now();
   const t = memoria.get(chave);
   if (!t || t.resetAt <= agora) {
@@ -71,6 +86,7 @@ export async function tryLock(chave: string, ttlSeg: number): Promise<string | n
     const ok = await kv.set(chave, token, { nx: true, ex: ttlSeg });
     return ok === "OK" ? token : null;
   }
+  exigirKvConfigurado();
   const agora = Date.now();
   const atual = locksMemoria.get(chave);
   if (atual !== undefined && atual.expiraEm > agora) return null;

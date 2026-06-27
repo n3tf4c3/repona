@@ -19,6 +19,7 @@ import { neon } from "@neondatabase/serverless";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 
@@ -45,11 +46,11 @@ function token(code) {
 async function resolverCasa(ref) {
   if (!ref) return null;
   const porId = /^\d+$/.test(ref)
-    ? await sql`SELECT id, name, invite_code FROM casas WHERE id = ${Number(ref)}`
+    ? await sql`SELECT id, name, invite_code_enc FROM casas WHERE id = ${Number(ref)}`
     : [];
   if (porId.length) return porId[0];
   const code = ref.trim().toUpperCase();
-  const porCode = await sql`SELECT id, name, invite_code FROM casas WHERE invite_code = ${code}`;
+  const porCode = await sql`SELECT id, name, invite_code_enc FROM casas WHERE invite_code_enc = ${cifrarCodigo(code)}`;
   return porCode[0] ?? null;
 }
 
@@ -67,13 +68,13 @@ async function contadores(casaId) {
 }
 
 async function list() {
-  const casas = await sql`SELECT id, name, invite_code, created_at FROM casas ORDER BY id`;
+  const casas = await sql`SELECT id, name, invite_code_enc, created_at FROM casas ORDER BY id`;
   if (!casas.length) return console.log("(nenhuma casa)");
   for (const c of casas) {
     const n = await contadores(c.id);
     const criada = new Date(c.created_at).toLocaleDateString("pt-BR");
     console.log(
-      `#${c.id}  "${c.name}"  code=${token(c.invite_code)}  criada=${criada}\n` +
+      `#${c.id}  "${c.name}"  code=${token(decifrarCodigo(c.invite_code_enc))}  criada=${criada}\n` +
         `      produtos=${n.produtos} (arq ${n.arquivados})  compras=${n.compras}  ` +
         `listas=${n.listas} (itens ${n.itens_lista})  precos=${n.precos}`,
     );
@@ -84,7 +85,7 @@ async function show(ref) {
   const casa = await resolverCasa(ref);
   if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
+  console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
   console.log(`  ${JSON.stringify(n)}`);
   const prods = await sql`
     SELECT id, name, category, status, archived FROM products WHERE casa_id = ${casa.id}
@@ -130,7 +131,7 @@ async function del(ref) {
   const casa = await resolverCasa(ref);
   if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${token(casa.invite_code)}`);
+  console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
   console.log(`  Sera apagado (cascade): ${JSON.stringify(n)}`);
 
   if (!confirmado) {

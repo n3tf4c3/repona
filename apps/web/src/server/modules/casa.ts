@@ -3,6 +3,7 @@ import { randomInt } from "crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { casas, purchaseHistory } from "@/server/db/schema";
+import { cifrarCodigo, decifrarCodigo } from "@/server/inviteToken";
 
 export type CasaDTO = {
   id: number;
@@ -29,7 +30,7 @@ async function criarCasa(name: string): Promise<{ id: number; code: string }> {
     try {
       const [casa] = await db
         .insert(casas)
-        .values({ name, inviteCode: code })
+        .values({ name, inviteCodeEnc: cifrarCodigo(code) })
         .returning({ id: casas.id });
       return { id: casa.id, code };
     } catch (error) {
@@ -54,7 +55,7 @@ export async function obterCasaPorCodigo(code: string): Promise<number | null> {
   const [casa] = await db
     .select({ id: casas.id })
     .from(casas)
-    .where(eq(casas.inviteCode, codigo))
+    .where(eq(casas.inviteCodeEnc, cifrarCodigo(codigo)))
     .limit(1);
   return casa?.id ?? null;
 }
@@ -68,7 +69,7 @@ export async function autenticarCasa(
   const [casa] = await db
     .select({ id: casas.id, name: casas.name, credentialVersion: casas.credentialVersion })
     .from(casas)
-    .where(eq(casas.inviteCode, codigo))
+    .where(eq(casas.inviteCodeEnc, cifrarCodigo(codigo)))
     .limit(1);
   return casa ?? null;
 }
@@ -85,12 +86,13 @@ export async function obterCredentialVersion(casaId: number): Promise<number | n
 
 export async function obterCasaPorId(casaId: number): Promise<CasaDTO> {
   const [casa] = await db
-    .select({ id: casas.id, name: casas.name, inviteCode: casas.inviteCode })
+    .select({ id: casas.id, name: casas.name, inviteCodeEnc: casas.inviteCodeEnc })
     .from(casas)
     .where(eq(casas.id, casaId))
     .limit(1);
   if (!casa) throw new Error("CASA_NOT_FOUND");
-  return casa;
+  // Decifra só aqui, para a tela de perfil exibir/copiar o token.
+  return { id: casa.id, name: casa.name, inviteCode: decifrarCodigo(casa.inviteCodeEnc) };
 }
 
 export async function regenerarCodigo(casaId: number): Promise<void> {
@@ -101,7 +103,7 @@ export async function regenerarCodigo(casaId: number): Promise<void> {
       await db
         .update(casas)
         .set({
-          inviteCode: gerarCodigo(),
+          inviteCodeEnc: cifrarCodigo(gerarCodigo()),
           credentialVersion: sql`${casas.credentialVersion} + 1`,
         })
         .where(eq(casas.id, casaId));
@@ -118,12 +120,16 @@ export async function renomearCasa(casaId: number, name: string): Promise<void> 
   await db.update(casas).set({ name: nome }).where(eq(casas.id, casaId));
 }
 
-// Exclui a conta (casa) e todos os dados associados. O driver neon-http não
-// roda transação, então são dois passos: purchase_history primeiro — sua FK
-// para products não tem onDelete cascade (schema.ts), logo bloquearia a
+// Exclui a conta (casa) e todos os dados associados. purchase_history primeiro
+// — sua FK para products não tem onDelete cascade (schema.ts), logo bloquearia a
 // remoção dos produtos — e depois a casa, que cascateia produtos, listas,
-// estoque e itens. (exclusão de conta exigida pela Play)
+// estoque e itens. As duas escritas vão num único db.batch (o neon-http executa
+// como UMA transação): se a remoção da casa falhar, o delete do histórico é
+// revertido, evitando perda parcial de dados. (auditoria #45; exclusão de conta
+// exigida pela Play)
 export async function excluirCasa(casaId: number): Promise<void> {
-  await db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId));
-  await db.delete(casas).where(eq(casas.id, casaId));
+  await db.batch([
+    db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId)),
+    db.delete(casas).where(eq(casas.id, casaId)),
+  ]);
 }
