@@ -47,6 +47,6 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 41 | Snapshot mobile pode enviar precos legados invalidos ou excessivos | Media | RESOLVIDO | buildLocalSnapshot filtra faixa valida e top 10/produto (sync.ts). Resolvido 2026-06-26. |
 | 42 | Consumo web baixa estoque antes de registrar evento/status sem rollback | Media | RESOLVIDO | try/catch desfaz claim do estoque via compare-and-set (estoque.ts). Resolvido 2026-06-26. |
 | 43 | Token de acesso da casa armazenado em texto puro | Alta | RESOLVIDO | Token cifrado em repouso (AES-256-GCM deterministico, inviteToken.ts); coluna invite_code_enc; migracao scripts/migrar-invite-code.mjs. Resolvido 2026-06-27. |
-| 44 | Rate limit e lock distribuido falham aberto quando KV nao esta configurado | Alta | RESOLVIDO | rateLimit.ts falha fechado em producao sem KV; KV documentado em .env.example/README. Resolvido 2026-06-27. |
+| 44 | Rate limit e lock distribuido falham aberto quando KV nao esta configurado | Alta | RESOLVIDO | Rate limit e lock de sync migrados para o Neon Postgres (tabelas rate_limits/sync_locks, rateLimit.ts); @vercel/kv removido; sem servico externo/custo. Resolvido 2026-06-27. |
 | 45 | Exclusao de conta pela aplicacao nao e atomica | Alta | RESOLVIDO | excluirCasa usa db.batch (uma transacao neon-http) em modules/casa.ts. Resolvido 2026-06-27. |
 | 46 | README orienta fluxo de migration que o projeto desativou | Media | RESOLVIDO | README aponta db:push com aviso de db:migrate desativado. Resolvido 2026-06-27. |

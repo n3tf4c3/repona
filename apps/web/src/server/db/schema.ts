@@ -223,3 +223,25 @@ export const priceHistory = pgTable(
   },
   (table) => [index("price_history_product_idx").on(table.productId, table.recordedAt)]
 );
+
+// Rate limit e lock de sync sobre o próprio Postgres (auditoria #44). Antes
+// dependiam de Vercel KV; como o projeto não usa serviço externo pago, o estado
+// distribuído mora no Neon — fonte única, global entre instâncias serverless.
+
+// Contador de rate limit por chave (IP/rota). reset_em marca o fim da janela; ao
+// expirar, o contador recomeça. Linhas velhas são sobrescritas pela própria
+// chave (volume pequeno; sem necessidade de limpeza dedicada).
+export const rateLimits = pgTable("rate_limits", {
+  chave: text("chave").primaryKey(),
+  count: integer("count").notNull(),
+  resetEm: timestamp("reset_em", { withTimezone: true }).notNull(),
+});
+
+// Lock de sync por casa, com dono (token) e TTL. expira_em evita que um merge
+// morto tranque a casa para sempre; o token permite compare-and-delete no
+// unlock, para um merge que estourou o TTL não apagar o lock de quem o sucedeu.
+export const syncLocks = pgTable("sync_locks", {
+  chave: text("chave").primaryKey(),
+  token: text("token").notNull(),
+  expiraEm: timestamp("expira_em", { withTimezone: true }).notNull(),
+});

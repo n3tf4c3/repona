@@ -1,28 +1,13 @@
 import "server-only";
 import { randomUUID } from "crypto";
-import { kv } from "@vercel/kv";
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "@/server/db";
+import { rateLimits, syncLocks } from "@/server/db/schema";
 
-// Rate limit por chave (auditoria #12). Quando o Vercel KV está configurado
-// (KV_REST_API_URL/KV_REST_API_TOKEN), o contador é global e persistente, então
-// vale entre instâncias serverless. Sem KV (dev/local), cai para um contador em
-// memória — que NÃO é global, mas mantém o endpoint utilizável fora da Vercel.
-const kvConfigurado = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-
-// Em produção o fallback em memória é inseguro: por instância e zerado a cada
-// cold start, ele abre brecha para brute force do token e corrida de sync entre
-// instâncias (auditoria #44). Então exigimos KV em produção e falhamos fechado
-// — a chamada estoura em vez de degradar silenciosamente. Fora de produção
-// (dev/local), o fallback em memória mantém o endpoint utilizável. A checagem é
-// em tempo de chamada (não no import) para não quebrar o build sem env.
-function exigirKvConfigurado(): void {
-  if (!kvConfigurado && process.env.NODE_ENV === "production") {
-    throw new Error(
-      "KV obrigatório em produção: configure KV_REST_API_URL e KV_REST_API_TOKEN."
-    );
-  }
-}
-
-const memoria = new Map<string, { count: number; resetAt: number }>();
+// Rate limit (auditoria #12) e lock de sync (auditoria #1/#21) sobre o próprio
+// Postgres (Neon). Antes dependiam de Vercel KV; agora o estado mora no banco
+// que o projeto já usa — global entre instâncias serverless, sem serviço pago
+// e sem fallback em memória que abria brecha de brute force/corrida (#44).
 
 // IP confiável da requisição para a chave de rate limit (auditoria #32). Na
 // Vercel, `x-real-ip` é o IP real do cliente definido pela plataforma. Já o
@@ -47,58 +32,44 @@ export async function rateLimited(
   max: number,
   janelaSeg: number
 ): Promise<boolean> {
-  if (kvConfigurado) {
-    const atual = await kv.incr(chave);
-    // Primeira ocorrência na janela: define a expiração do contador.
-    if (atual === 1) await kv.expire(chave, janelaSeg);
-    return atual > max;
-  }
-
-  exigirKvConfigurado();
-  const agora = Date.now();
-  const t = memoria.get(chave);
-  if (!t || t.resetAt <= agora) {
-    memoria.set(chave, { count: 1, resetAt: agora + janelaSeg * 1000 });
-    return false;
-  }
-  t.count += 1;
-  return t.count > max;
+  const novoReset = new Date(Date.now() + janelaSeg * 1000);
+  // Upsert atômico num único statement: em janela nova ou expirada o contador
+  // volta a 1; senão incrementa. Sendo uma só instrução, é seguro entre
+  // instâncias concorrentes.
+  const [r] = await db
+    .insert(rateLimits)
+    .values({ chave, count: 1, resetEm: novoReset })
+    .onConflictDoUpdate({
+      target: rateLimits.chave,
+      set: {
+        count: sql`case when ${rateLimits.resetEm} <= now() then 1 else ${rateLimits.count} + 1 end`,
+        resetEm: sql`case when ${rateLimits.resetEm} <= now() then ${novoReset} else ${rateLimits.resetEm} end`,
+      },
+    })
+    .returning({ count: rateLimits.count });
+  return (r?.count ?? 1) > max;
 }
-
-// Lock por chave com TTL e DONO (auditoria 2026-06-09 #1, #21). Usado para
-// serializar o merge de sync por casa: o merge faz dezenas de escritas sem
-// transação (driver neon-http), e dois devices da mesma casa mesclando ao mesmo
-// tempo podem inserir o mesmo produto e estourar os índices únicos no meio do
-// caminho. O TTL garante que um merge que morreu não tranca a casa para sempre.
-// tryLock devolve um token único quando adquire (ou null); unlock só libera se o
-// token ainda é o dono — assim um merge que estourou o TTL e foi sucedido por
-// outro não apaga o lock alheio ao terminar (auditoria #21). Mesmo trade-off do
-// rate limit: com KV o lock é global; sem KV (dev/local) é por instância.
-const locksMemoria = new Map<string, { token: string; expiraEm: number }>();
-
-// Compare-and-delete atômico no KV: só apaga se o valor ainda for o do dono.
-const LIBERAR_SE_DONO =
-  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
 
 export async function tryLock(chave: string, ttlSeg: number): Promise<string | null> {
   const token = randomUUID();
-  if (kvConfigurado) {
-    const ok = await kv.set(chave, token, { nx: true, ex: ttlSeg });
-    return ok === "OK" ? token : null;
-  }
-  exigirKvConfigurado();
-  const agora = Date.now();
-  const atual = locksMemoria.get(chave);
-  if (atual !== undefined && atual.expiraEm > agora) return null;
-  locksMemoria.set(chave, { token, expiraEm: agora + ttlSeg * 1000 });
-  return token;
+  const expiraEm = new Date(Date.now() + ttlSeg * 1000);
+  // Adquire só se não há lock vivo: insere e, em conflito, sobrescreve apenas se
+  // o lock atual já expirou (setWhere). O RETURNING devolve linha quando de fato
+  // adquirimos (insert novo ou takeover de lock expirado) e vem vazio quando
+  // alguém ainda detém — tudo atômico no banco.
+  const [r] = await db
+    .insert(syncLocks)
+    .values({ chave, token, expiraEm })
+    .onConflictDoUpdate({
+      target: syncLocks.chave,
+      set: { token, expiraEm },
+      setWhere: sql`${syncLocks.expiraEm} <= now()`,
+    })
+    .returning({ token: syncLocks.token });
+  return r ? token : null;
 }
 
 export async function unlock(chave: string, token: string): Promise<void> {
-  if (kvConfigurado) {
-    await kv.eval(LIBERAR_SE_DONO, [chave], [token]);
-    return;
-  }
-  const atual = locksMemoria.get(chave);
-  if (atual?.token === token) locksMemoria.delete(chave);
+  // Compare-and-delete: só libera se ainda somos o dono (auditoria #21).
+  await db.delete(syncLocks).where(and(eq(syncLocks.chave, chave), eq(syncLocks.token, token)));
 }
