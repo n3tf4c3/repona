@@ -7,13 +7,26 @@ const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
 });
 
-// Rate limit por IP via Vercel KV (auditoria #12), com fallback em memória.
-const JANELA_SEG = 60 * 60;
-const MAX_POR_JANELA = 20;
+// Criar conta é evento raro (uma vez por casa). Teto duplo por IP — por hora e
+// por dia — para barrar tanto rajada quanto criação pingo-a-pingo que furava o
+// limite só-horário antigo. Trade-off de CGNAT: operadoras móveis compartilham
+// um IP entre muitos clientes, então o teto diário fica folgado o bastante para
+// não bloquear usuários legítimos atrás do mesmo NAT. (auditoria #12)
+const CRIAR_JANELA_HORA = 60 * 60;
+const CRIAR_MAX_HORA = 5;
+const CRIAR_JANELA_DIA = 60 * 60 * 24;
+const CRIAR_MAX_DIA = 20;
+
+// Exclusão de conta mantém limite próprio, mais folgado.
+const DEL_JANELA_SEG = 60 * 60;
+const DEL_MAX_POR_JANELA = 20;
 
 export async function POST(req: NextRequest) {
   const ip = ipDaRequest(req.headers);
-  if (await rateLimited(`casa:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
+  if (
+    (await rateLimited(`casa:hora:${ip}`, CRIAR_MAX_HORA, CRIAR_JANELA_HORA)) ||
+    (await rateLimited(`casa:dia:${ip}`, CRIAR_MAX_DIA, CRIAR_JANELA_DIA))
+  ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
 
@@ -37,7 +50,7 @@ export async function POST(req: NextRequest) {
 // token da casa no header, como o sync. Apaga a casa e todos os dados.
 export async function DELETE(req: NextRequest) {
   const ip = ipDaRequest(req.headers);
-  if (await rateLimited(`casa-del:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
+  if (await rateLimited(`casa-del:${ip}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
 
