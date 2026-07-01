@@ -1,3 +1,4 @@
+import * as SecureStore from 'expo-secure-store';
 import type { SyncSnapshot } from '@repona/core';
 import { API_BASE_URL } from '../config';
 import { getSetting, setSetting, deleteSetting } from './settings';
@@ -6,6 +7,28 @@ import { buildLocalSnapshot, applySnapshot } from './sync';
 const CASA_CODE_KEY = 'casa_code';
 const LAST_SYNC_KEY = 'last_sync_at';
 const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
+
+// O token da casa é a única credencial (sync, login web, exclusão de conta), por
+// isso mora no armazenamento seguro do SO (Keychain/Keystore), não no SQLite
+// comum — em aparelho comprometido ou backup local, o token não fica legível.
+// (auditoria #53)
+async function getCasaCodeSeguro(): Promise<string | null> {
+  const seguro = await SecureStore.getItemAsync(CASA_CODE_KEY);
+  if (seguro !== null) return seguro;
+  // Migra instalações que guardavam o token no SQLite (versões anteriores):
+  // move para o SecureStore e apaga do SQLite, uma vez só.
+  const legado = await getSetting(CASA_CODE_KEY);
+  if (legado !== null) {
+    await SecureStore.setItemAsync(CASA_CODE_KEY, legado);
+    await deleteSetting(CASA_CODE_KEY);
+    return legado;
+  }
+  return null;
+}
+
+async function setCasaCodeSeguro(code: string): Promise<void> {
+  await SecureStore.setItemAsync(CASA_CODE_KEY, code);
+}
 
 export type SyncResult =
   | { ok: true; lastSyncAt: string }
@@ -16,7 +39,7 @@ export type DeleteResult =
   | { ok: false; error: 'NOT_PAIRED' | 'NETWORK' | 'CASA_NOT_FOUND' | 'SERVER' };
 
 export async function getCasaCode(): Promise<string | null> {
-  return getSetting(CASA_CODE_KEY);
+  return getCasaCodeSeguro();
 }
 
 export async function getLastSyncAt(): Promise<string | null> {
@@ -24,7 +47,8 @@ export async function getLastSyncAt(): Promise<string | null> {
 }
 
 export async function unpairCasa(): Promise<void> {
-  await deleteSetting(CASA_CODE_KEY);
+  await SecureStore.deleteItemAsync(CASA_CODE_KEY);
+  await deleteSetting(CASA_CODE_KEY); // limpa também um eventual token legado no SQLite
   await deleteSetting(LAST_SYNC_KEY);
 }
 
@@ -55,7 +79,7 @@ export async function criarConta(nome: string): Promise<SyncResult> {
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
   const { token } = (await response.json()) as { token: string };
-  await setSetting(CASA_CODE_KEY, token);
+  await setCasaCodeSeguro(token);
   return enviarSnapshot(token);
 }
 
@@ -68,7 +92,7 @@ export async function pairAndSync(code: string): Promise<SyncResult> {
 
   const result = await enviarSnapshot(normalized);
   if (result.ok) {
-    await setSetting(CASA_CODE_KEY, normalized);
+    await setCasaCodeSeguro(normalized);
   }
   return result;
 }

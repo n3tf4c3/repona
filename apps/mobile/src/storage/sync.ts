@@ -19,7 +19,15 @@ function dentroDaJanela(isoDate: string, cutoffMs: number): boolean {
 // compras é transitória e fica de fora — só dados duráveis vão pra nuvem.
 export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const database = await initializeDatabase();
-  const cutoffMs = Date.now() - EVENT_WINDOW_MS;
+  // Na primeira sincronização (nunca sincronizou) manda o histórico inteiro, sem
+  // a janela: senão, um aparelho usado offline por muito tempo antes de parear
+  // teria eventos antigos que nunca chegaram à nuvem descartados de vez. Depois
+  // do primeiro sync a janela vale de novo — o que ficou de fora já subiu antes.
+  // (auditoria #56)
+  const jaSincronizou = await database.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = 'last_sync_at' LIMIT 1`,
+  );
+  const cutoffMs = jaSincronizou ? Date.now() - EVENT_WINDOW_MS : 0;
 
   const produtos = await listAllProductsForSync();
   const compras = (await listPurchaseHistoryRecords()).filter((c) =>
@@ -190,6 +198,25 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           );
           if (colide) nomeFinal = row.name;
         }
+        // Se o barcode recebido já pertence a OUTRO produto local, não sobrescreve
+        // (o produto casou por syncId/nome, não por barcode): manter o local
+        // evita duplicar código de barras no SQLite, espelhando o backend, que
+        // tem índice único parcial por casa+barcode. (auditoria #59)
+        let barcodeFinal = prod.barcode;
+        if (prod.barcode?.trim()) {
+          const colideBarcode = await database.getFirstAsync<{ barcode: string | null }>(
+            'SELECT barcode FROM products WHERE trim(barcode) = ? AND id <> ? LIMIT 1',
+            prod.barcode.trim(),
+            row.id,
+          );
+          if (colideBarcode) {
+            const atual = await database.getFirstAsync<{ barcode: string | null }>(
+              'SELECT barcode FROM products WHERE id = ? LIMIT 1',
+              row.id,
+            );
+            barcodeFinal = atual?.barcode ?? null;
+          }
+        }
         await database.runAsync(
           `UPDATE products SET
              name = ?, category = ?, brand = ?, barcode = ?,
@@ -198,7 +225,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           nomeFinal,
           prod.category,
           prod.brand ?? null,
-          prod.barcode,
+          barcodeFinal,
           prod.status,
           prod.alertThreshold,
           prod.archived ? 1 : 0,

@@ -93,6 +93,11 @@ const JANELA_SEG = 60;
 const MAX_POR_JANELA = 30;
 const MAX_POR_TOKEN = 60;
 
+// Teto de bytes do corpo, checado antes do req.json(): um snapshot cheio (2k
+// produtos + 30k eventos) fica bem abaixo disto. Rejeita cedo, sem gastar
+// memória/CPU no parse de um payload gigante. (auditoria #55)
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
   const ip = ipDaRequest(req.headers);
   if (await rateLimited(`sync:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
@@ -109,6 +114,11 @@ export async function POST(req: NextRequest) {
   const casaId = await obterCasaPorCodigo(code);
   if (!casaId) {
     return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });
+  }
+
+  const tamanho = Number(req.headers.get("content-length"));
+  if (Number.isFinite(tamanho) && tamanho > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "PAYLOAD_TOO_LARGE" }, { status: 413 });
   }
 
   let body: unknown;
