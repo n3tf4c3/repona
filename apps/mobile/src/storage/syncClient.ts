@@ -98,7 +98,13 @@ export async function excluirConta(): Promise<DeleteResult> {
 }
 
 async function enviarSnapshot(code: string): Promise<SyncResult> {
-  const snapshot = await buildLocalSnapshot();
+  // Falha ao montar o snapshot local (SQLite) é local, não de rede. (auditoria #57)
+  let snapshot: SyncSnapshot;
+  try {
+    snapshot = await buildLocalSnapshot();
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
 
   let response: Response;
   try {
@@ -117,8 +123,14 @@ async function enviarSnapshot(code: string): Promise<SyncResult> {
   if (response.status === 409) return { ok: false, error: 'BUSY' };
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
-  const merged = (await response.json()) as SyncSnapshot;
-  await applySnapshot(merged);
+  // JSON inesperado ou falha ao aplicar o snapshot no SQLite não devem escapar
+  // como exceção não tratada e deixar a UI travada. (auditoria #57)
+  try {
+    const merged = (await response.json()) as SyncSnapshot;
+    await applySnapshot(merged);
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
 
   const at = new Date().toISOString();
   await setSetting(LAST_SYNC_KEY, at);

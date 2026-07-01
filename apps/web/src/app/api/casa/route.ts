@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { criarContaNuvem, excluirCasa, obterCasaPorCodigo } from "@/server/modules/casa";
+import { criarContaNuvem, excluirCasa, obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 
 const bodySchema = z.object({
@@ -58,7 +58,10 @@ export async function DELETE(req: NextRequest) {
   // Também por token, não só por IP: a exclusão é irreversível e o token no
   // header é o alvo — sem isto, tentativas podiam ser distribuídas por vários
   // IPs sem esbarrar no limite (mesma defesa do login, #20). (auditoria #47)
-  if (await rateLimited(`casa-del:token:${code}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
+  // Só o formato válido vira chave; header arbitrário cai num bucket fixo para
+  // não inflar rate_limits. (auditoria #54)
+  const tokenKey = CASA_CODE_REGEX.test(code) ? code : "invalido";
+  if (await rateLimited(`casa-del:token:${tokenKey}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   const casaId = await obterCasaPorCodigo(code);

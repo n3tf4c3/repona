@@ -86,33 +86,43 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
   async function handleCreate() {
     setBusy(true);
     setMessage(null);
-    const result = await criarConta(name);
-    if (result.ok) {
-      setPairedCode(await getCasaCode());
-      setName('');
+    // finally garante que a UI saia do estado ocupado mesmo se um passo local
+    // (ex.: getCasaCode no SQLite) falhar. (auditoria #57)
+    try {
+      const result = await criarConta(name);
+      if (result.ok) {
+        setPairedCode(await getCasaCode());
+        setName('');
+      }
+      handleResult(result);
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    handleResult(result);
   }
 
   async function handlePair() {
     setBusy(true);
     setMessage(null);
-    const result = await pairAndSync(code);
-    setBusy(false);
-    if (result.ok) {
-      setPairedCode(code.trim().toUpperCase());
-      setCode('');
+    try {
+      const result = await pairAndSync(code);
+      if (result.ok) {
+        setPairedCode(code.trim().toUpperCase());
+        setCode('');
+      }
+      handleResult(result);
+    } finally {
+      setBusy(false);
     }
-    handleResult(result);
   }
 
   async function handleSync() {
     setBusy(true);
     setMessage(null);
-    const result = await syncNow();
-    setBusy(false);
-    handleResult(result);
+    try {
+      handleResult(await syncNow());
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleDeleteAccount() {
@@ -128,14 +138,17 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
             void (async () => {
               setBusy(true);
               setMessage(null);
-              const result = await excluirConta();
-              setBusy(false);
-              if (result.ok) {
-                setPairedCode(null);
-                setLastSyncAt(null);
-                setMessage({ kind: 'ok', text: 'Conta excluída da nuvem.' });
-              } else {
-                setMessage({ kind: 'error', text: SYNC_ERROR_MESSAGES[result.error] });
+              try {
+                const result = await excluirConta();
+                if (result.ok) {
+                  setPairedCode(null);
+                  setLastSyncAt(null);
+                  setMessage({ kind: 'ok', text: 'Conta excluída da nuvem.' });
+                } else {
+                  setMessage({ kind: 'error', text: SYNC_ERROR_MESSAGES[result.error] });
+                }
+              } finally {
+                setBusy(false);
               }
             })();
           },

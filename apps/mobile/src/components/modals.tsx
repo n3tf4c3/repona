@@ -394,6 +394,7 @@ export function NewProductSheet({
               style={styles.input}
               placeholder="Ex.: 2 un ou 500 g"
               placeholderTextColor={colors.ink3}
+              maxLength={FIELD_LIMITS.alertThreshold}
             />
           </View>
           <Pressable style={styles.occasionalRow} onPress={() => setOccasional((value) => !value)}>

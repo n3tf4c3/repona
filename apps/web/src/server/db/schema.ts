@@ -228,9 +228,10 @@ export const priceHistory = pgTable(
 // dependiam de Vercel KV; como o projeto não usa serviço externo pago, o estado
 // distribuído mora no Neon — fonte única, global entre instâncias serverless.
 
-// Contador de rate limit por chave (IP/rota). reset_em marca o fim da janela; ao
-// expirar, o contador recomeça. Linhas velhas são sobrescritas pela própria
-// chave (volume pequeno; sem necessidade de limpeza dedicada).
+// Contador de rate limit por chave (IP/rota/token). reset_em marca o fim da
+// janela; ao expirar, o contador recomeça. As chaves incluem IP e token, de
+// cardinalidade não-limitada — a limpeza é a poda oportunística em rateLimit.ts
+// (auditoria #49), não a sobrescrita pela própria chave.
 export const rateLimits = pgTable("rate_limits", {
   chave: text("chave").primaryKey(),
   count: integer("count").notNull(),

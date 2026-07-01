@@ -23,6 +23,24 @@ function gerarCodigo(): string {
   return codigo;
 }
 
+// Formato do token da casa (mesmo alfabeto de gerarCodigo). Exportado para as
+// rotas validarem o header x-casa-code antes de usá-lo como chave de rate limit,
+// evitando inflar rate_limits com valores arbitrários. (auditoria #54)
+export const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
+
+// Postgres unique_violation: só a colisão do código único justifica gerar outro
+// e tentar de novo. Qualquer outro erro (banco indisponível, timeout, outra
+// constraint) deve propagar de imediato, sem mascarar a causa nem gastar os 5
+// retries. (auditoria #64)
+function ehColisaoDeCodigo(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
 async function criarCasa(name: string): Promise<{ id: number; code: string }> {
   // Tenta algumas vezes em caso de colisão do código único.
   for (let tentativa = 0; tentativa < 5; tentativa++) {
@@ -34,7 +52,7 @@ async function criarCasa(name: string): Promise<{ id: number; code: string }> {
         .returning({ id: casas.id });
       return { id: casa.id, code };
     } catch (error) {
-      if (tentativa === 4) throw error;
+      if (!ehColisaoDeCodigo(error) || tentativa === 4) throw error;
     }
   }
   throw new Error("CASA_CREATE_FAILED");
@@ -109,7 +127,7 @@ export async function regenerarCodigo(casaId: number): Promise<void> {
         .where(eq(casas.id, casaId));
       return;
     } catch (error) {
-      if (tentativa === 4) throw error;
+      if (!ehColisaoDeCodigo(error) || tentativa === 4) throw error;
     }
   }
 }

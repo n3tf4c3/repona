@@ -57,14 +57,14 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 51 | Dependencia bcryptjs sem uso no codigo | Baixa | RESOLVIDO | bcryptjs e @types/bcryptjs removidos de apps/web (npm uninstall); lockfile sincronizado. Resolvido 2026-07-01. |
 | 52 | Segredos reais existem em .env.local no workspace local | Alta | ABERTO | Auditoria 2026-07-01: arquivo ignorado existe e build carrega .env.local; valores nao expostos no relatorio. |
 | 53 | Token da casa e salvo em SQLite comum no mobile | Alta | ABERTO | Auditoria 2026-07-01: CASA_CODE_KEY persiste em settings do SQLite. |
-| 54 | Rate limit por token usa header nao validado como chave persistida | Media | ABERTO | Auditoria 2026-07-01: x-casa-code entra em sync:token/casa-del:token antes de validar formato/tamanho. |
+| 54 | Rate limit por token usa header nao validado como chave persistida | Media | RESOLVIDO | CASA_CODE_REGEX valida x-casa-code; formato invalido cai em bucket fixo "invalido" (sync/route.ts, casa/route.ts). Resolvido 2026-07-01. |
 | 55 | Endpoint de sync nao limita bytes antes de req.json nem pagina retorno | Media | ABERTO | Auditoria 2026-07-01: limites sao por array apos parse; resposta e snapshot completo. |
 | 56 | Eventos offline antigos podem nunca subir para a nuvem | Media | ABERTO | Auditoria 2026-07-01: mobile filtra compras/consumos fora da janela sem marcador de ja sincronizado. |
-| 57 | Falhas locais no sync mobile podem escapar sem restaurar a UI | Media | ABERTO | Auditoria 2026-07-01: erros fora do fetch escapam e PerfilScreen nao usa finally para busy. |
+| 57 | Falhas locais no sync mobile podem escapar sem restaurar a UI | Media | RESOLVIDO | enviarSnapshot envolve buildLocalSnapshot/json/applySnapshot em try/catch tipado; PerfilScreen usa try/finally no busy. Resolvido 2026-07-01. |
 | 58 | Criacao de conta salva token antes da primeira sincronizacao completar | Media | ABERTO | Auditoria 2026-07-01: criarConta persiste CASA_CODE_KEY antes de enviarSnapshot concluir. |
 | 59 | Aplicacao de snapshot no mobile nao protege colisao de barcode | Media | ABERTO | Auditoria 2026-07-01: SQLite nao tem unique em barcode e applySnapshot nao preserva local em colisao. |
-| 60 | Categoria aceita pelo sync diverge do enum validado no web | Baixa | ABERTO | Auditoria 2026-07-01: sync aceita string; web usa enum CATEGORIAS. |
-| 61 | Basic Auth do admin aceita credencial sem separador dois-pontos | Baixa | ABERTO | Auditoria 2026-07-01: middleware compara decoded inteiro quando nao ha separador. |
-| 62 | Campo mobile de alerta de estoque nao limita caracteres na UI | Baixa | ABERTO | Auditoria 2026-07-01: TextInput de alertThreshold nao usa maxLength, embora core limite. |
-| 63 | Comentario do schema de rate_limits contradiz a poda ja implementada | Baixa | ABERTO | Reauditoria 2026-07-01: schema.ts diz "sem necessidade de limpeza dedicada", mas #49 adicionou poda por cardinalidade nao-limitada (IP/token). |
-| 64 | Retry de criacao/regeneracao de casa trata qualquer erro como colisao | Baixa | ABERTO | Reauditoria 2026-07-01: criarCasa/regenerarCodigo capturam qualquer erro no loop de retry, nao so violacao de unicidade. |
+| 60 | Categoria aceita pelo sync diverge do enum validado no web | Baixa | RESOLVIDO | sync usa z.enum(CATEGORIAS).catch("Mercearia"): normaliza categoria fora do enum sem rejeitar o snapshot inteiro (sync/route.ts). Resolvido 2026-07-01. |
+| 61 | Basic Auth do admin aceita credencial sem separador dois-pontos | Baixa | RESOLVIDO | middleware exige indexOf(":") != -1 antes de comparar a senha (middleware.ts). Resolvido 2026-07-01. |
+| 62 | Campo mobile de alerta de estoque nao limita caracteres na UI | Baixa | RESOLVIDO | TextInput de alertThreshold usa maxLength={FIELD_LIMITS.alertThreshold} (modals.tsx). Resolvido 2026-07-01. |
+| 63 | Comentario do schema de rate_limits contradiz a poda ja implementada | Baixa | RESOLVIDO | Comentario reescrito: cardinalidade nao-limitada (IP/token), limpeza e a poda oportunistica em rateLimit.ts (schema.ts). Resolvido 2026-07-01. |
+| 64 | Retry de criacao/regeneracao de casa trata qualquer erro como colisao | Baixa | RESOLVIDO | ehColisaoDeCodigo restringe o retry a unique_violation (23505); demais erros propagam de imediato (casa.ts). Resolvido 2026-07-01. |

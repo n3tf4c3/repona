@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { FIELD_LIMITS, MAX_PRICE_CENTS } from "@repona/core";
-import { obterCasaPorCodigo } from "@/server/modules/casa";
+import { CATEGORIAS, FIELD_LIMITS, MAX_PRICE_CENTS } from "@repona/core";
+import { obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
 import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
 
@@ -14,7 +14,11 @@ const snapshotSchema = z.object({
         syncId: z.string().uuid().optional(),
         updatedAt: z.string().datetime({ offset: true }).optional(),
         name: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        category: z.string().max(FIELD_LIMITS.category),
+        // Mesmo enum validado na criação/edição do web. Um cliente antigo ou
+        // corrompido pode mandar categoria fora do enum; normaliza para o padrão
+        // ("Mercearia", o default do mobile) em vez de rejeitar o snapshot
+        // INTEIRO da casa. (auditoria #60)
+        category: z.enum(CATEGORIAS).catch("Mercearia"),
         // Clientes antigos não enviam brand: default mantém compat.
         brand: z.string().max(FIELD_LIMITS.brand).nullish().default(null),
         // Normaliza: trim e vazio -> null, para "789" e " 789 " não virarem
@@ -96,7 +100,10 @@ export async function POST(req: NextRequest) {
   }
 
   const code = req.headers.get("x-casa-code")?.trim().toUpperCase() ?? "";
-  if (await rateLimited(`sync:token:${code}`, MAX_POR_TOKEN, JANELA_SEG)) {
+  // Chave de rate limit por token só com formato válido; um header arbitrário cai
+  // num bucket fixo, para não inflar rate_limits com valores distintos. (#54)
+  const tokenKey = CASA_CODE_REGEX.test(code) ? code : "invalido";
+  if (await rateLimited(`sync:token:${tokenKey}`, MAX_POR_TOKEN, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   const casaId = await obterCasaPorCodigo(code);

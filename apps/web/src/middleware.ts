@@ -28,8 +28,12 @@ function autorizado(header: string | null, secret: string): boolean {
   } catch {
     return false;
   }
+  // Exige o separador user:pass do Basic; sem ele a credencial é malformada e a
+  // string inteira não deve ser comparada ao segredo. (auditoria #61)
+  const sep = decoded.indexOf(":");
+  if (sep === -1) return false;
   // Aceita qualquer usuário; a credencial é a senha (= ADMIN_SECRET).
-  const senha = decoded.slice(decoded.indexOf(":") + 1);
+  const senha = decoded.slice(sep + 1);
   return constEq(senha, secret);
 }
 
