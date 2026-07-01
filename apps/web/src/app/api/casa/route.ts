@@ -55,6 +55,12 @@ export async function DELETE(req: NextRequest) {
   }
 
   const code = req.headers.get("x-casa-code")?.trim().toUpperCase() ?? "";
+  // Também por token, não só por IP: a exclusão é irreversível e o token no
+  // header é o alvo — sem isto, tentativas podiam ser distribuídas por vários
+  // IPs sem esbarrar no limite (mesma defesa do login, #20). (auditoria #47)
+  if (await rateLimited(`casa-del:token:${code}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
+    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+  }
   const casaId = await obterCasaPorCodigo(code);
   if (!casaId) {
     return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });

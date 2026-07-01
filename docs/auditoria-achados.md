@@ -50,8 +50,8 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 44 | Rate limit e lock distribuido falham aberto quando KV nao esta configurado | Alta | RESOLVIDO | Rate limit e lock de sync migrados para o Neon Postgres (tabelas rate_limits/sync_locks, rateLimit.ts); @vercel/kv removido; sem servico externo/custo. Resolvido 2026-06-27. |
 | 45 | Exclusao de conta pela aplicacao nao e atomica | Alta | RESOLVIDO | excluirCasa usa db.batch (uma transacao neon-http) em modules/casa.ts. Resolvido 2026-06-27. |
 | 46 | README orienta fluxo de migration que o projeto desativou | Media | RESOLVIDO | README aponta db:push com aviso de db:migrate desativado. Resolvido 2026-06-27. |
-| 47 | Exclusao de conta e sincronizacao rate-limitam so por IP, sem chave por token | Alta | ABERTO | DELETE /api/casa e POST /api/sync nao tem rate limit por token (so por IP), diferente do login (#20). Identificado 2026-06-30. |
-| 48 | Painel /admin sem rate limit no Basic Auth | Media | ABERTO | middleware.ts nao chama rateLimited antes de validar ADMIN_SECRET; painel pode apagar qualquer casa. Identificado 2026-06-30. |
-| 49 | Tabela rate_limits nunca e podada | Media | ABERTO | Sem job/cron de limpeza; chaves por IP/token tem cardinalidade nao-limitada (schema.ts/rateLimit.ts). Identificado 2026-06-30. |
-| 50 | Comentario desatualizado sobre Vercel KV em sync/route.ts | Baixa | ABERTO | sync/route.ts:82 ainda cita KV/fallback em memoria, removidos no achado #44. Identificado 2026-06-30. |
-| 51 | Dependencia bcryptjs sem uso no codigo | Baixa | ABERTO | bcryptjs e @types/bcryptjs em apps/web/package.json sem nenhuma referencia em src/scripts. Identificado 2026-06-30. |
+| 47 | Exclusao de conta e sincronizacao rate-limitam so por IP, sem chave por token | Alta | RESOLVIDO | sync/casa (DELETE) aplicam rateLimited por token (sync:token:/casa-del:token:) alem do IP. Resolvido 2026-07-01. |
+| 48 | Painel /admin sem rate limit no Basic Auth | Media | RESOLVIDO | middleware.ts limita admin:ip: antes do Basic Auth; rateLimit.ts edge-safe (crypto.randomUUID global). Resolvido 2026-07-01. |
+| 49 | Tabela rate_limits nunca e podada | Media | RESOLVIDO | Poda oportunistica em rateLimited (2%/hit apaga expirados >1h); sem cron. Resolvido 2026-07-01. |
+| 50 | Comentario desatualizado sobre Vercel KV em sync/route.ts | Baixa | RESOLVIDO | Comentario reescrito para o backing Postgres (sem KV/memoria). Resolvido 2026-07-01. |
+| 51 | Dependencia bcryptjs sem uso no codigo | Baixa | RESOLVIDO | bcryptjs e @types/bcryptjs removidos de apps/web (npm uninstall); lockfile sincronizado. Resolvido 2026-07-01. |

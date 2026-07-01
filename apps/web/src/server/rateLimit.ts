@@ -1,6 +1,5 @@
 import "server-only";
-import { randomUUID } from "crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { rateLimits, syncLocks } from "@/server/db/schema";
 
@@ -47,11 +46,22 @@ export async function rateLimited(
       },
     })
     .returning({ count: rateLimits.count });
+  // Poda oportunística (auditoria #49): as chaves incluem IP e token, de
+  // cardinalidade não-limitada, então sem limpeza a tabela cresceria sem teto.
+  // Com baixa probabilidade, apaga contadores expirados há mais de uma hora —
+  // sem cron/infra externa. Uma linha removida por engano é reinserida pelo
+  // próximo hit (o upsert recria com count=1), então é seguro.
+  if (Math.random() < 0.02) {
+    await db.delete(rateLimits).where(lt(rateLimits.resetEm, new Date(Date.now() - 60 * 60 * 1000)));
+  }
   return (r?.count ?? 1) > max;
 }
 
 export async function tryLock(chave: string, ttlSeg: number): Promise<string | null> {
-  const token = randomUUID();
+  // crypto global (Web Crypto), disponível no Node 20+ e no Edge runtime — sem
+  // import de `node:crypto`, para este módulo poder ser usado também no
+  // middleware (Edge) que agora aplica rate limit no /admin. (auditoria #48)
+  const token = crypto.randomUUID();
   const expiraEm = new Date(Date.now() + ttlSeg * 1000);
   // Adquire só se não há lock vivo: insere e, em conflito, sobrescreve apenas se
   // o lock atual já expirou (setWhere). O RETURNING devolve linha quando de fato

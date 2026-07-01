@@ -79,9 +79,15 @@ const snapshotSchema = z.object({
     .default([]),
 });
 
-// Rate limit por IP via Vercel KV (auditoria #12), com fallback em memória.
+// Rate limit do sync (auditoria #12) sobre o Postgres (auditoria #44, não há
+// mais Vercel KV nem fallback em memória). Por IP e por token: sem a chave por
+// token, tentativas contra uma casa podiam ser distribuídas por vários IPs sem
+// esbarrar no limite — mesma defesa que o login ganhou no #20. O teto por token
+// é folgado para não bloquear uma casa com vários aparelhos sincronizando.
+// (auditoria #47)
 const JANELA_SEG = 60;
 const MAX_POR_JANELA = 30;
+const MAX_POR_TOKEN = 60;
 
 export async function POST(req: NextRequest) {
   const ip = ipDaRequest(req.headers);
@@ -90,6 +96,9 @@ export async function POST(req: NextRequest) {
   }
 
   const code = req.headers.get("x-casa-code")?.trim().toUpperCase() ?? "";
+  if (await rateLimited(`sync:token:${code}`, MAX_POR_TOKEN, JANELA_SEG)) {
+    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+  }
   const casaId = await obterCasaPorCodigo(code);
   if (!casaId) {
     return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });

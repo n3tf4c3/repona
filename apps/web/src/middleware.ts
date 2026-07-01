@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 
 // Proteção do painel admin (/admin) por HTTP Basic Auth contra ADMIN_SECRET.
 // O web não tem papel de administrador — o login normal é só o token de uma
@@ -32,11 +33,23 @@ function autorizado(header: string | null, secret: string): boolean {
   return constEq(senha, secret);
 }
 
-export function middleware(req: NextRequest) {
+// Throttle do Basic Auth (auditoria #48): diferente do login, sync e criação/
+// exclusão de casa, o painel não limitava tentativas contra o ADMIN_SECRET,
+// apesar de poder excluir qualquer casa. Limita por IP. Folgado o bastante para
+// não atrapalhar o admin legítimo (que pode apagar várias casas em sequência),
+// mas fecha o brute force distribuído. Erro do limiter propaga (fail-closed),
+// como nas demais rotas.
+const ADMIN_JANELA_SEG = 60;
+const ADMIN_MAX_POR_IP = 60;
+
+export async function middleware(req: NextRequest) {
   const secret = process.env.ADMIN_SECRET;
   if (!secret || secret.length < 16) {
     // Sem segredo configurado o painel fica indisponível, nunca aberto.
     return new NextResponse("Painel admin indisponível.", { status: 503 });
+  }
+  if (await rateLimited(`admin:ip:${ipDaRequest(req.headers)}`, ADMIN_MAX_POR_IP, ADMIN_JANELA_SEG)) {
+    return new NextResponse("Muitas tentativas. Aguarde e tente novamente.", { status: 429 });
   }
   if (autorizado(req.headers.get("authorization"), secret)) {
     return NextResponse.next();
