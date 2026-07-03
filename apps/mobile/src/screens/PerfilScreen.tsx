@@ -44,8 +44,7 @@ export function FutureScreen({ onSynced }: { onSynced: () => void }) {
 const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], string> = {
   NOT_PAIRED: 'Crie uma conta ou conecte com um token primeiro.',
   INVALID_CODE: 'Token inválido. São 8 caracteres (letras e números).',
-  INVALID_NAME: 'Informe um nome para a conta.',
-  NETWORK: 'Sem conexão com o servidor. Confira a rede e a URL da API.',
+  NETWORK: 'Sem conexão. O backup precisa de internet para ser ativado.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
   BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
   SERVER: 'O servidor recusou a operação. Tente de novo.',
@@ -59,8 +58,8 @@ function formatSyncMoment(iso: string): string {
 }
 
 function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
-  const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [showTokenInput, setShowTokenInput] = useState(false);
   const [pairedCode, setPairedCode] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,10 +88,9 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
     // finally garante que a UI saia do estado ocupado mesmo se um passo local
     // (ex.: getCasaCode no SQLite) falhar. (auditoria #57)
     try {
-      const result = await criarConta(name);
+      const result = await criarConta();
       if (result.ok) {
         setPairedCode(await getCasaCode());
-        setName('');
       }
       handleResult(result);
     } finally {
@@ -214,52 +212,49 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
         </>
       ) : (
         <>
-          <View style={styles.inputBox}>
-            <MaterialCommunityIcons name="account-outline" size={20} color={colors.primaryStrong} />
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              style={styles.input}
-              placeholder="Nome da conta (ex.: Casa do Paulo)"
-              placeholderTextColor={colors.ink3}
-              maxLength={80}
-            />
-          </View>
+          {/* Caminho feliz: um toque, sem digitar nada. O nome nasce automático e
+              a nuvem devolve o token, que aparece no bloco pareado acima. */}
           <Pressable
             style={[styles.saveButton, busy ? styles.saveButtonDisabled : null]}
             disabled={busy}
             onPress={handleCreate}
           >
-            <MaterialCommunityIcons name="account-plus-outline" size={20} color={colors.surface} />
-            <Text style={styles.saveButtonText}>{busy ? 'Criando...' : 'Criar conta'}</Text>
+            <MaterialCommunityIcons name="cloud-upload-outline" size={20} color={colors.surface} />
+            <Text style={styles.saveButtonText}>{busy ? 'Ativando...' : 'Ativar backup na nuvem'}</Text>
           </Pressable>
 
-          <View style={styles.syncDivider}>
-            <View style={styles.syncDividerLine} />
-            <Text style={styles.syncDividerText}>ou já tenho um token</Text>
-            <View style={styles.syncDividerLine} />
-          </View>
-
-          <View style={styles.inputBox}>
-            <MaterialCommunityIcons name="key-outline" size={20} color={colors.primaryStrong} />
-            <TextInput
-              value={code}
-              onChangeText={(text) => setCode(text.toUpperCase())}
-              style={styles.input}
-              placeholder="Token (8 caracteres)"
-              placeholderTextColor={colors.ink3}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={8}
-            />
-          </View>
-          <Pressable
-            style={styles.syncUnpairButton}
-            disabled={busy}
-            onPress={handlePair}
-          >
-            <Text style={styles.syncConnectText}>{busy ? 'Conectando...' : 'Conectar com token'}</Text>
-          </Pressable>
+          {/* Entrar numa casa que já existe é o caminho secundário — fica atrás de
+              um toque para quem realmente tem um código, evitando que alguém crie
+              uma casa nova sem querer. */}
+          {showTokenInput ? (
+            <>
+              <View style={styles.syncDivider}>
+                <View style={styles.syncDividerLine} />
+                <Text style={styles.syncDividerText}>código da casa</Text>
+                <View style={styles.syncDividerLine} />
+              </View>
+              <View style={styles.inputBox}>
+                <MaterialCommunityIcons name="key-outline" size={20} color={colors.primaryStrong} />
+                <TextInput
+                  value={code}
+                  onChangeText={(text) => setCode(text.toUpperCase())}
+                  style={styles.input}
+                  placeholder="Token (8 caracteres)"
+                  placeholderTextColor={colors.ink3}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={8}
+                />
+              </View>
+              <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handlePair}>
+                <Text style={styles.syncConnectText}>{busy ? 'Conectando...' : 'Conectar com o código'}</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={() => setShowTokenInput(true)}>
+              <Text style={styles.syncConnectText}>Já tenho um código da casa</Text>
+            </Pressable>
+          )}
         </>
       )}
 

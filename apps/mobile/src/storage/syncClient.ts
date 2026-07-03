@@ -32,7 +32,7 @@ async function setCasaCodeSeguro(code: string): Promise<void> {
 
 export type SyncResult =
   | { ok: true; lastSyncAt: string }
-  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'INVALID_NAME' | 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
+  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
 
 export type DeleteResult =
   | { ok: true }
@@ -59,18 +59,21 @@ export async function syncNow(): Promise<SyncResult> {
   return enviarSnapshot(code);
 }
 
-// Cria a conta na nuvem (nome + token). O token gerado fica salvo e é a
-// credencial usada para acessar pelo web. Já faz a primeira sincronização.
-export async function criarConta(nome: string): Promise<SyncResult> {
-  const n = nome.trim();
-  if (!n) return { ok: false, error: 'INVALID_NAME' };
+// Nome padrão da conta. O nome é só um rótulo (não é credencial nem tem
+// unicidade), então nasce automático para o usuário não precisar decidir nada
+// ao ativar o backup — a única coisa que importa é o token que a nuvem devolve.
+const NOME_PADRAO = 'Minha casa';
 
+// Cria a conta na nuvem e devolve o token gerado, que fica salvo e é a
+// credencial usada para acessar pelo web. Já faz a primeira sincronização.
+// Sem parâmetros: o nome é automático (NOME_PADRAO) para o fluxo ser um toque só.
+export async function criarConta(): Promise<SyncResult> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}/api/casa`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome: n }),
+      body: JSON.stringify({ nome: NOME_PADRAO }),
     });
   } catch {
     return { ok: false, error: 'NETWORK' };
