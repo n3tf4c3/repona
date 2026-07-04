@@ -3,13 +3,14 @@ import { getAuthSession, requireCasa } from "@/server/auth/session";
 import { obterCasaPorId } from "@/server/modules/casa";
 import { CasaClient } from "./casa-client";
 
-const recursos: { title: string; description: string; Icon: LucideIcon }[] = [
-  { title: "Scanner de código", description: "Aponte a câmera e adicione produtos pelo código de barras.", Icon: ScanLine },
-  { title: "Cadastro por foto", description: "Tire uma foto do produto e complete o cadastro em menos passos.", Icon: Camera },
-  { title: "Estoque doméstico", description: "Saiba o que tem em casa, o que está acabando e o que precisa repor.", Icon: Home },
-  { title: "Compartilhamento familiar", description: "Catálogo, estoque e histórico da casa compartilhados entre os aparelhos.", Icon: Users },
-  { title: "Sugestões inteligentes", description: "Recompras previstas a partir dos hábitos de consumo.", Icon: Brain },
-  { title: "Ciclo de vida do item", description: "Planejado, comprado, consumido e em falta em um único fluxo.", Icon: RefreshCw },
+// "app": já disponível no aplicativo. "breve": ainda no roadmap.
+const recursos: { title: string; description: string; Icon: LucideIcon; status: "app" | "breve" }[] = [
+  { title: "Scanner de código", description: "Aponte a câmera e adicione produtos pelo código de barras.", Icon: ScanLine, status: "app" },
+  { title: "Cadastro por foto", description: "Tire uma foto do produto e complete o cadastro em menos passos.", Icon: Camera, status: "breve" },
+  { title: "Estoque doméstico", description: "Saiba o que tem em casa, o que está acabando e o que precisa repor.", Icon: Home, status: "app" },
+  { title: "Compartilhamento familiar", description: "Catálogo, estoque e histórico da casa compartilhados entre os aparelhos.", Icon: Users, status: "app" },
+  { title: "Sugestões inteligentes", description: "Recompras previstas a partir dos hábitos de consumo.", Icon: Brain, status: "app" },
+  { title: "Ciclo de vida do item", description: "Planejado, comprado, consumido e em falta em um único fluxo.", Icon: RefreshCw, status: "app" },
 ];
 
 export default async function PerfilPage() {
@@ -23,7 +24,7 @@ export default async function PerfilPage() {
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-ink-faint">No horizonte</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-ink-faint">Sua conta</p>
         <h1 className="text-2xl font-black tracking-tight">Casa Repona</h1>
       </div>
 
@@ -52,9 +53,9 @@ export default async function PerfilPage() {
 
       {/* Roadmap */}
       <section>
-        <h2 className="mb-2 text-sm font-bold text-ink-soft">Feito para crescer</h2>
+        <h2 className="mb-2 text-sm font-bold text-ink-soft">Recursos</h2>
         <div className="grid gap-3 sm:grid-cols-2">
-          {recursos.map(({ title, description, Icon }) => (
+          {recursos.map(({ title, description, Icon, status }) => (
             <div key={title} className="rounded-card border border-line bg-surface p-4">
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2 font-bold">
@@ -63,9 +64,15 @@ export default async function PerfilPage() {
                   </span>
                   {title}
                 </span>
-                <span className="shrink-0 rounded-full bg-amber-soft px-2 py-0.5 text-xs font-bold text-amber-ink">
-                  Em breve
-                </span>
+                {status === "app" ? (
+                  <span className="shrink-0 rounded-full bg-primary-soft px-2 py-0.5 text-xs font-bold text-primary-strong">
+                    No app
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full bg-amber-soft px-2 py-0.5 text-xs font-bold text-amber-ink">
+                    Em breve
+                  </span>
+                )}
               </div>
               <p className="mt-2 text-sm text-ink-faint">{description}</p>
             </div>
