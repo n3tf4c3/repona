@@ -242,6 +242,16 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       await db.execAsync('ALTER TABLE products ADD COLUMN brand TEXT;');
     }
   },
+
+  // v7: tombstone de compra para a edição do histórico. Excluir um item marca
+  // deleted em vez de apagar, para a exclusão propagar no sync sem ressuscitar
+  // (mesmo racional do v4 para itens da lista).
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(purchase_history)');
+    if (!cols.some((c) => c.name === 'deleted')) {
+      await db.execAsync('ALTER TABLE purchase_history ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
+    }
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

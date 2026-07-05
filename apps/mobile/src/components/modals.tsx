@@ -6,6 +6,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import type { BarcodeScanningResult } from 'expo-camera';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -97,12 +98,30 @@ export function PriceEntryModal({
 export function PurchaseDetailModal({
   purchase,
   priceSummaries,
+  products,
   onClose,
+  onRemoveLine,
+  onAddProduct,
 }: {
   purchase: PurchaseHistoryItem | null;
   priceSummaries: Map<number, PriceSummary>;
+  products: Product[];
   onClose: () => void;
+  onRemoveLine: (lineId: number) => void;
+  onAddProduct: (purchase: PurchaseHistoryItem, productId: number, quantity: string) => void;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [searchText, setSearchText] = useState('');
+
+  useEffect(() => {
+    if (purchase) {
+      setIsEditing(false);
+      setIsAddingProduct(false);
+      setSearchText('');
+    }
+  }, [purchase]);
+
   const estimate = useMemo(
     () =>
       estimateShoppingTotal(
@@ -114,22 +133,122 @@ export function PurchaseDetailModal({
     [purchase, priceSummaries],
   );
 
+  // Produtos que ainda não estão nesta compra, filtrados pela busca.
+  const availableProducts = useMemo(() => {
+    if (!purchase) return [];
+    const existingProductIds = new Set(purchase.lines.map((l) => l.productId));
+    const filtered = products.filter(
+      (p) => p.id !== undefined && !existingProductIds.has(p.id),
+    );
+    if (!searchText.trim()) return filtered;
+    const term = searchText.trim().toLowerCase();
+    return filtered.filter((p) => p.name.toLowerCase().includes(term));
+  }, [purchase, products, searchText]);
+
+  function handleRemoveLine(lineId: number) {
+    Alert.alert('Remover item', 'Remover este item do histórico desta compra?', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Remover', style: 'destructive', onPress: () => onRemoveLine(lineId) },
+    ]);
+  }
+
+  function handleAddProduct(product: Product) {
+    if (!purchase || !product.id) return;
+    onAddProduct(purchase, product.id, '1 un');
+    setIsAddingProduct(false);
+    setSearchText('');
+  }
+
+  function handleClose() {
+    setIsEditing(false);
+    setIsAddingProduct(false);
+    setSearchText('');
+    onClose();
+  }
+
   return (
-    <Modal visible={purchase !== null} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.modalScrim} onPress={onClose} />
+    <Modal visible={purchase !== null} transparent animationType="slide" onRequestClose={handleClose}>
+      <Pressable style={styles.modalScrim} onPress={handleClose} />
       <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
         <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>{purchase?.title ?? ''}</Text>
-        <Text style={styles.sheetSubtitle}>{purchase ? `${purchase.date} · ${purchase.count}` : ''}</Text>
-        <ScrollView style={styles.purchaseLinesScroll} contentContainerStyle={styles.purchaseLines}>
-          {purchase?.lines.map((line, index) => (
-            <View key={`${line.name}-${index}`} style={styles.purchaseLine}>
-              <Text style={styles.purchaseLineName} numberOfLines={1}>{line.name}</Text>
-              <Text style={styles.purchaseLineQty}>{line.quantity}</Text>
+        <View style={styles.purchaseHeaderRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sheetTitle}>{purchase?.title ?? ''}</Text>
+            <Text style={styles.sheetSubtitle}>{purchase ? `${purchase.date} · ${purchase.count}` : ''}</Text>
+          </View>
+          <Pressable
+            style={styles.purchaseEditButton}
+            onPress={() => {
+              setIsEditing((v) => !v);
+              setIsAddingProduct(false);
+              setSearchText('');
+            }}
+          >
+            <MaterialCommunityIcons
+              name={isEditing ? 'check' : 'pencil-outline'}
+              size={18}
+              color={colors.primaryStrong}
+            />
+            <Text style={styles.purchaseEditButtonText}>
+              {isEditing ? 'Concluir' : 'Editar'}
+            </Text>
+          </Pressable>
+        </View>
+        {isAddingProduct ? (
+          <ScrollView style={styles.purchaseLinesScroll} contentContainerStyle={styles.purchaseLines} keyboardShouldPersistTaps="handled">
+            <View style={styles.purchaseSearchBox}>
+              <MaterialCommunityIcons name="magnify" size={18} color={colors.ink3} />
+              <TextInput
+                value={searchText}
+                onChangeText={setSearchText}
+                style={styles.purchaseSearchInput}
+                placeholder="Buscar produto..."
+                placeholderTextColor={colors.ink3}
+                autoFocus
+              />
             </View>
-          ))}
-        </ScrollView>
-        {estimate.pricedCount > 0 ? (
+            {availableProducts.length === 0 ? (
+              <Text style={styles.sheetSubtitle}>Nenhum produto encontrado.</Text>
+            ) : null}
+            {availableProducts.map((product) => (
+              <Pressable
+                key={product.id}
+                style={styles.purchaseProductPickerItem}
+                onPress={() => handleAddProduct(product)}
+              >
+                <Text style={styles.purchaseProductPickerName} numberOfLines={1}>{product.name}</Text>
+                <Text style={styles.purchaseProductPickerMeta}>{product.category ?? ''}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView style={styles.purchaseLinesScroll} contentContainerStyle={styles.purchaseLines}>
+            {purchase?.lines.map((line, index) => (
+              <View key={`${line.name}-${index}`} style={styles.purchaseLine}>
+                {isEditing ? (
+                  <Pressable style={styles.purchaseLineRemove} onPress={() => handleRemoveLine(line.id)}>
+                    <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.coral} />
+                  </Pressable>
+                ) : null}
+                <Text style={styles.purchaseLineName} numberOfLines={1}>{line.name}</Text>
+                <Text style={styles.purchaseLineQty}>{line.quantity}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+        {isEditing && !isAddingProduct ? (
+          <Pressable style={styles.purchaseAddButton} onPress={() => setIsAddingProduct(true)}>
+            <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
+            <Text style={styles.purchaseAddButtonText}>Adicionar produto</Text>
+          </Pressable>
+        ) : null}
+        {isAddingProduct ? (
+          <Pressable style={styles.purchaseAddButton} onPress={() => { setIsAddingProduct(false); setSearchText(''); }}>
+            <MaterialCommunityIcons name="arrow-left" size={18} color={colors.primaryStrong} />
+            <Text style={styles.purchaseAddButtonText}>Voltar</Text>
+          </Pressable>
+        ) : null}
+        {estimate.pricedCount > 0 && !isAddingProduct ? (
           <View style={styles.estimateRow}>
             <View>
               <Text style={styles.estimateLabel}>Total estimado</Text>

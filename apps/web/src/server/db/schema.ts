@@ -152,6 +152,10 @@ export const purchaseHistory = pgTable(
     // Nome da lista de origem denormalizado: sobrevive ao sync (o id é local) e a
     // exclusões da lista. (auditoria #17)
     sourceListName: text("source_list_name"),
+    // Tombstone: a edição do histórico no mobile marca deleted em vez de apagar,
+    // para a exclusão propagar entre devices sem ser ressuscitada (o merge de
+    // compras é append-only). Mesmo racional do deleted em shopping_list_items.
+    deleted: boolean("deleted").notNull().default(false),
   },
   (table) => [
     index("purchase_history_product_idx").on(table.productId),

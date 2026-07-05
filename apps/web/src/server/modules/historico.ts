@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { PricePoint, PurchaseHistoryDTO } from "@repona/core";
 import { db } from "@/server/db";
 import { products, shoppingLists, purchaseHistory, priceHistory } from "@/server/db/schema";
@@ -21,7 +21,7 @@ export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDT
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .leftJoin(shoppingLists, eq(shoppingLists.id, purchaseHistory.sourceListId))
-    .where(eq(products.casaId, casaId))
+    .where(and(eq(products.casaId, casaId), eq(purchaseHistory.deleted, false)))
     .orderBy(desc(purchaseHistory.purchasedAt), asc(purchaseHistory.id));
 
   return rows.map((row) => ({

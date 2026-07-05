@@ -40,6 +40,12 @@ export type SyncPurchase = {
   // sincronizadas preservam a origem em vez de cair em "Compra finalizada".
   // Opcional/nulo para compras sem lista e clientes antigos.
   sourceListName?: string | null;
+  // Tombstone: a edição do histórico marca deleted em vez de apagar, para a
+  // exclusão propagar sem ressuscitar (mesmo racional do SyncListItem). Sem
+  // updatedAt/LWW de propósito: compra não tem "un-delete" e um cliente antigo
+  // (que não envia o campo) nunca deve reviver um tombstone — deleted vence.
+  // Opcional para tolerar clientes/servidores antigos.
+  deleted?: boolean;
 };
 
 export type SyncConsumption = {

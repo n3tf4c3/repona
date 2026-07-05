@@ -204,6 +204,7 @@ export async function mergeCasaSnapshot(
         purchaseCount: sql<number>`(
           SELECT COUNT(*)::int FROM purchase_history
           WHERE purchase_history.product_id = ${products.id}
+            AND purchase_history.deleted = false
         )`,
       })
       .where(eq(products.casaId, casaId))
@@ -284,15 +285,20 @@ async function mesclarCompras(
 ): Promise<Escrita[]> {
   const existentes = await db
     .select({
+      id: purchaseHistory.id,
       productId: purchaseHistory.productId,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
+      deleted: purchaseHistory.deleted,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .where(eq(products.casaId, casaId));
-  const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${normalizeQuantity(e.quantity)}`)
+  const porChave = new Map(
+    existentes.map((e) => [
+      `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${normalizeQuantity(e.quantity)}`,
+      e,
+    ])
   );
 
   const escritas: Escrita[] = [];
@@ -302,8 +308,25 @@ async function mesclarCompras(
     const at = new Date(compra.purchasedAt);
     if (Number.isNaN(at.getTime())) continue;
     const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(compra.quantity)}`;
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
+    const existente = porChave.get(chave);
+    if (existente) {
+      // Tombstone vence (nunca "un-delete"): um device antigo re-enviando a
+      // compra viva não ressuscita a exclusão feita em outro device.
+      if (compra.deleted && !existente.deleted) {
+        escritas.push(
+          db
+            .update(purchaseHistory)
+            .set({ deleted: true })
+            .where(eq(purchaseHistory.id, existente.id))
+        );
+        existente.deleted = true;
+      }
+      continue;
+    }
+    // Tombstone de evento desconhecido: ninguém mais o tem (o merge nunca
+    // apaga), então não há o que propagar.
+    if (compra.deleted) continue;
+    porChave.set(chave, { id: 0, productId, quantity: compra.quantity, purchasedAt: at, deleted: false });
     escritas.push(
       db.insert(purchaseHistory).values({
         casaId,
@@ -449,12 +472,15 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
     .where(eq(products.casaId, casaId));
 
+  // Inclui tombstones (deleted), para a exclusão de compra propagar para os
+  // outros devices — mesmo racional dos itens de lista abaixo.
   const linhasCompras = await db
     .select({
       productName: products.name,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
       sourceListName: purchaseHistory.sourceListName,
+      deleted: purchaseHistory.deleted,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
@@ -532,6 +558,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       quantity: c.quantity,
       purchasedAt: c.purchasedAt.toISOString(),
       sourceListName: c.sourceListName,
+      deleted: c.deleted,
     })),
     consumptions: linhasConsumos.map((c) => ({
       productName: c.productName,

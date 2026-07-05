@@ -37,10 +37,72 @@ export async function listPurchaseHistoryRecords(): Promise<PurchaseHistoryRecor
     FROM purchase_history ph
     INNER JOIN products p ON p.id = ph.product_id
     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
+    WHERE ph.deleted = 0
     ORDER BY ph.purchased_at DESC, ph.id ASC
   `);
 
   return rows.map(mapPurchaseHistoryRow);
+}
+
+export async function addPurchaseHistoryRecord(
+  productId: number,
+  quantity: string,
+  purchasedAt: string,
+  sourceListName: string | null,
+): Promise<void> {
+  const database = await initializeDatabase();
+  // Re-adicionar o mesmo produto/quantidade/instante revive o tombstone em vez
+  // de inserir de novo: duas linhas com a mesma chave de evento (uma viva, uma
+  // deleted) fariam o sync re-marcar a viva como excluída.
+  const tombstone = await database.getFirstAsync<{ id: number }>(
+    `SELECT id FROM purchase_history
+     WHERE product_id = ? AND quantity = ? AND purchased_at = ? AND deleted = 1
+     LIMIT 1`,
+    productId,
+    quantity,
+    purchasedAt,
+  );
+  if (tombstone) {
+    await database.runAsync('UPDATE purchase_history SET deleted = 0 WHERE id = ?', tombstone.id);
+  } else {
+    await database.runAsync(
+      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
+       VALUES (?, ?, ?, NULL, ?)`,
+      productId,
+      quantity,
+      purchasedAt,
+      sourceListName,
+    );
+  }
+  await recalcPurchaseCount(database, productId);
+}
+
+export async function removePurchaseHistoryRecord(id: number): Promise<void> {
+  const database = await initializeDatabase();
+  const row = await database.getFirstAsync<{ product_id: number }>(
+    'SELECT product_id FROM purchase_history WHERE id = ?',
+    id,
+  );
+  if (!row) return;
+  // Tombstone em vez de DELETE: a exclusão precisa propagar no sync sem ser
+  // ressuscitada pela nuvem (append-only). Mesmo racional da auditoria #9.
+  await database.runAsync('UPDATE purchase_history SET deleted = 1 WHERE id = ?', id);
+  await recalcPurchaseCount(database, row.product_id);
+}
+
+// purchase_count é derivado do histórico (auditoria #3): mantém o valor
+// consistente após uma edição manual, sem esperar o próximo sync.
+async function recalcPurchaseCount(
+  database: Awaited<ReturnType<typeof initializeDatabase>>,
+  productId: number,
+): Promise<void> {
+  await database.runAsync(
+    `UPDATE products SET purchase_count = (
+       SELECT COUNT(*) FROM purchase_history WHERE product_id = ? AND deleted = 0
+     ) WHERE id = ?`,
+    productId,
+    productId,
+  );
 }
 
 function mapPurchaseHistoryRow(row: PurchaseHistoryRow): PurchaseHistoryRecord {

@@ -46,7 +46,7 @@ import {
   unarchiveProduct,
   updateProduct,
 } from './src/storage/products';
-import { listPurchaseHistoryRecords } from './src/storage/purchaseHistory';
+import { listPurchaseHistoryRecords, addPurchaseHistoryRecord, removePurchaseHistoryRecord } from './src/storage/purchaseHistory';
 import {
   addProductToActiveShoppingList,
   createNewActiveShoppingList,
@@ -399,6 +399,40 @@ export default function App() {
     }
   }
 
+  async function handleRemovePurchaseLine(lineId: number) {
+    try {
+      await removePurchaseHistoryRecord(lineId);
+      // refreshProducts também: a edição recalcula purchase_count.
+      await Promise.all([refreshHistory(), refreshProducts()]);
+      // Atualiza o modal aberto com os dados frescos.
+      setSelectedPurchase((prev) => {
+        if (!prev) return null;
+        const updated = prev.lines.filter((l) => l.id !== lineId);
+        if (updated.length === 0) return null;
+        const count = updated.length;
+        const itemLabel = count === 1 ? 'item' : 'itens';
+        return { ...prev, lines: updated, count: `${count} ${itemLabel}` };
+      });
+    } catch (error) {
+      console.error('Failed to remove purchase line', error);
+    }
+  }
+
+  async function handleAddPurchaseLine(purchase: PurchaseHistoryItem, productId: number, quantity: string) {
+    try {
+      await addPurchaseHistoryRecord(productId, quantity, purchase.purchasedAt, purchase.sourceListName);
+      // refreshProducts também: a edição recalcula purchase_count.
+      await Promise.all([refreshHistory(), refreshProducts()]);
+      // Recarrega o histórico inteiro e re-seleciona a compra atualizada.
+      const freshRecords = await listPurchaseHistoryRecords();
+      const freshGroups = purchaseHistoryRecordsToGroups(freshRecords);
+      const freshPurchase = freshGroups.flatMap((g) => g.items).find((i) => i.id === purchase.id);
+      if (freshPurchase) setSelectedPurchase(freshPurchase);
+    } catch (error) {
+      console.error('Failed to add purchase line', error);
+    }
+  }
+
   const checkedCount = shoppingItems.filter((item) => item.checked).length;
   const inventoryAlerts = useMemo(() => buildInventoryAlerts(products), [products]);
   const rebuySuggestion = useMemo(
@@ -545,7 +579,14 @@ export default function App() {
           onSave={handleSavePrice}
         />
 
-        <PurchaseDetailModal purchase={selectedPurchase} priceSummaries={priceSummaries} onClose={() => setSelectedPurchase(null)} />
+        <PurchaseDetailModal
+          purchase={selectedPurchase}
+          priceSummaries={priceSummaries}
+          products={products}
+          onClose={() => setSelectedPurchase(null)}
+          onRemoveLine={handleRemovePurchaseLine}
+          onAddProduct={handleAddPurchaseLine}
+        />
 
         <ScanToListModal
           visible={isScanToListVisible}

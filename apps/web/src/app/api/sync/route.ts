@@ -46,6 +46,8 @@ const snapshotSchema = z.object({
         quantity: z.string().max(FIELD_LIMITS.quantity),
         purchasedAt: z.string().datetime({ offset: true }),
         sourceListName: z.string().max(120).nullish(),
+        // Tombstone da edição do histórico. Opcional: clientes antigos não enviam.
+        deleted: z.boolean().optional().default(false),
       })
     )
     .max(10000),

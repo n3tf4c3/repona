@@ -1,7 +1,6 @@
 import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, MAX_PRICE_CENTS, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
-import { listPurchaseHistoryRecords } from './purchaseHistory';
 
 // Compras/consumos mais antigos que isto ficam fora do snapshot enviado. O
 // histórico local e o da nuvem permanecem completos (o merge nunca apaga e o
@@ -30,9 +29,23 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const cutoffMs = jaSincronizou ? Date.now() - EVENT_WINDOW_MS : 0;
 
   const produtos = await listAllProductsForSync();
-  const compras = (await listPurchaseHistoryRecords()).filter((c) =>
-    dentroDaJanela(c.purchasedAt, cutoffMs),
-  );
+  // Consulta direta (não listPurchaseHistoryRecords, que filtra deleted): os
+  // tombstones de compra viajam no snapshot para a exclusão propagar.
+  const comprasTodas = await database.getAllAsync<{
+    product_name: string;
+    quantity: string;
+    purchased_at: string;
+    source_list_name: string | null;
+    deleted: number;
+  }>(`
+    SELECT p.name as product_name, ph.quantity, ph.purchased_at,
+           COALESCE(ph.source_list_name, sl.name) as source_list_name,
+           ph.deleted
+    FROM purchase_history ph
+    INNER JOIN products p ON p.id = ph.product_id
+    LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
+  `);
+  const compras = comprasTodas.filter((c) => dentroDaJanela(c.purchased_at, cutoffMs));
   const consumosTodos = await database.getAllAsync<{
     product_name: string;
     quantity: string;
@@ -99,10 +112,11 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       occasional: p.occasional,
     })),
     purchases: compras.map((c) => ({
-      productName: c.productName,
+      productName: c.product_name,
       quantity: c.quantity,
-      purchasedAt: c.purchasedAt,
-      sourceListName: c.sourceListName,
+      purchasedAt: c.purchased_at,
+      sourceListName: c.source_list_name,
+      deleted: c.deleted === 1,
     })),
     consumptions: consumos.map((c) => ({
       productName: c.product_name,
@@ -289,7 +303,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     await database.runAsync(
       `UPDATE products
        SET purchase_count = (
-         SELECT COUNT(*) FROM purchase_history WHERE purchase_history.product_id = products.id
+         SELECT COUNT(*) FROM purchase_history
+         WHERE purchase_history.product_id = products.id AND purchase_history.deleted = 0
        )`,
     );
   });
@@ -374,18 +389,30 @@ async function aplicarItensLista(
 async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
   // Dedupe por productId (estável), não pelo nome: após um renomeio o mesmo
   // evento podia chegar com nome antigo e ser inserido de novo. (auditoria #28)
-  const existentes = await database.getAllAsync<{ product_id: number; quantity: string; purchased_at: string }>(`
-    SELECT product_id, quantity, purchased_at FROM purchase_history
+  const existentes = await database.getAllAsync<{ id: number; product_id: number; quantity: string; purchased_at: string; deleted: number }>(`
+    SELECT id, product_id, quantity, purchased_at, deleted FROM purchase_history
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.purchased_at, e.quantity)));
+  const porChave = new Map(
+    existentes.map((e) => [eventKey(String(e.product_id), e.purchased_at, e.quantity), e]),
+  );
 
   for (const compra of compras) {
     const productId = idPorNome.get(compra.productName.trim().toLocaleLowerCase('pt-BR'));
     if (!productId) continue;
     const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
-    await database.runAsync(
+    const local = porChave.get(chave);
+    if (local) {
+      // Tombstone vence (nunca "un-delete"): a exclusão feita em outro device
+      // apaga a cópia local; a volta da compra viva da nuvem não a ressuscita.
+      if (compra.deleted && local.deleted === 0) {
+        await database.runAsync('UPDATE purchase_history SET deleted = 1 WHERE id = ?', local.id);
+        local.deleted = 1;
+      }
+      continue;
+    }
+    // Tombstone de um evento que nunca existiu aqui: nada a apagar nem inserir.
+    if (compra.deleted) continue;
+    const inserida = await database.runAsync(
       `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
        VALUES (?, ?, ?, NULL, ?)`,
       productId,
@@ -393,6 +420,13 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
       compra.purchasedAt,
       compra.sourceListName ?? null,
     );
+    porChave.set(chave, {
+      id: inserida.lastInsertRowId,
+      product_id: productId,
+      quantity: compra.quantity,
+      purchased_at: compra.purchasedAt,
+      deleted: 0,
+    });
   }
 }
 
