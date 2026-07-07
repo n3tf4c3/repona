@@ -34,3 +34,19 @@ Consequencias:
 
 - Firebase e sincronizacao permanecem como integracoes futuras.
 - Expo SQLite sera a proxima dependencia funcional importante.
+
+## 2026-07-07 - Aceitar janela de compatibilidade dos tombstones de compra em clientes antigos (auditoria #67)
+
+Decisao: aceitar que apps mobile <=1.0.2 re-insiram localmente, como vivas, compras tombstonadas que o servidor devolve no snapshot, sem mitigacao no servidor.
+
+Motivo:
+
+- O servidor precisa devolver tombstones no snapshot para a exclusao propagar entre devices; clientes antigos ignoram o campo `deleted` e tratam o evento como compra normal.
+- O efeito e transitorio e se auto-cura: apos atualizar o app, o proximo sync re-marca as copias locais como excluidas (regra "tombstone/LWW" do merge). A nuvem nunca e corrompida - o merge nao ressuscita tombstones a partir de compras vivas sem carimbo.
+- O app esta em teste fechado na Play Store; a populacao de clientes antigos e pequena e controlada.
+- A alternativa (omitir tombstones para clientes que nao enviaram `deleted` no request) adiciona heuristica de versao no servidor por um problema temporario.
+
+Consequencias:
+
+- Coordenar o rollout: publicar o mobile 1.0.3 junto com (ou logo apos) o deploy do web que passou a devolver tombstones.
+- Num device com app antigo, compras excluidas em outro device podem reaparecer ate o update - comportamento conhecido e aceito.
