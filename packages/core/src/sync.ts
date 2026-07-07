@@ -41,11 +41,14 @@ export type SyncPurchase = {
   // Opcional/nulo para compras sem lista e clientes antigos.
   sourceListName?: string | null;
   // Tombstone: a edição do histórico marca deleted em vez de apagar, para a
-  // exclusão propagar sem ressuscitar (mesmo racional do SyncListItem). Sem
-  // updatedAt/LWW de propósito: compra não tem "un-delete" e um cliente antigo
-  // (que não envia o campo) nunca deve reviver um tombstone — deleted vence.
+  // exclusão propagar sem ressuscitar (mesmo racional do SyncListItem).
   // Opcional para tolerar clientes/servidores antigos.
   deleted?: boolean;
+  // Carimbo da última EDIÇÃO do tombstone (excluir/re-incluir), base do LWW de
+  // shouldApplyIncomingDeleted. Nulo = nunca editado (compra normal de
+  // finalização) ou cliente antigo — nesse caso vale a regra conservadora:
+  // deleted vence, un-delete não aplica. (auditoria #65)
+  updatedAt?: string | null;
 };
 
 export type SyncConsumption = {
@@ -142,6 +145,27 @@ export function shouldApplyIncoming(
   const recebido = new Date(incomingUpdatedAt).getTime();
   const atual = new Date(storedUpdatedAt).getTime();
   if (Number.isNaN(recebido) || Number.isNaN(atual)) return true;
+  return recebido > atual;
+}
+
+// LWW do tombstone de compra (auditoria #65): decide se o estado deleted
+// recebido substitui o local. Difere de shouldApplyIncoming num ponto crucial:
+// SEM carimbo no recebido, só a exclusão aplica — uma compra viva re-enviada
+// por cliente antigo nunca ressuscita um tombstone. Com carimbo dos dois lados,
+// o mais novo vence (empate não aplica, idempotente); o lado carimbado vence o
+// não-carimbado, para a re-inclusão feita na edição do histórico (que carimba)
+// sobreviver ao tombstone antigo. Usada pelo merge do servidor e pelo
+// applySnapshot do mobile — manter uma única implementação.
+export function shouldApplyIncomingDeleted(
+  incoming: { deleted: boolean; updatedAt?: string | null },
+  existing: { deleted: boolean; updatedAt?: string | null }
+): boolean {
+  if (incoming.deleted === existing.deleted) return false;
+  const recebido = incoming.updatedAt ? new Date(incoming.updatedAt).getTime() : NaN;
+  // Recebido sem carimbo (ou inválido): regra conservadora — deleted vence.
+  if (Number.isNaN(recebido)) return incoming.deleted;
+  const atual = existing.updatedAt ? new Date(existing.updatedAt).getTime() : NaN;
+  if (Number.isNaN(atual)) return true;
   return recebido > atual;
 }
 

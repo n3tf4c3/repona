@@ -51,6 +51,9 @@ export async function addPurchaseHistoryRecord(
   sourceListName: string | null,
 ): Promise<void> {
   const database = await initializeDatabase();
+  // Carimbo da edição: é o que faz a re-inclusão vencer um tombstone mais
+  // antigo no LWW do sync (shouldApplyIncomingDeleted). (auditoria #65)
+  const agora = new Date().toISOString();
   // Re-adicionar o mesmo produto/quantidade/instante revive o tombstone em vez
   // de inserir de novo: duas linhas com a mesma chave de evento (uma viva, uma
   // deleted) fariam o sync re-marcar a viva como excluída.
@@ -63,15 +66,22 @@ export async function addPurchaseHistoryRecord(
     purchasedAt,
   );
   if (tombstone) {
-    await database.runAsync('UPDATE purchase_history SET deleted = 0 WHERE id = ?', tombstone.id);
-  } else {
     await database.runAsync(
-      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
-       VALUES (?, ?, ?, NULL, ?)`,
+      'UPDATE purchase_history SET deleted = 0, updated_at = ? WHERE id = ?',
+      agora,
+      tombstone.id,
+    );
+  } else {
+    // O insert manual também carimba: se outro device tiver um tombstone desta
+    // chave que este device nunca viu, a inclusão carimbada vence no merge.
+    await database.runAsync(
+      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name, updated_at)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
       productId,
       quantity,
       purchasedAt,
       sourceListName,
+      agora,
     );
   }
   await recalcPurchaseCount(database, productId);
@@ -85,8 +95,13 @@ export async function removePurchaseHistoryRecord(id: number): Promise<void> {
   );
   if (!row) return;
   // Tombstone em vez de DELETE: a exclusão precisa propagar no sync sem ser
-  // ressuscitada pela nuvem (append-only). Mesmo racional da auditoria #9.
-  await database.runAsync('UPDATE purchase_history SET deleted = 1 WHERE id = ?', id);
+  // ressuscitada pela nuvem (append-only). Mesmo racional da auditoria #9. O
+  // carimbo entra no LWW do sync (auditoria #65).
+  await database.runAsync(
+    'UPDATE purchase_history SET deleted = 1, updated_at = ? WHERE id = ?',
+    new Date().toISOString(),
+    id,
+  );
   await recalcPurchaseCount(database, row.product_id);
 }
 

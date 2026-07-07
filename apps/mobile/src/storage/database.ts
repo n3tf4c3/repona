@@ -252,6 +252,16 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       await db.execAsync('ALTER TABLE purchase_history ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;');
     }
   },
+
+  // v8: carimbo (ISO) da última edição do tombstone de compra — base do LWW que
+  // permite a re-inclusão (un-delete) propagar no sync. NULL = nunca editado.
+  // (auditoria #65)
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(purchase_history)');
+    if (!cols.some((c) => c.name === 'updated_at')) {
+      await db.execAsync('ALTER TABLE purchase_history ADD COLUMN updated_at TEXT;');
+    }
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

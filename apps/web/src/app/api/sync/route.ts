@@ -48,6 +48,8 @@ const snapshotSchema = z.object({
         sourceListName: z.string().max(120).nullish(),
         // Tombstone da edição do histórico. Opcional: clientes antigos não enviam.
         deleted: z.boolean().optional().default(false),
+        // Carimbo da edição do tombstone (LWW do un-delete, auditoria #65).
+        updatedAt: z.string().datetime({ offset: true }).nullish(),
       })
     )
     .max(10000),

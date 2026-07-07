@@ -9,7 +9,14 @@ import {
   priceHistory,
   shoppingListItems,
 } from "@/server/db/schema";
-import { productNameKey, matchProduct, shouldApplyIncoming, normalizeQuantity, type SyncSnapshot } from "@repona/core";
+import {
+  productNameKey,
+  matchProduct,
+  shouldApplyIncoming,
+  shouldApplyIncomingDeleted,
+  normalizeQuantity,
+  type SyncSnapshot,
+} from "@repona/core";
 import { garantirListaAtiva } from "@/server/modules/listas";
 
 // Tombstones de item de lista mais antigos que isto são podados (já propagaram a
@@ -290,6 +297,7 @@ async function mesclarCompras(
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
       deleted: purchaseHistory.deleted,
+      updatedAt: purchaseHistory.updatedAt,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
@@ -310,23 +318,33 @@ async function mesclarCompras(
     const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(compra.quantity)}`;
     const existente = porChave.get(chave);
     if (existente) {
-      // Tombstone vence (nunca "un-delete"): um device antigo re-enviando a
-      // compra viva não ressuscita a exclusão feita em outro device.
-      if (compra.deleted && !existente.deleted) {
+      // LWW do tombstone (shouldApplyIncomingDeleted, auditoria #65): edição
+      // carimbada mais nova vence nas duas direções (excluir E re-incluir);
+      // compra viva sem carimbo (cliente antigo) nunca ressuscita a exclusão.
+      const incomingDeleted = compra.deleted ?? false;
+      if (
+        shouldApplyIncomingDeleted(
+          { deleted: incomingDeleted, updatedAt: compra.updatedAt },
+          { deleted: existente.deleted, updatedAt: existente.updatedAt?.toISOString() }
+        )
+      ) {
+        const carimbo = compra.updatedAt ? new Date(compra.updatedAt) : new Date();
         escritas.push(
           db
             .update(purchaseHistory)
-            .set({ deleted: true })
+            .set({ deleted: incomingDeleted, updatedAt: carimbo })
             .where(eq(purchaseHistory.id, existente.id))
         );
-        existente.deleted = true;
+        existente.deleted = incomingDeleted;
+        existente.updatedAt = carimbo;
       }
       continue;
     }
     // Tombstone de evento desconhecido: ninguém mais o tem (o merge nunca
     // apaga), então não há o que propagar.
     if (compra.deleted) continue;
-    porChave.set(chave, { id: 0, productId, quantity: compra.quantity, purchasedAt: at, deleted: false });
+    const carimbo = compra.updatedAt ? new Date(compra.updatedAt) : null;
+    porChave.set(chave, { id: 0, productId, quantity: compra.quantity, purchasedAt: at, deleted: false, updatedAt: carimbo });
     escritas.push(
       db.insert(purchaseHistory).values({
         casaId,
@@ -334,6 +352,7 @@ async function mesclarCompras(
         quantity: compra.quantity,
         purchasedAt: at,
         sourceListName: compra.sourceListName ?? null,
+        updatedAt: carimbo,
       })
     );
   }
@@ -481,6 +500,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       purchasedAt: purchaseHistory.purchasedAt,
       sourceListName: purchaseHistory.sourceListName,
       deleted: purchaseHistory.deleted,
+      updatedAt: purchaseHistory.updatedAt,
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
@@ -559,6 +579,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       purchasedAt: c.purchasedAt.toISOString(),
       sourceListName: c.sourceListName,
       deleted: c.deleted,
+      updatedAt: c.updatedAt ? c.updatedAt.toISOString() : null,
     })),
     consumptions: linhasConsumos.map((c) => ({
       productName: c.productName,

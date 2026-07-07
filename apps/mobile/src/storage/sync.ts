@@ -1,4 +1,4 @@
-import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, MAX_PRICE_CENTS, type SyncSnapshot } from '@repona/core';
+import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, shouldApplyIncomingDeleted, MAX_PRICE_CENTS, type SyncSnapshot } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 
@@ -37,15 +37,22 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     purchased_at: string;
     source_list_name: string | null;
     deleted: number;
+    updated_at: string | null;
   }>(`
     SELECT p.name as product_name, ph.quantity, ph.purchased_at,
            COALESCE(ph.source_list_name, sl.name) as source_list_name,
-           ph.deleted
+           ph.deleted, ph.updated_at
     FROM purchase_history ph
     INNER JOIN products p ON p.id = ph.product_id
     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
   `);
-  const compras = comprasTodas.filter((c) => dentroDaJanela(c.purchased_at, cutoffMs));
+  // Tombstones ignoram a janela: ela filtra pelo instante da COMPRA, e a
+  // exclusão de uma compra antiga precisa propagar mesmo assim. São raros
+  // (só a edição manual do histórico os cria), então não pesam no cap do
+  // endpoint. (auditoria #66)
+  const compras = comprasTodas.filter(
+    (c) => c.deleted === 1 || dentroDaJanela(c.purchased_at, cutoffMs),
+  );
   const consumosTodos = await database.getAllAsync<{
     product_name: string;
     quantity: string;
@@ -117,6 +124,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       purchasedAt: c.purchased_at,
       sourceListName: c.source_list_name,
       deleted: c.deleted === 1,
+      updatedAt: c.updated_at,
     })),
     consumptions: consumos.map((c) => ({
       productName: c.product_name,
@@ -389,8 +397,8 @@ async function aplicarItensLista(
 async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
   // Dedupe por productId (estável), não pelo nome: após um renomeio o mesmo
   // evento podia chegar com nome antigo e ser inserido de novo. (auditoria #28)
-  const existentes = await database.getAllAsync<{ id: number; product_id: number; quantity: string; purchased_at: string; deleted: number }>(`
-    SELECT id, product_id, quantity, purchased_at, deleted FROM purchase_history
+  const existentes = await database.getAllAsync<{ id: number; product_id: number; quantity: string; purchased_at: string; deleted: number; updated_at: string | null }>(`
+    SELECT id, product_id, quantity, purchased_at, deleted, updated_at FROM purchase_history
   `);
   const porChave = new Map(
     existentes.map((e) => [eventKey(String(e.product_id), e.purchased_at, e.quantity), e]),
@@ -402,23 +410,38 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
     const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
     const local = porChave.get(chave);
     if (local) {
-      // Tombstone vence (nunca "un-delete"): a exclusão feita em outro device
-      // apaga a cópia local; a volta da compra viva da nuvem não a ressuscita.
-      if (compra.deleted && local.deleted === 0) {
-        await database.runAsync('UPDATE purchase_history SET deleted = 1 WHERE id = ?', local.id);
-        local.deleted = 1;
+      // LWW do tombstone (shouldApplyIncomingDeleted, auditoria #65): edição
+      // carimbada mais nova vence nas duas direções (excluir E re-incluir);
+      // compra viva sem carimbo nunca ressuscita a exclusão local.
+      const incomingDeleted = compra.deleted ?? false;
+      if (
+        shouldApplyIncomingDeleted(
+          { deleted: incomingDeleted, updatedAt: compra.updatedAt },
+          { deleted: local.deleted === 1, updatedAt: local.updated_at },
+        )
+      ) {
+        const carimbo = compra.updatedAt ?? new Date().toISOString();
+        await database.runAsync(
+          'UPDATE purchase_history SET deleted = ?, updated_at = ? WHERE id = ?',
+          incomingDeleted ? 1 : 0,
+          carimbo,
+          local.id,
+        );
+        local.deleted = incomingDeleted ? 1 : 0;
+        local.updated_at = carimbo;
       }
       continue;
     }
     // Tombstone de um evento que nunca existiu aqui: nada a apagar nem inserir.
     if (compra.deleted) continue;
     const inserida = await database.runAsync(
-      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
-       VALUES (?, ?, ?, NULL, ?)`,
+      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name, updated_at)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
       productId,
       compra.quantity,
       compra.purchasedAt,
       compra.sourceListName ?? null,
+      compra.updatedAt ?? null,
     );
     porChave.set(chave, {
       id: inserida.lastInsertRowId,
@@ -426,6 +449,7 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
       quantity: compra.quantity,
       purchased_at: compra.purchasedAt,
       deleted: 0,
+      updated_at: compra.updatedAt ?? null,
     });
   }
 }

@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { uuidv4, matchProduct, shouldApplyIncoming, type ProductMatchMaps } from "./sync";
+import {
+  uuidv4,
+  matchProduct,
+  shouldApplyIncoming,
+  shouldApplyIncomingDeleted,
+  type ProductMatchMaps,
+} from "./sync";
 
 test("uuidv4: formato v4 (versão 4, variante 8/9/a/b)", () => {
   const id = uuidv4();
@@ -93,4 +99,44 @@ test("shouldApplyIncoming: sem updatedAt (cliente legado) aplica", () => {
 
 test("shouldApplyIncoming: data inválida aplica (não trava merge)", () => {
   assert.equal(shouldApplyIncoming("nao-e-data", t0), true);
+});
+
+test("shouldApplyIncomingDeleted: estados iguais não aplicam (idempotente)", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: t1 }, { deleted: true, updatedAt: t0 }), false);
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false }, { deleted: false }), false);
+});
+
+test("shouldApplyIncomingDeleted: exclusão sem carimbo aplica (deleted vence)", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true }, { deleted: false }), true);
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: null }, { deleted: false, updatedAt: null }), true);
+});
+
+test("shouldApplyIncomingDeleted: compra viva sem carimbo nunca ressuscita tombstone (cliente legado)", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false }, { deleted: true, updatedAt: t0 }), false);
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false, updatedAt: null }, { deleted: true, updatedAt: null }), false);
+});
+
+test("shouldApplyIncomingDeleted: re-inclusão carimbada mais nova vence o tombstone (un-delete, auditoria #65)", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false, updatedAt: t1 }, { deleted: true, updatedAt: t0 }), true);
+});
+
+test("shouldApplyIncomingDeleted: carimbo mais antigo não desfaz edição mais nova", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: t0 }, { deleted: false, updatedAt: t1 }), false);
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false, updatedAt: t0 }, { deleted: true, updatedAt: t1 }), false);
+});
+
+test("shouldApplyIncomingDeleted: empate de carimbo não aplica (idempotente)", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: t0 }, { deleted: false, updatedAt: t0 }), false);
+});
+
+test("shouldApplyIncomingDeleted: o lado carimbado vence o não-carimbado", () => {
+  // Re-inclusão carimbada sobrevive a tombstone antigo sem carimbo…
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false, updatedAt: t1 }, { deleted: true, updatedAt: null }), true);
+  // …e exclusão carimbada vence compra viva nunca editada.
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: t1 }, { deleted: false, updatedAt: null }), true);
+});
+
+test("shouldApplyIncomingDeleted: carimbo inválido no recebido cai na regra conservadora", () => {
+  assert.equal(shouldApplyIncomingDeleted({ deleted: true, updatedAt: "nao-e-data" }, { deleted: false, updatedAt: t0 }), true);
+  assert.equal(shouldApplyIncomingDeleted({ deleted: false, updatedAt: "nao-e-data" }, { deleted: true, updatedAt: t0 }), false);
 });

@@ -156,6 +156,9 @@ export const purchaseHistory = pgTable(
     // para a exclusão propagar entre devices sem ser ressuscitada (o merge de
     // compras é append-only). Mesmo racional do deleted em shopping_list_items.
     deleted: boolean("deleted").notNull().default(false),
+    // Carimbo da última edição do tombstone (excluir/re-incluir), base do LWW
+    // de shouldApplyIncomingDeleted. NULL = nunca editado. (auditoria #65)
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
   },
   (table) => [
     index("purchase_history_product_idx").on(table.productId),
