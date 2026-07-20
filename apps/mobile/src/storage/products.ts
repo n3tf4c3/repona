@@ -1,5 +1,6 @@
 import { isEmptyQuantity, uuidv4, validateProductFields } from '@repona/core';
 import { initializeDatabase } from './database';
+import { deletePhoto } from './photos';
 import type { NewProductInput } from '../types';
 import type { InventoryStatus } from './inventory';
 
@@ -234,6 +235,12 @@ export async function updateProduct(productId: number, input: NewProductInput): 
 
   const now = new Date().toISOString();
 
+  // Foto anterior, para apagar o arquivo órfão se a foto mudar. (auditoria #94)
+  const anterior = await database.getFirstAsync<{ photo_uri: string | null }>(
+    'SELECT photo_uri FROM products WHERE id = ?',
+    productId,
+  );
+
   await database.runAsync(
     `UPDATE products
      SET name = ?,
@@ -255,6 +262,11 @@ export async function updateProduct(productId: number, input: NewProductInput): 
     now,
     productId,
   );
+
+  const novaFoto = input.photoUri ?? null;
+  if (anterior?.photo_uri && anterior.photo_uri !== novaFoto) {
+    deletePhoto(anterior.photo_uri);
+  }
 
   const updated = await database.getFirstAsync<ProductRow>(
     `${PRODUCT_SELECT} WHERE p.id = ?`,
@@ -279,12 +291,21 @@ export async function deleteProduct(productId: number) {
     throw new Error('PRODUCT_HAS_HISTORY');
   }
 
+  // Foto persistida do produto, para apagar o arquivo após remover o produto e
+  // não deixá-lo órfão no disco. (auditoria #94)
+  const foto = await database.getFirstAsync<{ photo_uri: string | null }>(
+    'SELECT photo_uri FROM products WHERE id = ?',
+    productId,
+  );
+
   await database.withTransactionAsync(async () => {
     await database.runAsync('DELETE FROM inventory_events WHERE product_id = ?', productId);
     await database.runAsync('DELETE FROM inventory_items WHERE product_id = ?', productId);
     await database.runAsync('DELETE FROM shopping_list_items WHERE product_id = ?', productId);
     await database.runAsync('DELETE FROM products WHERE id = ?', productId);
   });
+
+  deletePhoto(foto?.photo_uri ?? null);
 }
 
 function mapProductRow(row: ProductRow): ProductRecord {

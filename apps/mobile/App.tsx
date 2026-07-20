@@ -2,7 +2,7 @@
 // o storage às telas. As telas vivem em src/screens, os componentes em
 // src/components e os estilos em src/styles.ts (auditoria 2026-06-09 #12.1).
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -91,43 +91,60 @@ export default function App() {
   // quantidade (ref, não state: não precisa re-renderizar). (auditoria #39)
   const pendingItems = useRef<Set<number>>(new Set());
 
-  useEffect(() => {
-    let isMounted = true;
+  // Carrega os dados locais preservando resultados PARCIAIS: cada leitura é
+  // independente (Promise.allSettled), então a falha de uma não zera as outras.
+  // Antes tudo caía num único try e o finally marcava todas as telas como
+  // prontas, transformando qualquer erro em "listas vazias" — dados existentes
+  // pareciam apagados, sem aviso nem retry. Agora só os que falharam ficam sem
+  // dado, e o usuário é avisado com opção de tentar de novo. (auditoria #82)
+  const loadInitialData = useCallback(async () => {
+    const [activeList, records, archivedRecords, listRecords, historyRecords, prices] =
+      await Promise.allSettled([
+        ensureActiveShoppingList(),
+        listProducts(),
+        listArchivedProducts(),
+        listActiveShoppingItems(),
+        listPurchaseHistoryRecords(),
+        listRecentPricesByProduct(),
+      ]);
 
-    async function loadInitialProducts() {
-      try {
-        const activeList = await ensureActiveShoppingList();
-        const records = await listProducts();
-        const archivedRecords = await listArchivedProducts();
-        const listRecords = await listActiveShoppingItems();
-        const historyRecords = await listPurchaseHistoryRecords();
-        const prices = await listRecentPricesByProduct();
+    let algumaFalha = false;
+    if (activeList.status === 'fulfilled') setActiveShoppingListName(activeList.value.name);
+    else algumaFalha = true;
+    if (records.status === 'fulfilled') setProducts(records.value.map(productRecordToProduct));
+    else algumaFalha = true;
+    if (archivedRecords.status === 'fulfilled')
+      setArchivedProducts(archivedRecords.value.map(productRecordToProduct));
+    else algumaFalha = true;
+    if (listRecords.status === 'fulfilled')
+      setShoppingItems(listRecords.value.map(shoppingListRecordToItem));
+    else algumaFalha = true;
+    if (historyRecords.status === 'fulfilled')
+      setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords.value));
+    else algumaFalha = true;
+    if (prices.status === 'fulfilled') setPricesByProduct(prices.value);
+    else algumaFalha = true;
 
-        if (isMounted) {
-          setActiveShoppingListName(activeList.name);
-          setProducts(records.map(productRecordToProduct));
-          setArchivedProducts(archivedRecords.map(productRecordToProduct));
-          setShoppingItems(listRecords.map(shoppingListRecordToItem));
-          setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
-          setPricesByProduct(prices);
-        }
-      } catch (error) {
-        console.error('Failed to load app data', error);
-      } finally {
-        if (isMounted) {
-          setIsProductsReady(true);
-          setIsShoppingListReady(true);
-          setIsHistoryReady(true);
-        }
-      }
+    setIsProductsReady(true);
+    setIsShoppingListReady(true);
+    setIsHistoryReady(true);
+
+    if (algumaFalha) {
+      console.error('Failed to load some app data');
+      Alert.alert(
+        'Erro ao carregar',
+        'Alguns dados locais não puderam ser lidos agora. Toque em tentar novamente.',
+        [
+          { text: 'Fechar', style: 'cancel' },
+          { text: 'Tentar novamente', onPress: () => void loadInitialData() },
+        ],
+      );
     }
-
-    loadInitialProducts();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    void loadInitialData();
+  }, [loadInitialData]);
 
   async function refreshShoppingItems() {
     const activeList = await ensureActiveShoppingList();

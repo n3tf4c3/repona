@@ -22,3 +22,17 @@ export function persistPhoto(uri: string | null | undefined): string | null {
     return uri;
   }
 }
+
+// Remove uma foto persistida no diretório do app. Best-effort e restrito ao
+// photosDir: nunca apaga URIs de fora (câmera/galeria/legadas). Chamado quando o
+// produto é excluído ou troca de foto, para o arquivo não ficar órfão crescendo
+// o uso de disco indefinidamente. (auditoria #94)
+export function deletePhoto(uri: string | null | undefined): void {
+  if (!uri || !uri.startsWith(photosDir.uri)) return;
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {
+    // best-effort: um arquivo que não pôde ser apagado não deve quebrar o fluxo.
+  }
+}

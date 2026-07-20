@@ -60,7 +60,12 @@ function formatSyncMoment(iso: string): string {
 function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
   const [code, setCode] = useState('');
   const [showTokenInput, setShowTokenInput] = useState(false);
-  const [pairedCode, setPairedCode] = useState<string | null>(null);
+  // Tri-state: undefined = carregando (leitura do SecureStore em andamento),
+  // null = não pareado, string = pareado. Antes null valia por "carregando" E
+  // "não pareado", então durante a leitura async a UI mostrava "Ativar backup"
+  // habilitado e um toque podia criar outra casa por cima da credencial
+  // existente. (auditoria #80)
+  const [pairedCode, setPairedCode] = useState<string | null | undefined>(undefined);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -185,7 +190,9 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
         </View>
       </View>
 
-      {pairedCode ? (
+      {pairedCode === undefined ? (
+        <Text style={styles.subtleText}>Carregando…</Text>
+      ) : pairedCode ? (
         <>
           <View style={styles.syncPairedRow}>
             <Text style={styles.syncPairedLabel}>Token de acesso</Text>
