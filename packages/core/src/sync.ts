@@ -85,8 +85,15 @@ export type SyncSnapshot = {
   listItems?: SyncListItem[];
 };
 
+// Chave de identidade por nome usada no merge (matchProduct) e no dedupe de
+// eventos (eventKey), nos DOIS lados do sync. Normaliza Unicode em NFC antes de
+// baixar caixa, para que formas canonicamente equivalentes de um acento
+// (precomposto vs combinante) — visualmente idênticas mas com bytes diferentes —
+// colapsem na mesma chave e não virem produtos/eventos distintos. Usa NFC (não
+// NFKC) de propósito: só unifica equivalentes canônicos, sem arriscar juntar
+// nomes que o usuário vê como diferentes. (auditoria #76)
 export function productNameKey(name: string): string {
-  return name.trim().toLocaleLowerCase("pt-BR");
+  return name.normalize("NFC").trim().toLocaleLowerCase("pt-BR");
 }
 
 // UUID v4 baseado em Math.random. Suficiente para um id de sync doméstico —

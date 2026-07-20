@@ -2,11 +2,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   uuidv4,
+  productNameKey,
   matchProduct,
   shouldApplyIncoming,
   shouldApplyIncomingDeleted,
   type ProductMatchMaps,
 } from "./sync";
+
+test("productNameKey: NFC unifica acento precomposto e combinante (auditoria #76)", () => {
+  // Mesma palavra em duas formas Unicode, construidas por code point (fonte 100%
+  // ASCII): precomposta (U+00E3) e decomposta (a + U+0303). Visualmente iguais,
+  // bytes diferentes; apos NFC viram a mesma chave.
+  const precomposto = "P" + String.fromCodePoint(0x00e3) + "o";
+  const combinante = "Pa" + String.fromCodePoint(0x0303) + "o";
+  assert.notEqual(precomposto, combinante);
+  assert.equal(productNameKey(precomposto), productNameKey(combinante));
+  // Continua baixando caixa e aparando espacos.
+  assert.equal(productNameKey("  ARROZ  "), "arroz");
+});
 
 test("uuidv4: formato v4 (versão 4, variante 8/9/a/b)", () => {
   const id = uuidv4();

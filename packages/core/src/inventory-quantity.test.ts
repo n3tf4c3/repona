@@ -6,8 +6,18 @@ import {
   getConsumedQuantity,
   normalizeQuantity,
   buildQuantityString,
+  canonicalQuantity,
   MAX_QUANTITY_VALUE,
 } from "./inventory-quantity";
+
+test("canonicalQuantity: valor válido passa, inválido cai no fallback (auditoria #75)", () => {
+  assert.equal(canonicalQuantity("500 g", "0 un"), "500 g");
+  assert.equal(canonicalQuantity("0,8 kg", "1 un"), "0,8 kg");
+  assert.equal(canonicalQuantity("0 un", "1 un"), "0 un"); // começa com número: válido
+  assert.equal(canonicalQuantity("", "0 un"), "0 un");
+  assert.equal(canonicalQuantity("abc", "1 un"), "1 un");
+  assert.equal(canonicalQuantity("   ", "0 un"), "0 un");
+});
 
 test("normalizeQuantity: caixa e espaços viram a mesma chave", () => {
   assert.equal(normalizeQuantity("1 un"), "1 un");

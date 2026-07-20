@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { CATEGORIAS, FIELD_LIMITS, MAX_PRICE_CENTS } from "@repona/core";
+import { CATEGORIAS, FIELD_LIMITS, MAX_PRICE_CENTS, canonicalQuantity } from "@repona/core";
 import { obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
 import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
@@ -32,7 +32,12 @@ const snapshotSchema = z.object({
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),
         alertThreshold: z.string().max(FIELD_LIMITS.alertThreshold).nullable(),
-        inventoryQuantity: z.string().max(FIELD_LIMITS.quantity),
+        // Canonicaliza: vazio/"abc" -> "0 un" em vez de virar status/estoque
+        // inválido. Estoque aceita zero. (auditoria #75)
+        inventoryQuantity: z
+          .string()
+          .max(FIELD_LIMITS.quantity)
+          .transform((v) => canonicalQuantity(v, "0 un")),
         inventoryStatus: z.enum(["in_stock", "missing"]),
         // Clientes antigos não enviam archived/occasional: default mantém compat.
         archived: z.boolean().optional().default(false),
@@ -44,7 +49,10 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        quantity: z.string().max(FIELD_LIMITS.quantity),
+        quantity: z
+          .string()
+          .max(FIELD_LIMITS.quantity)
+          .transform((v) => canonicalQuantity(v, "1 un")),
         purchasedAt: z.string().datetime({ offset: true }),
         sourceListName: z.string().max(120).nullish(),
         // Tombstone da edição do histórico. Opcional: clientes antigos não enviam.
@@ -58,7 +66,10 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        quantity: z.string().max(FIELD_LIMITS.quantity),
+        quantity: z
+          .string()
+          .max(FIELD_LIMITS.quantity)
+          .transform((v) => canonicalQuantity(v, "1 un")),
         occurredAt: z.string().datetime({ offset: true }),
       })
     )
@@ -77,7 +88,10 @@ const snapshotSchema = z.object({
     .array(
       z.object({
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        quantity: z.string().max(FIELD_LIMITS.quantity),
+        quantity: z
+          .string()
+          .max(FIELD_LIMITS.quantity)
+          .transform((v) => canonicalQuantity(v, "1 un")),
         checked: z.boolean(),
         deleted: z.boolean(),
         updatedAt: z.string().datetime({ offset: true }),

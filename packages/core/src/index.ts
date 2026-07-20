@@ -17,6 +17,7 @@ export {
   getConsumedQuantity,
   normalizeQuantity,
   buildQuantityString,
+  canonicalQuantity,
   MAX_QUANTITY_VALUE,
 } from "./inventory-quantity";
 export type {

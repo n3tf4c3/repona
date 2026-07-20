@@ -29,6 +29,19 @@ export function buildQuantityString(value: string, unit: string): string | null 
   return `${formatado} ${unidade}`;
 }
 
+// Canonicaliza uma quantidade recebida pelo protocolo de sync. O parser de
+// estoque/consumo assume que a string começa com um número; valores fora do
+// formato ("", "abc") cairiam em defaults silenciosos e produziriam status,
+// totais ou eventos incorretos. Aqui um valor inválido vira o fallback explícito
+// em vez de rejeitar o snapshot INTEIRO da casa (mesma tolerância do enum de
+// categoria). Web e mobile já geram quantidades válidas; isto fecha a brecha de
+// um cliente modificado/corrompido. (auditoria #75)
+export function canonicalQuantity(raw: string, fallback: string): string {
+  const t = raw.trim();
+  if (!/^\d+(?:[.,]\d+)?/.test(t)) return fallback;
+  return t;
+}
+
 export function isEmptyQuantity(quantity: string): boolean {
   const match = quantity.match(/^(\d+(?:[.,]\d+)?)/);
 
