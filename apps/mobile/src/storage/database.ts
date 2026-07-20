@@ -11,7 +11,25 @@ export function getDatabase() {
   return databasePromise;
 }
 
-export async function initializeDatabase() {
+// Inicialização memoizada (auditoria #77): antes só a abertura era memoizada, e
+// cada chamada de initializeDatabase reexecutava PRAGMAs, DDL, cleanup e
+// migrations — desperdício recorrente e disputa quando App.tsx dispara várias
+// leituras em paralelo no boot. Agora a inicialização inteira roda uma vez por
+// sessão; concorrentes compartilham a mesma promise. Em falha, zera o cache para
+// a próxima tentativa poder recomeçar.
+let initializationPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+export function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
+  if (!initializationPromise) {
+    initializationPromise = initializeOnce().catch((error) => {
+      initializationPromise = null;
+      throw error;
+    });
+  }
+  return initializationPromise;
+}
+
+async function initializeOnce() {
   const database = await getDatabase();
 
   // ATENÇÃO: o bloco CREATE TABLE abaixo é o schema v0 HISTÓRICO. Colunas
@@ -133,6 +151,24 @@ export async function initializeDatabase() {
   `);
 
   await runMigrations(database);
+
+  // Auto-heal do índice único de nome (auditoria #77): a migration v3 pula a
+  // criação do índice quando há duplicata local e MESMO ASSIM avança
+  // user_version, então o índice nunca mais é tentado. Reavalia a cada init
+  // (idempotente, best-effort): quando as duplicatas forem resolvidas, o índice
+  // é criado; se ainda houver duplicata ou der erro, não derruba o init.
+  try {
+    const dup = await database.getFirstAsync<{ n: number }>(
+      'SELECT COUNT(*) - COUNT(DISTINCT lower(name)) AS n FROM products',
+    );
+    if ((dup?.n ?? 0) === 0) {
+      await database.execAsync(
+        'CREATE UNIQUE INDEX IF NOT EXISTS products_name_nocase_unique ON products(name COLLATE NOCASE);',
+      );
+    }
+  } catch {
+    // best-effort: não bloqueia a inicialização.
+  }
 
   return database;
 }

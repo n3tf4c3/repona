@@ -2,7 +2,7 @@
 // o storage às telas. As telas vivem em src/screens, os componentes em
 // src/components e os estilos em src/styles.ts (auditoria 2026-06-09 #12.1).
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -11,6 +11,7 @@ import {
   buildRebuySuggestion,
   estimateShoppingTotal,
   getNextInventoryQuantity,
+  isEmptyQuantity,
   summarizePrices,
   type PricePoint,
   type PriceSummary,
@@ -86,6 +87,9 @@ export default function App() {
   // Código lido no scanner da compra sem produto correspondente: pré-preenche o
   // cadastro e faz o produto novo já entrar na lista ao salvar.
   const [scanBarcodeToRegister, setScanBarcodeToRegister] = useState<string | null>(null);
+  // Lock por item da lista para serializar toques rápidos no seletor de
+  // quantidade (ref, não state: não precisa re-renderizar). (auditoria #39)
+  const pendingItems = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     let isMounted = true;
@@ -173,9 +177,23 @@ export default function App() {
   }
 
   async function changeItemQuantity(item: ShoppingItem, direction: 1 | -1) {
-    const nextQuantity = getNextQuantity(item.quantity, direction);
-    await updateShoppingListItemQuantity(item.id, nextQuantity);
-    await refreshShoppingItems();
+    // Serializa por item: ignora novos toques enquanto uma escrita do mesmo item
+    // está pendente. Sem isto, dois toques rápidos calculam o próximo valor a
+    // partir do mesmo item.quantity renderizado e um incremento se perde.
+    // (auditoria #39)
+    if (pendingItems.current.has(item.id)) return;
+    pendingItems.current.add(item.id);
+    try {
+      // Mesma regra do web (lista-client): piso via isEmptyQuantity, que mantém o
+      // valor atual em vez de subir uma quantidade fracionária ("0,8 kg" - 1 não
+      // vira "1 kg"). Centralizado no core em vez do helper local. (auditoria #81)
+      const next = getNextInventoryQuantity(item.quantity, direction);
+      const nextQuantity = isEmptyQuantity(next) ? item.quantity : next;
+      await updateShoppingListItemQuantity(item.id, nextQuantity);
+      await refreshShoppingItems();
+    } finally {
+      pendingItems.current.delete(item.id);
+    }
   }
 
   async function saveItemQuantity(itemId: number, quantity: string) {
@@ -640,19 +658,3 @@ function getProductErrorMessage(error: unknown) {
   return 'Não foi possível salvar o produto agora.';
 }
 
-function getNextQuantity(quantity: string, direction: 1 | -1) {
-  const match = quantity.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
-
-  if (!match) {
-    return direction > 0 ? '2 un' : '1 un';
-  }
-
-  const currentValue = Number(match[1].replace(',', '.'));
-  const unit = match[2].trim() || 'un';
-  const step = unit === 'g' ? 100 : 1;
-  const min = unit === 'g' ? 100 : 1;
-  const nextValue = Math.max(min, currentValue + direction * step);
-  const formattedValue = Number.isInteger(nextValue) ? `${nextValue}` : `${nextValue.toFixed(1).replace('.', ',')}`;
-
-  return `${formattedValue} ${unit}`;
-}

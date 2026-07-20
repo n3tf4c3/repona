@@ -14,7 +14,14 @@ const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 // (auditoria #53)
 async function getCasaCodeSeguro(): Promise<string | null> {
   const seguro = await SecureStore.getItemAsync(CASA_CODE_KEY);
-  if (seguro !== null) return seguro;
+  if (seguro !== null) {
+    // Se uma migração anterior gravou no SecureStore mas caiu/falhou antes de
+    // apagar a cópia legada do SQLite, o early return nunca repetia a limpeza e
+    // o token ficava em claro no SQLite indefinidamente. Tenta apagar de novo,
+    // best-effort, a cada leitura (DELETE de chave ausente é no-op). (auditoria #53)
+    await deleteSetting(CASA_CODE_KEY).catch(() => {});
+    return seguro;
+  }
   // Migra instalações que guardavam o token no SQLite (versões anteriores):
   // move para o SecureStore e apaga do SQLite, uma vez só.
   const legado = await getSetting(CASA_CODE_KEY);
@@ -28,6 +35,21 @@ async function getCasaCodeSeguro(): Promise<string | null> {
 
 async function setCasaCodeSeguro(code: string): Promise<void> {
   await SecureStore.setItemAsync(CASA_CODE_KEY, code);
+}
+
+// fetch com timeout via AbortController: sem isto uma conexão pendurada (rede
+// ruim, servidor sem resposta) deixava criar/sincronizar/excluir travados para
+// sempre, com a UI presa em loading. O abort rejeita e cai no catch de rede
+// existente ('NETWORK'). (auditoria #83)
+const REQUEST_TIMEOUT_MS = 15000;
+async function fetchComTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export type SyncResult =
@@ -70,7 +92,7 @@ const NOME_PADRAO = 'Minha casa';
 export async function criarConta(): Promise<SyncResult> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/casa`, {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nome: NOME_PADRAO }),
@@ -109,7 +131,7 @@ export async function excluirConta(): Promise<DeleteResult> {
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/casa`, {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'DELETE',
       headers: { 'x-casa-code': code },
     });
@@ -135,7 +157,7 @@ async function enviarSnapshot(code: string): Promise<SyncResult> {
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/sync`, {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-casa-code': code },
       body: JSON.stringify(snapshot),
