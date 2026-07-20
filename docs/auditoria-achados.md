@@ -72,7 +72,7 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 66 | Excluir compra com mais de 24 meses nunca propaga a exclusao | Media | RESOLVIDO | Tombstones de compra ignoram a janela de 24 meses no buildLocalSnapshot (sync.ts mobile). Resolvido 2026-07-07. |
 | 67 | Clientes mobile antigos re-inserem como vivas as compras tombstonadas | Baixa | DOCUMENTADO | Codigo atual 1.0.3 e regra da nuvem mitigam; rollout/dispositivos antigos nao verificaveis no repositorio. Revalidado 2026-07-20. |
 | 68 | Troca de casa no mobile envia dados locais da conta anterior | Alta | ABERTO | SQLite nao tem namespace de casa; unpair preserva dados e pairAndSync envia o snapshot antes de salvar o novo token. 2026-07-20. |
-| 69 | Pagina publica orienta enviar a unica credencial por e-mail | Alta | ABERTO | Token pedido no suporte autoriza login, sync e exclusao. 2026-07-20. |
+| 69 | Pagina publica orienta enviar a unica credencial por e-mail | Alta | RESOLVIDO | Bloco de suporte reescrito: nao pede o token e alerta para nunca envia-lo por e-mail (excluir-conta/page.tsx). Resolvido 2026-07-20. |
 | 70 | Action administrativa destrutiva nao revalida autorizacao internamente | Media | ABERTO | /admin depende de Basic compartilhado no middleware; sem requireAdmin, identidade, MFA/RBAC ou audit log. 2026-07-20. |
 | 71 | Token bearer permanente possui apenas 40 bits de entropia | Media | ABERTO | 8 chars base32; e a unica credencial e permite exclusao. 2026-07-20. |
 | 72 | Estoque absoluto com LWW perde consumos concorrentes entre devices | Media | ABERTO | Dois devices podem registrar dois eventos e convergir para apenas um decremento no saldo. 2026-07-20. |
@@ -82,12 +82,12 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 76 | Normalizacao Unicode diverge entre SQLite e core de sync | Media | ABERTO | NOCASE/lower SQLite e toLocaleLowerCase pt-BR nao definem a mesma unicidade. 2026-07-20. |
 | 77 | Inicializacao/migrations SQLite nao sao serializadas integralmente | Media | ABERTO | DDL reexecuta por operacao e migration v3 pode avancar sem restaurar indice unique. 2026-07-20. |
 | 78 | Criacao web de produto insere produto e estoque em commits separados | Media | ABERTO | Falha no segundo insert deixa produto parcial e retry encontra duplicata. 2026-07-20. |
-| 79 | Builds EAS de desenvolvimento/preview apontam para producao | Media | ABERTO | API_BASE_URL hardcoded; perfis nao isolam backend/banco. 2026-07-20. |
+| 79 | Builds EAS de desenvolvimento/preview apontam para producao | Media | PARCIAL | API_BASE_URL agora vem de EXPO_PUBLIC_API_BASE_URL por perfil (config.ts/eas.json); dev->emulador, preview->staging. Pendencia operacional: provisionar o backend/banco de staging. 2026-07-20. |
 | 80 | Perfil mobile permite criar conta antes de carregar token existente | Media | ABERTO | null representa loading e unpaired; botao fica ativo durante leitura do SecureStore. 2026-07-20. |
 | 81 | Decremento de quantidade fracionaria pode aumentar o valor | Media | ABERTO | Helper local transforma 0,8 kg - 1 em 1 kg e diverge do core/web. 2026-07-20. |
 | 82 | Falha no bootstrap mobile e exibida como lista vazia | Media | ABERTO | catch apenas loga e finally marca todas as telas como prontas. 2026-07-20. |
 | 83 | Tratamento de transporte, timeout e observabilidade e incompleto | Media | ABERTO | Sync sem timeout/validacao runtime; clientes web sem catch/finally; Actions sem logs estruturados. 2026-07-20. |
-| 84 | Dados SQLite/fotos podem entrar no backup padrao do Android | Media | ABERTO | app.json nao define allowBackup/regras; confirmar manifest final. 2026-07-20. |
+| 84 | Dados SQLite/fotos podem entrar no backup padrao do Android | Media | RESOLVIDO | android.allowBackup=false no app.json; verificar AndroidManifest gerado no proximo build EAS. Resolvido 2026-07-20. |
 | 85 | Scripts gravam dumps completos em JSON sem protecao explicita | Media | ABERTO | Sem criptografia, ACL/modo dedicado ou retencao; backup ignorado existente confirmado so por metadata. 2026-07-20. |
 | 86 | merge-produtos nao preserva/converge todo o estado | Media | ABERTO | Nao deduplica consumos, perde lista/estoque B, conta tombstones e nao cria alias/tombstone de identidade. 2026-07-20. |
 | 87 | Consultas e indices nao acompanham historico/rate limit em crescimento | Media | ABERTO | Sem paginacao; indices por casa/data/reset ausentes; agregado varre todos tenants. Confirmar com EXPLAIN real. 2026-07-20. |
@@ -96,9 +96,9 @@ Fonte versionada para manter a numeracao continua dos achados. Relatorios comple
 | 90 | POST/DELETE de conta nao sao idempotentes perante resposta perdida | Media | ABERTO | Retry pode criar casa orfa ou deixar aparelho pareado com conta ja excluida. Risco potencial. 2026-07-20. |
 | 91 | Criacao de casa aceita disparo cross-origin sem preflight | Baixa | ABERTO | req.json aceita text/plain e nao valida Origin; resposta nao e legivel por CORS. 2026-07-20. |
 | 92 | Controles/modais falham em semantica, foco, alvo de toque e contraste | Baixa | ABERTO | Falhas estaticas web/mobile; requer leitor de tela/dispositivo para validacao final. 2026-07-20. |
-| 93 | Metadados simulados aparecem como dados reais na lista mobile | Baixa | ABERTO | productMeta hardcoded tem precedencia para nomes especificos. 2026-07-20. |
+| 93 | Metadados simulados aparecem como dados reais na lista mobile | Baixa | RESOLVIDO | productMeta hardcoded removido; meta derivado de categoria/quantidade reais (shoppingListPresentation.ts). Resolvido 2026-07-20. |
 | 94 | Fotos persistentes ficam orfas apos edicao/exclusao | Baixa | ABERTO | persistPhoto so copia; nao ha delete/garbage collection rastreado. 2026-07-20. |
-| 95 | Politica de privacidade omite Open Food Facts | Baixa | ABERTO | Scanner consulta terceiro e pode carregar imagem; politica lista somente Vercel/Neon. 2026-07-20. |
+| 95 | Politica de privacidade omite Open Food Facts | Baixa | RESOLVIDO | Secao dedicada divulga a consulta ao Open Food Facts (codigo+IP, sem dados da conta) na politica. Resolvido 2026-07-20. |
 | 96 | Pipeline build/CI tem fragilidades de reprodutibilidade e hardening | Baixa | ABERTO | Expo patch/Metro falham doctor; fonte exige rede; middleware deprecated; CI sem permissions minimo/pin SHA/scans. 2026-07-20. |
 | 97 | Nomes podem injetar sequencias de controle no terminal dos CLIs | Baixa | ABERTO | Validacao aceita C0/C1/ANSI e scripts imprimem campos crus. 2026-07-20. |
-| 98 | Documentacao diverge da arquitetura/configuracao atual | Baixa | ABERTO | README omite ADMIN_SECRET e docs mobile ainda descrevem Firebase/sync futuro. 2026-07-20. |
+| 98 | Documentacao diverge da arquitetura/configuracao atual | Baixa | RESOLVIDO | README (raiz) documenta ADMIN_SECRET no deploy; README/ROADMAP/decisions mobile refletem sync via API Next/Neon (nao Firebase). Resolvido 2026-07-20. |
