@@ -35,6 +35,10 @@ Consequencias:
 - Firebase e sincronizacao permanecem como integracoes futuras.
 - Expo SQLite sera a proxima dependencia funcional importante.
 
+> Atualizacao (auditoria #98, 2026-07-20): a sincronizacao foi implementada com
+> backend proprio (Next.js + Neon/PostgreSQL) por token de casa, **nao** com
+> Firebase/Firestore. Este registro permanece como historico da decisao original.
+
 ## 2026-07-07 - Aceitar janela de compatibilidade dos tombstones de compra em clientes antigos (auditoria #67)
 
 Decisao: aceitar que apps mobile <=1.0.2 re-insiram localmente, como vivas, compras tombstonadas que o servidor devolve no snapshot, sem mitigacao no servidor.

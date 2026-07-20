@@ -17,16 +17,18 @@ Criar uma experiencia simples para cadastrar produtos, montar listas de compras,
 - Compartilhamento familiar
 - Sugestoes futuras baseadas em habitos de consumo
 
-## Tecnologias Previstas
+## Tecnologias
 
 - Expo
 - React Native
 - TypeScript
-- Expo SQLite
+- Expo SQLite (armazenamento local, local-first)
 - Expo Camera
-- Firebase Auth
-- Firestore
-- Expo Notifications
+- Expo SecureStore (token da casa)
+- Sincronizacao na nuvem via API do web (Next.js + Neon/PostgreSQL) por token de
+  casa — **nao usa Firebase/Firestore** (planejado no inicio, substituido pela
+  API propria)
+- Expo Notifications (previsto)
 
 ## MVP
 

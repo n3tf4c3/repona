@@ -10,14 +10,6 @@ const categoryColors: Record<string, string> = {
   'Limpeza': colors.indigo,
 };
 
-const productMeta: Record<string, string> = {
-  'Maçã Fuji': 'R$ 8,90 / kg',
-  'Cenoura': 'R$ 4,50 / kg',
-  'Banana prata': 'R$ 5,20 / kg',
-  'Leite integral': 'R$ 5,49 · 2 un',
-  'Suco de laranja': 'R$ 7,90 · 1 un',
-};
-
 export function shoppingListRecordToItem(record: ShoppingListItemRecord): ShoppingItem {
   return {
     id: record.id,
@@ -25,7 +17,7 @@ export function shoppingListRecordToItem(record: ShoppingListItemRecord): Shoppi
     category: record.category,
     categoryColor: categoryColors[record.category] ?? colors.primary,
     name: record.productName,
-    meta: productMeta[record.productName] ?? `${record.category} · ${record.quantity}`,
+    meta: `${record.category} · ${record.quantity}`,
     quantity: record.quantity,
     checked: record.checked,
     missing: record.productStatus === 'missing',

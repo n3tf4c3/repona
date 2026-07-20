@@ -9,16 +9,25 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "http://10.0.2.2:3000"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://repona-staging.vercel.app"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://repona.vercel.app"
+      }
     }
   },
   "submit": {

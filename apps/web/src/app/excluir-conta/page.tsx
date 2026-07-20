@@ -56,8 +56,10 @@ export default function ExcluirContaPage() {
       <div className="mt-10 rounded-2xl border border-line bg-surface px-5 py-4">
         <p className="font-bold">Precisa de ajuda?</p>
         <p className="mt-1 text-sm text-ink-soft">
-          Se não conseguir excluir pelo app, escreva para <strong>{CONTATO}</strong> com o token da conta e
-          faremos a exclusão.
+          A exclusão é feita por você mesmo, pelo app ou pelo app web. Seu token é a única credencial da
+          conta (serve para entrar, sincronizar e excluir), então <strong>nunca o envie por e-mail</strong>.
+          Se tiver dificuldade, escreva para <strong>{CONTATO}</strong> descrevendo o problema, sem incluir o
+          token.
         </p>
       </div>
 

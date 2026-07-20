@@ -13,7 +13,7 @@ export default function PrivacidadePage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-14">
       <h1 className="text-3xl font-black tracking-tight">Política de Privacidade</h1>
-      <p className="mt-1 text-sm font-semibold text-ink-faint">Última atualização: 26 de junho de 2026</p>
+      <p className="mt-1 text-sm font-semibold text-ink-faint">Última atualização: 20 de julho de 2026</p>
 
       <div className="mt-6 rounded-2xl bg-primary-soft px-5 py-4 text-sm font-medium text-primary-strong">
         Resumo: o Repona funciona offline e guarda seus dados no aparelho. Se você criar uma conta para
@@ -70,6 +70,14 @@ export default function PrivacidadePage() {
           <li><strong>Vercel</strong> — hospedagem do servidor e da API;</li>
           <li><strong>Neon</strong> — banco de dados (PostgreSQL gerenciado), com conexão criptografada.</li>
         </ul>
+      </Secao>
+
+      <Secao titulo="Consulta de código de barras — Open Food Facts">
+        Ao escanear o código de barras de um produto, o app consulta a base pública{" "}
+        <strong>Open Food Facts</strong> (world.openfoodfacts.org) para sugerir nome, categoria e imagem do
+        item. Nessa consulta são enviados apenas o <strong>código de barras</strong> e, por ser uma conexão
+        de rede, o <strong>endereço IP</strong> do aparelho — nenhum dado da sua conta, listas ou histórico é
+        transmitido. A consulta só acontece quando você usa o leitor de código de barras.
       </Secao>
 
       <Secao titulo="7. Permissões do aplicativo">

@@ -50,10 +50,13 @@ Status: iniciado.
 
 ## Fase 4: Compartilhamento Familiar
 
-- Integrar Firebase Auth.
-- Sincronizar dados familiares com Firestore.
-- Permitir multiplos usuarios em uma mesma familia.
-- Notificar atualizacoes relevantes com Expo Notifications.
+Implementada com backend proprio (Next.js + Neon/PostgreSQL) em vez de
+Firebase/Firestore — a conta e uma "casa" identificada por um token compartilhado.
+
+- Conta na nuvem e autenticacao por token de casa. (implementado)
+- Sincronizacao local-first (SQLite) com a API do web por token. (implementado)
+- Multiplos aparelhos na mesma casa via o mesmo token. (implementado)
+- Notificar atualizacoes relevantes com Expo Notifications. (pendente)
 
 ## Fase 5: Inteligencia e Sugestoes
 

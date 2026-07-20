@@ -31,6 +31,8 @@ Copie `apps/web/.env.example` para `apps/web/.env.local` e preencha:
 - `AUTH_SECRET` (e `NEXTAUTH_SECRET` com o mesmo valor) — segredo do NextAuth
 - `NEXTAUTH_URL` — `http://localhost:3000` em dev
 - `INVITE_TOKEN_SECRET` — segredo para cifrar o token da casa em repouso
+- `ADMIN_SECRET` — senha do Basic Auth do painel `/admin`; sem ela o painel
+  responde 503 (fail-closed)
 
 Com o banco configurado, aplique o schema com `db:push` (fluxo canônico do
 projeto). **Não use `db:migrate`** — o script está desativado e as migrations
@@ -46,6 +48,7 @@ O projeto da Vercel deve apontar para o app web dentro do monorepo:
 
 1. **Settings → General → Root Directory** = `apps/web`.
 2. **Settings → Environment Variables**: defina `DATABASE_URL`, `AUTH_SECRET`,
-   `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (a URL do deploy) e `INVITE_TOKEN_SECRET`.
+   `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (a URL do deploy), `INVITE_TOKEN_SECRET` e
+   `ADMIN_SECRET` (senha do painel `/admin`).
 3. Build/Install commands: padrão — a Vercel detecta os workspaces, instala na raiz
    e builda em `apps/web`.
