@@ -163,6 +163,13 @@ export const purchaseHistory = pgTable(
   (table) => [
     index("purchase_history_product_idx").on(table.productId),
     index("purchase_history_source_list_idx").on(table.sourceListId),
+    // Histórico é sempre filtrado por casa e vivo (deleted=false) e ordenado por
+    // data; sem este índice a consulta varre por product_id. (auditoria #87)
+    index("purchase_history_casa_deleted_data_idx").on(
+      table.casaId,
+      table.deleted,
+      table.purchasedAt
+    ),
     // Histórico preso à mesma casa do produto; a lista de origem (quando há)
     // também tem de ser da mesma casa. (auditoria #14)
     foreignKey({
@@ -239,11 +246,19 @@ export const priceHistory = pgTable(
 // janela; ao expirar, o contador recomeça. As chaves incluem IP e token, de
 // cardinalidade não-limitada — a limpeza é a poda oportunística em rateLimit.ts
 // (auditoria #49), não a sobrescrita pela própria chave.
-export const rateLimits = pgTable("rate_limits", {
-  chave: text("chave").primaryKey(),
-  count: integer("count").notNull(),
-  resetEm: timestamp("reset_em", { withTimezone: true }).notNull(),
-});
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    chave: text("chave").primaryKey(),
+    count: integer("count").notNull(),
+    resetEm: timestamp("reset_em", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    // Índice para a poda oportunística (DELETE WHERE reset_em < now()-1h), que
+    // sem ele varre a tabela inteira. (auditoria #87)
+    index("rate_limits_reset_em_idx").on(table.resetEm),
+  ]
+);
 
 // Lock de sync por casa, com dono (token) e TTL. expira_em evita que um merge
 // morto tranque a casa para sempre; o token permite compare-and-delete no

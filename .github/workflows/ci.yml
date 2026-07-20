@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Permissão mínima do GITHUB_TOKEN: só leitura do repo. Reduz o blast radius se
+# um passo/dep for comprometido. (auditoria #96) Residual: pin de Actions por SHA
+# e job dedicado de dependency/secret scanning.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

@@ -25,6 +25,20 @@ import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 
+// Sanitiza campos de dominio antes de imprimir (nomes aceitam qualquer caractere
+// no cadastro): C0 (00-1F), DEL+C1 (7F-9F) e marcas bidi (202A-202E, 2066-2069)
+// viram U+FFFD, para nao injetar ANSI/OSC/bidi no terminal de quem roda o CLI.
+// Checagem por code point (sem caracteres de controle literais no fonte).
+// (auditoria #97)
+function limpar(valor) {
+  return String(valor ?? "").replace(/./gsu, (ch) => {
+    const c = ch.codePointAt(0);
+    const controle = c <= 0x1f || (c >= 0x7f && c <= 0x9f);
+    const bidi = (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+    return controle || bidi ? "�" : ch;
+  });
+}
+
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
   process.exit(1);
@@ -64,7 +78,7 @@ async function resolverProduto(casaId, ref) {
   const r = await sql`SELECT id, name, archived, barcode FROM products
     WHERE casa_id = ${casaId} AND lower(name) = lower(${ref.trim()})`;
   if (r.length > 1) {
-    console.error(`Nome "${ref}" casa com ${r.length} produtos; use o id.`);
+    console.error(`Nome "${limpar(ref)}" casa com ${r.length} produtos; use o id.`);
     process.exit(1);
   }
   return r[0] ?? null;
@@ -82,8 +96,10 @@ if (!A) { console.error(`Canonico "${canonRef}" nao encontrado na casa.`); proce
 if (A.id === B.id) { console.error("Duplicado e canonico sao o mesmo produto."); process.exit(1); }
 
 async function contar(id) {
+  // Compras contadas só as vivas (deleted = false): tombstones nao devem inflar
+  // a metrica nem o purchase_count. (auditoria #86)
   const [r] = await sql`SELECT
-    (SELECT count(*)::int FROM purchase_history WHERE product_id = ${id}) AS compras,
+    (SELECT count(*)::int FROM purchase_history WHERE product_id = ${id} AND deleted = false) AS compras,
     (SELECT count(*)::int FROM price_history WHERE product_id = ${id}) AS precos,
     (SELECT count(*)::int FROM inventory_events WHERE product_id = ${id}) AS consumos,
     (SELECT count(*)::int FROM shopping_list_items WHERE product_id = ${id}) AS itens_lista`;
@@ -92,9 +108,9 @@ async function contar(id) {
 const cB = await contar(B.id);
 const cA = await contar(A.id);
 
-console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
-console.log(`  DUPLICADO (some): #${B.id} "${B.name}"${B.archived ? " [ARQ]" : ""}  ${JSON.stringify(cB)}`);
-console.log(`  CANONICO (fica):  #${A.id} "${A.name}"${A.archived ? " [ARQ]" : ""}  ${JSON.stringify(cA)}`);
+console.log(`Casa #${casa.id} "${limpar(casa.name)}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
+console.log(`  DUPLICADO (some): #${B.id} "${limpar(B.name)}"${B.archived ? " [ARQ]" : ""}  ${JSON.stringify(cB)}`);
+console.log(`  CANONICO (fica):  #${A.id} "${limpar(A.name)}"${A.archived ? " [ARQ]" : ""}  ${JSON.stringify(cA)}`);
 console.log(`\n  -> compras/precos/consumos de #${B.id} viram de #${A.id} (deduplicados); itens de lista de #${B.id} sao removidos; #${B.id} e apagado.`);
 
 if (!confirmado) {
@@ -142,13 +158,24 @@ await sql.transaction([
           AND b.price_cents = a.price_cents
           AND date_trunc('second', b.recorded_at) = date_trunc('second', a.recorded_at))`,
   sql`UPDATE inventory_events SET product_id = ${A.id} WHERE product_id = ${B.id}`,
+  // Deduplica consumos reatribuidos, mesma regra do dedupe do sync (mesmo tipo +
+  // quantidade + instante ao segundo). Antes o script so reatribuia
+  // inventory_events sem deduplicar, entao consumos iguais dos dois produtos
+  // acumulavam. (auditoria #86)
+  sql`DELETE FROM inventory_events a
+      WHERE a.product_id = ${A.id} AND EXISTS (
+        SELECT 1 FROM inventory_events b
+        WHERE b.product_id = ${A.id} AND b.id < a.id
+          AND b.event_type = a.event_type
+          AND trim(b.quantity) = trim(a.quantity)
+          AND date_trunc('second', b.occurred_at) = date_trunc('second', a.occurred_at))`,
   sql`DELETE FROM shopping_list_items WHERE product_id = ${B.id}`,
   sql`DELETE FROM products WHERE id = ${B.id}`,
   sql`UPDATE products SET purchase_count = (
-        SELECT count(*) FROM purchase_history WHERE product_id = ${A.id}
+        SELECT count(*) FROM purchase_history WHERE product_id = ${A.id} AND deleted = false
       ) WHERE id = ${A.id}`,
 ]);
 
 const cFinal = await contar(A.id);
-console.log(`\nMerge concluido. #${A.id} "${A.name}" agora: ${JSON.stringify(cFinal)}`);
-console.log(`#${B.id} "${B.name}" apagado. (re-puxe no celular para refletir)`);
+console.log(`\nMerge concluido. #${A.id} "${limpar(A.name)}" agora: ${JSON.stringify(cFinal)}`);
+console.log(`#${B.id} "${limpar(B.name)}" apagado. (re-puxe no celular para refletir)`);
