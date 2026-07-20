@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { criarContaNuvem, excluirCasa, obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
+import { fingerprintToken } from "@/server/rateLimitToken";
 
 const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
@@ -87,7 +88,14 @@ export async function DELETE(req: NextRequest) {
   // Só o formato válido vira chave; header arbitrário cai num bucket fixo para
   // não inflar rate_limits. (auditoria #54)
   const tokenKey = CASA_CODE_REGEX.test(code) ? code : "invalido";
-  if (await rateLimited(`casa-del:token:${tokenKey}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
+  // Fingerprint do token, não o token em claro, na chave persistida. (#43)
+  if (
+    await rateLimited(
+      `casa-del:token:${fingerprintToken(tokenKey, "casa-del")}`,
+      DEL_MAX_POR_JANELA,
+      DEL_JANELA_SEG
+    )
+  ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   const casaId = await obterCasaPorCodigo(code);

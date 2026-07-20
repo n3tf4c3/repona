@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { z } from "zod";
 import { autenticarCasa } from "@/server/modules/casa";
 import { rateLimited } from "@/server/rateLimit";
+import { fingerprintToken } from "@/server/rateLimitToken";
 import { authSecret } from "@/server/env";
 
 const loginSchema = z.object({
@@ -48,7 +49,14 @@ export const authOptions: NextAuthOptions = {
         const fallback = typeof xff === "string" ? xff.split(",").map((p) => p.trim()).filter(Boolean).pop() : "";
         const ip = (typeof real === "string" && real.trim() ? real.trim() : fallback) || "desconhecido";
         if (await rateLimited(`login:ip:${ip}`, LOGIN_MAX_POR_IP, LOGIN_JANELA_SEG)) return null;
-        if (await rateLimited(`login:token:${parsed.data.token}`, LOGIN_MAX_POR_TOKEN, LOGIN_JANELA_SEG))
+        // Fingerprint do token, não o token em claro, na chave persistida. (#43)
+        if (
+          await rateLimited(
+            `login:token:${fingerprintToken(parsed.data.token, "login")}`,
+            LOGIN_MAX_POR_TOKEN,
+            LOGIN_JANELA_SEG
+          )
+        )
           return null;
 
         const casa = await autenticarCasa(parsed.data.token);

@@ -1,20 +1,46 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Copy, Check, RefreshCw, Pencil, KeyRound, AlertCircle, Trash2 } from "lucide-react";
-import { signOut } from "next-auth/react";
+import { signIn, signOut } from "next-auth/react";
 import type { CasaDTO } from "@/server/modules/casa";
 import { excluirContaAction, regenerarCodigoAction, renomearCasaAction } from "./actions";
 
 type Resultado = { ok: boolean; error?: string };
 
 export function CasaClient({ casa }: { casa: CasaDTO }) {
+  const router = useRouter();
   const [erro, setErro] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [editandoNome, setEditandoNome] = useState(false);
   const [nome, setNome] = useState(casa.name);
+  const [codigo, setCodigo] = useState(casa.inviteCode);
+  const [confirmandoRotacao, setConfirmandoRotacao] = useState(false);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  function rotacionar() {
+    setErro(null);
+    startTransition(async () => {
+      const r = await regenerarCodigoAction();
+      if (!r.ok) {
+        setErro(r.error ?? "Erro.");
+        return;
+      }
+      // Reautentica com o novo token: renova a sessão para a nova
+      // credentialVersion antes que qualquer navegação caia em requireCasa e
+      // deslogue (lockout). O token novo já está em mãos e é exibido. (#13)
+      const login = await signIn("credentials", { token: r.novoToken, redirect: false });
+      setCodigo(r.novoToken);
+      setConfirmandoRotacao(false);
+      if (login?.error) {
+        setErro("Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele.");
+      } else {
+        router.refresh();
+      }
+    });
+  }
 
   function excluirConta() {
     setErro(null);
@@ -36,7 +62,7 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
 
   async function copiarCodigo() {
     try {
-      await navigator.clipboard.writeText(casa.inviteCode);
+      await navigator.clipboard.writeText(codigo);
       setCopiado(true);
       setTimeout(() => setCopiado(false), 1500);
     } catch {
@@ -85,7 +111,7 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 rounded-xl border border-line bg-bg px-4 py-2.5 text-lg font-black tracking-[0.2em] text-ink">
-            {casa.inviteCode}
+            {codigo}
           </code>
           <button
             onClick={copiarCodigo}
@@ -96,16 +122,41 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
           </button>
           <button
             disabled={pending}
-            onClick={() => executar(() => regenerarCodigoAction())}
+            onClick={() => setConfirmandoRotacao((v) => !v)}
             title="Gerar novo token"
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-line text-ink-soft transition hover:bg-bg disabled:opacity-50"
           >
             <RefreshCw size={18} />
           </button>
         </div>
-        <p className="mt-1 text-xs text-ink-faint">
-          É o mesmo token do app. Gerar um novo invalida o anterior (será preciso reconectar o app).
-        </p>
+        {confirmandoRotacao ? (
+          <div className="mt-2 space-y-2 rounded-xl bg-amber-soft px-4 py-3">
+            <p className="text-sm font-medium text-amber-ink">
+              Gerar um novo token <strong>invalida o atual imediatamente</strong> em todos os aparelhos e
+              sessões. Você continua conectado aqui e o novo token aparece acima para copiar.
+            </p>
+            <div className="flex gap-2">
+              <button
+                disabled={pending}
+                onClick={rotacionar}
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {pending ? "Gerando..." : "Gerar novo token"}
+              </button>
+              <button
+                disabled={pending}
+                onClick={() => setConfirmandoRotacao(false)}
+                className="rounded-xl border border-line px-4 py-2 text-sm font-medium text-ink-soft transition hover:bg-bg disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-1 text-xs text-ink-faint">
+            É o mesmo token do app. Gerar um novo invalida o anterior (será preciso reconectar o app).
+          </p>
+        )}
       </div>
 
       {/* Excluir conta */}

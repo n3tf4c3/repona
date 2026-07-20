@@ -13,17 +13,22 @@ const MENSAGENS: Record<string, string> = {
 
 const nomeSchema = z.string().trim().min(1).max(80);
 
-function tratar(error: unknown): Resultado {
+function tratar(error: unknown): { ok: false; error: string } {
   const codigo = error instanceof Error ? error.message : "ERRO";
   return { ok: false, error: MENSAGENS[codigo] ?? "Algo deu errado. Tente novamente." };
 }
 
-export async function regenerarCodigoAction(): Promise<Resultado> {
+type RotacaoResultado = { ok: true; novoToken: string } | { ok: false; error: string };
+
+export async function regenerarCodigoAction(): Promise<RotacaoResultado> {
   const { casaId } = await requireCasa();
   try {
-    await regenerarCodigo(casaId);
-    revalidatePath("/perfil");
-    return { ok: true };
+    const { token } = await regenerarCodigo(casaId);
+    // NÃO revalidar /perfil aqui: a sessão atual ainda carrega a
+    // credentialVersion antiga e um re-render server-side cairia em requireCasa
+    // -> /login (lockout). O cliente reautentica com o novo token (nova sessão)
+    // e só então atualiza a tela. (auditoria #13)
+    return { ok: true, novoToken: token };
   } catch (error) {
     return tratar(error);
   }

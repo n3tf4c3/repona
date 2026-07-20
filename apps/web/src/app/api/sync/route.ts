@@ -4,6 +4,7 @@ import { CATEGORIAS, FIELD_LIMITS, MAX_PRICE_CENTS } from "@repona/core";
 import { obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { mergeCasaSnapshot } from "@/server/modules/sync";
 import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
+import { fingerprintToken } from "@/server/rateLimitToken";
 
 // Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
 // criação de produto — assim a criação nunca gera um valor que o sync rejeita.
@@ -112,7 +113,8 @@ export async function POST(req: NextRequest) {
   // Chave de rate limit por token só com formato válido; um header arbitrário cai
   // num bucket fixo, para não inflar rate_limits com valores distintos. (#54)
   const tokenKey = CASA_CODE_REGEX.test(code) ? code : "invalido";
-  if (await rateLimited(`sync:token:${tokenKey}`, MAX_POR_TOKEN, JANELA_SEG)) {
+  // Fingerprint do token, não o token em claro, na chave persistida. (#43)
+  if (await rateLimited(`sync:token:${fingerprintToken(tokenKey, "sync")}`, MAX_POR_TOKEN, JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
   const casaId = await obterCasaPorCodigo(code);

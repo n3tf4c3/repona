@@ -113,23 +113,33 @@ export async function obterCasaPorId(casaId: number): Promise<CasaDTO> {
   return { id: casa.id, name: casa.name, inviteCode: decifrarCodigo(casa.inviteCodeEnc) };
 }
 
-export async function regenerarCodigo(casaId: number): Promise<void> {
+// Gera um novo token, invalida o anterior (logins/syncs e sessões web já
+// emitidas, via credentialVersion) e DEVOLVE o novo token + a nova versão. A
+// entrega do token novo é essencial: sem ela a rotação bloqueia a conta — a
+// sessão atual é invalidada e a página que exibiria o token exige justamente a
+// sessão que acabou de cair. O cliente usa o retorno para reautenticar e
+// mostrar/copiar o novo token. (auditoria #13)
+export async function regenerarCodigo(
+  casaId: number
+): Promise<{ token: string; credentialVersion: number }> {
   for (let tentativa = 0; tentativa < 5; tentativa++) {
+    const novoCodigo = gerarCodigo();
     try {
-      // Incrementa a versão da credencial junto com o novo código: invalida o
-      // token antigo (logins/syncs) e as sessões web já emitidas. (auditoria #13)
-      await db
+      const [row] = await db
         .update(casas)
         .set({
-          inviteCodeEnc: cifrarCodigo(gerarCodigo()),
+          inviteCodeEnc: cifrarCodigo(novoCodigo),
           credentialVersion: sql`${casas.credentialVersion} + 1`,
         })
-        .where(eq(casas.id, casaId));
-      return;
+        .where(eq(casas.id, casaId))
+        .returning({ credentialVersion: casas.credentialVersion });
+      if (!row) throw new Error("CASA_NOT_FOUND");
+      return { token: novoCodigo, credentialVersion: row.credentialVersion };
     } catch (error) {
       if (!ehColisaoDeCodigo(error) || tentativa === 4) throw error;
     }
   }
+  throw new Error("CASA_CREATE_FAILED");
 }
 
 export async function renomearCasa(casaId: number, name: string): Promise<void> {
