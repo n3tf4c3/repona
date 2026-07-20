@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { excluirCasa } from "@/server/modules/casa";
 import { listarCasas } from "@/server/modules/admin";
+import { requireAdmin } from "@/server/auth/requireAdmin";
 import { DeleteCasaButton } from "./delete-button.client";
 
 // Acesso protegido pelo middleware (Basic Auth via ADMIN_SECRET). Não usa a
@@ -9,6 +10,9 @@ export const dynamic = "force-dynamic";
 
 async function excluirCasaAction(formData: FormData) {
   "use server";
+  // Revalida a autorização por dentro da Action, não só no perímetro do
+  // middleware: exclusão de casa é destrutiva e global. (auditoria #70)
+  await requireAdmin();
   const id = Number(formData.get("id"));
   if (Number.isInteger(id) && id > 0) {
     await excluirCasa(id);

@@ -23,6 +23,23 @@ import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 
+// Sanitiza campos de dominio antes de imprimir no terminal: nomes de casa/produto
+// aceitam qualquer caractere no cadastro, entao um usuario com token/criacao
+// publica poderia injetar C0/C1/ANSI/OSC ou marcas bidi para adulterar a
+// exibicao, links ou clipboard de quem roda o CLI. (auditoria #97)
+//
+// Checagem por code point (sem caracteres de controle literais no fonte, que um
+// editor/git poderia alterar silenciosamente): C0 (00-1F), DEL+C1 (7F-9F) e
+// marcas bidi perigosas (202A-202E, 2066-2069) viram U+FFFD.
+function limpar(valor) {
+  return String(valor ?? "").replace(/./gsu, (ch) => {
+    const c = ch.codePointAt(0);
+    const controle = c <= 0x1f || (c >= 0x7f && c <= 0x9f);
+    const bidi = (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+    return controle || bidi ? "�" : ch;
+  });
+}
+
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
   process.exit(1);
@@ -74,7 +91,7 @@ async function list() {
     const n = await contadores(c.id);
     const criada = new Date(c.created_at).toLocaleDateString("pt-BR");
     console.log(
-      `#${c.id}  "${c.name}"  code=${token(decifrarCodigo(c.invite_code_enc))}  criada=${criada}\n` +
+      `#${c.id}  "${limpar(c.name)}"  code=${token(decifrarCodigo(c.invite_code_enc))}  criada=${criada}\n` +
         `      produtos=${n.produtos} (arq ${n.arquivados})  compras=${n.compras}  ` +
         `listas=${n.listas} (itens ${n.itens_lista})  precos=${n.precos}`,
     );
@@ -83,22 +100,22 @@ async function list() {
 
 async function show(ref) {
   const casa = await resolverCasa(ref);
-  if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
+  if (!casa) return console.error(`Casa "${limpar(ref)}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
+  console.log(`Casa #${casa.id} "${limpar(casa.name)}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
   console.log(`  ${JSON.stringify(n)}`);
   const prods = await sql`
     SELECT id, name, category, status, archived FROM products WHERE casa_id = ${casa.id}
     ORDER BY archived, name`;
   console.log(`  Produtos (${prods.length}):`);
   for (const p of prods) {
-    console.log(`    #${p.id} "${p.name}" [${p.category}] ${p.status}${p.archived ? " (arquivado)" : ""}`);
+    console.log(`    #${p.id} "${limpar(p.name)}" [${limpar(p.category)}] ${p.status}${p.archived ? " (arquivado)" : ""}`);
   }
 }
 
 async function exportar(ref) {
   const casa = await resolverCasa(ref);
-  if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
+  if (!casa) return console.error(`Casa "${limpar(ref)}" nao encontrada.`);
   const id = casa.id;
   const prodIds = (await sql`SELECT id FROM products WHERE casa_id = ${id}`).map((r) => r.id);
   const dump = {
@@ -113,14 +130,20 @@ async function exportar(ref) {
     shopping_list_items: await sql`SELECT * FROM shopping_list_items WHERE casa_id = ${id} ORDER BY id`,
   };
 
+  // O dump traz dados da casa e o blob cifrado da credencial em JSON claro. Cria o
+  // diretorio e o arquivo com permissao restritiva (dono apenas, ~0700/0600) para
+  // nao herdar ACL de leitura ampla. Em Windows o modo POSIX e best-effort; ainda
+  // assim mantenha o backup fora de compartilhamentos/backups. (auditoria #85)
   const dir = resolve(aqui, "../backups");
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const file = resolve(dir, `casa-${casa.id}-${stamp}.json`);
-  writeFileSync(file, JSON.stringify(dump, null, 2), "utf8");
+  writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
 
-  console.log(`Backup de #${casa.id} "${casa.name}" salvo em:`);
+  console.log(`Backup de #${casa.id} "${limpar(casa.name)}" salvo em:`);
   console.log(`  ${file}`);
+  console.log("  AVISO: contem dados da casa e o blob da credencial em texto claro.");
+  console.log("  Guarde fora de backups/compartilhamentos e apague quando nao precisar mais.");
   console.log(
     `  produtos=${dump.products.length} compras=${dump.purchase_history.length} ` +
       `precos=${dump.price_history.length} itens_lista=${dump.shopping_list_items.length}`,
@@ -129,9 +152,9 @@ async function exportar(ref) {
 
 async function del(ref) {
   const casa = await resolverCasa(ref);
-  if (!casa) return console.error(`Casa "${ref}" nao encontrada.`);
+  if (!casa) return console.error(`Casa "${limpar(ref)}" nao encontrada.`);
   const n = await contadores(casa.id);
-  console.log(`Casa #${casa.id} "${casa.name}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
+  console.log(`Casa #${casa.id} "${limpar(casa.name)}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
   console.log(`  Sera apagado (cascade): ${JSON.stringify(n)}`);
 
   if (!confirmado) {

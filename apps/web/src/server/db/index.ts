@@ -2,6 +2,7 @@ import "server-only";
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import * as schema from "./schema";
+import { databaseUrl } from "@/server/env";
 
 type DB = ReturnType<typeof drizzle<typeof schema>>;
 
@@ -9,11 +10,7 @@ let instance: DB | null = null;
 
 function getDb(): DB {
   if (!instance) {
-    const url = process.env.DATABASE_URL;
-    if (!url) {
-      throw new Error("DATABASE_URL ausente. Configure a conexão (ex.: Neon).");
-    }
-    instance = drizzle({ client: neon(url), schema });
+    instance = drizzle({ client: neon(databaseUrl()), schema });
   }
   return instance;
 }

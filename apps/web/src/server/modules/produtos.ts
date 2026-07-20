@@ -150,6 +150,12 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
   const barcode = input.barcode?.trim() || null;
   if (barcode && (await barcodeJaExiste(casaId, barcode))) throw new Error("PRODUCT_BARCODE_EXISTS");
 
+  // Criação atômica num único insert. O estoque nasce vazio: em vez de inserir
+  // uma linha separada em inventory_items (segundo commit que podia falhar e
+  // deixar o produto pela metade — auditoria #78), a ausência da linha é tratada
+  // por coalesce('0 un'/'missing') no DTO e nas consultas de estoque; a primeira
+  // operação de estoque faz o upsert da linha (definirQuantidade). O status
+  // 'missing' do produto acompanha o estoque vazio. (auditoria #7, #78)
   const [criado] = await db
     .insert(products)
     .values({
@@ -159,19 +165,11 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       brand: input.brand?.trim() || null,
       barcode,
       photoUri: input.photoUri ?? null,
-      // Estoque nasce vazio, então o status do produto acompanha (em falta) —
-      // evita divergir do que o DTO/lista/snapshot mostram. (auditoria #7)
       status: "missing",
       alertThreshold: input.alertThreshold?.trim() || null,
       occasional: input.occasional ?? false,
     })
     .returning({ id: products.id });
-
-  await db.insert(inventoryItems).values({
-    productId: criado.id,
-    quantity: "0 un",
-    status: "missing",
-  });
 
   const dto = await getProdutoDTO(casaId, criado.id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND_AFTER_INSERT");

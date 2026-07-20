@@ -21,7 +21,33 @@ const CRIAR_MAX_DIA = 20;
 const DEL_JANELA_SEG = 60 * 60;
 const DEL_MAX_POR_JANELA = 20;
 
+// Origem permitida para chamadas de navegador: a própria origem do app
+// (NEXTAUTH_URL). O app mobile é fetch nativo e não envia Origin, então não é
+// afetado. (auditoria #91)
+function origemPermitida(origin: string): boolean {
+  const base = process.env.NEXTAUTH_URL;
+  if (!base) return false;
+  try {
+    return new URL(origin).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
+  // Bloqueia abuso cross-origin sem preflight: um site externo poderia enviar
+  // JSON como text/plain (tipo safelisted, sem preflight) para criar casas. Exige
+  // application/json e, quando há Origin (navegador), valida contra a origem do
+  // app. O mobile envia application/json e não manda Origin. (auditoria #91)
+  const contentType = req.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json")) {
+    return NextResponse.json({ error: "UNSUPPORTED_MEDIA_TYPE" }, { status: 415 });
+  }
+  const origin = req.headers.get("origin");
+  if (origin && !origemPermitida(origin)) {
+    return NextResponse.json({ error: "FORBIDDEN_ORIGIN" }, { status: 403 });
+  }
+
   const ip = ipDaRequest(req.headers);
   if (
     (await rateLimited(`casa:hora:${ip}`, CRIAR_MAX_HORA, CRIAR_JANELA_HORA)) ||

@@ -1,5 +1,6 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync } from "crypto";
+import { inviteTokenSecret } from "@/server/env";
 
 // Cifragem do token (invite_code) em repouso (auditoria #43). O token de 8 chars
 // é a única credencial da casa; guardá-lo em claro deixava qualquer dump do
@@ -19,13 +20,7 @@ import { createCipheriv, createDecipheriv, createHmac, hkdfSync } from "crypto";
 const VERSAO = "v1";
 
 function segredo(): Buffer {
-  const s = process.env.INVITE_TOKEN_SECRET;
-  if (!s || s.length < 16) {
-    throw new Error(
-      "INVITE_TOKEN_SECRET ausente ou curto: defina um segredo aleatório (>= 16 chars)."
-    );
-  }
-  return Buffer.from(s, "utf8");
+  return Buffer.from(inviteTokenSecret(), "utf8");
 }
 
 function derivar(info: string): Buffer {

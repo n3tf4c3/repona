@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { z } from "zod";
 import { autenticarCasa } from "@/server/modules/casa";
 import { rateLimited } from "@/server/rateLimit";
+import { authSecret } from "@/server/env";
 
 const loginSchema = z.object({
   token: z.string().trim().toUpperCase().regex(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/),
@@ -18,10 +19,9 @@ const LOGIN_MAX_POR_TOKEN = 10;
 
 export const authOptions: NextAuthOptions = {
   // Getter: valida o segredo em runtime (quando o NextAuth o lê), não no build.
+  // Regra centralizada em server/env.ts. (auditoria #89)
   get secret() {
-    const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
-    if (!secret) throw new Error("AUTH_SECRET ausente.");
-    return secret;
+    return authSecret();
   },
   session: {
     strategy: "jwt",
