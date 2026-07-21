@@ -164,11 +164,20 @@ export async function criarConta(): Promise<SyncResult> {
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
   const { token } = (await response.json()) as { token: string; casaId: number };
+  // Persiste o token ANTES da primeira sincronização (auditoria #58). Ele é a
+  // ÚNICA credencial da casa recém-criada e só existe aqui: se a primeira sync
+  // falhar (timeout, 413, crash), salvá-lo só no fim perderia a credencial e
+  // deixaria a casa órfã na nuvem. Salvo antes, a casa é recuperável e a UI —
+  // vendo-se pareada — não reoferece "criar conta", evitando uma segunda casa.
+  // O active_casa_id NÃO é gravado ainda: no arranque restoreActiveScope abre o
+  // scratch 'local' (não a casa vazia), preservando os dados a enviar; a próxima
+  // syncNow empurra o scratch e adota a casa. A idempotência completa do POST
+  // (resposta perdida ANTES de recebermos o token) fica para o redesenho (#90).
+  await setCasaCodeSeguro(token);
   // Empurra o scratch para a casa nova e adota o merge no arquivo dela.
   const r = await postSync(token, snapshotLocal);
   if (!r.ok) return { ok: false, error: r.error };
   const at = await adotarCasa(r.casaId, r.merged);
-  await setCasaCodeSeguro(token);
   await setActiveCasaId(r.casaId);
   return { ok: true, lastSyncAt: at };
 }
