@@ -80,6 +80,12 @@ deliberadamente bloqueado. Depois do preflight do passo 2:
 
 ```bash
 npm run db:push -w web
+# CHECK de tabela existente: db:push NÃO altera CHECK pré-existente. Antes do
+# backfill, aplicar por SQL a mudança da migration 0002 (senão o INSERT do
+# baseline 'set' falha com 23514). Idempotente e seguro (só amplia o conjunto):
+#   ALTER TABLE inventory_events DROP CONSTRAINT IF EXISTS inventory_events_event_type_check;
+#   ALTER TABLE inventory_events ADD CONSTRAINT inventory_events_event_type_check
+#     CHECK (event_type IN ('consumed', 'set'));
 npm run sync-v2:backfill -w web
 npm run sync-v2:backfill -w web -- --yes
 npm run token-legado:status -w web
@@ -96,6 +102,7 @@ Confirmar por metadados, sem selecionar dados de domínio:
 - `products.name_key NOT NULL` e índice único `(casa_id, name_key)` válidos;
 - `sync_id`, relógios separados e índices de eventos/paginação presentes;
 - constraints/FKs válidas, sem estado `NOT VALID`;
+- `inventory_events_event_type_check` permite `'set'` (não só `'consumed'`);
 - backfills idempotentes retornam zero na segunda execução.
 
 Se `db:push` propuser drop, rename ambíguo ou perda de dados, cancelar e revisar
