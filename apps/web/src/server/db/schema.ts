@@ -232,9 +232,7 @@ export const purchaseHistory = pgTable(
       .references(() => products.id),
     quantity: text("quantity").notNull().default("1 un"),
     purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull().defaultNow(),
-    sourceListId: integer("source_list_id").references(() => shoppingLists.id, {
-      onDelete: "set null",
-    }),
+    sourceListId: integer("source_list_id"),
     // Nome da lista de origem denormalizado: sobrevive ao sync (o id é local) e a
     // exclusões da lista. (auditoria #17)
     sourceListName: text("source_list_name"),
@@ -267,13 +265,11 @@ export const purchaseHistory = pgTable(
       foreignColumns: [products.id, products.casaId],
       name: "ph_product_casa_fk",
     }),
-    // A FK simples de source_list_id é ON DELETE SET NULL (preserva o histórico
-    // ao remover a lista, auditoria #17); esta composta fica NO ACTION. A
-    // diferença só "conflitaria" num DELETE físico de shopping_lists — que o app
-    // nunca faz (listas são arquivadas, status 'archived', nunca apagadas), então
-    // o conflito não dispara. O valor durável da origem é sourceListName.
-    // Normalização (dropar esta composta redundante) fica para uma migration
-    // dedicada, fora do db:push de rotina. (auditoria #31, DOCUMENTADO)
+    // Uma única FK composta garante que a lista de origem pertence à mesma casa.
+    // O delete físico fica deliberadamente restrito: um futuro fluxo de purge deve
+    // primeiro nulificar source_list_id na mesma transação. O nome denormalizado
+    // continua preservando a origem no histórico. Isso elimina as políticas
+    // conflitantes SET NULL/NO ACTION que existiam sobre a mesma coluna. (#31)
     foreignKey({
       columns: [table.sourceListId, table.casaId],
       foreignColumns: [shoppingLists.id, shoppingLists.casaId],
