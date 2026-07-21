@@ -9,6 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "build:android": "eas build -p android --profile preview",
     "build:android:prod": "eas build -p android --profile production"
   },
