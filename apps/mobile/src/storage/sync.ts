@@ -24,6 +24,10 @@ import {
   localProductIdForSyncEntry,
 } from './syncProductResolution';
 import { shouldUploadPurchaseAfterCutoff, syncEventCutoffIso } from './syncCutoff';
+import {
+  assertIncomingProductIdentitiesUnambiguous,
+  promoteRemoteProductSyncId,
+} from './productSyncAliases';
 
 export { parseSyncSnapshot } from './syncSnapshot';
 
@@ -483,12 +487,13 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
   type LocalProduct = {
     id: number;
+    sync_id: string | null;
     name: string;
     updated_at: string;
     inventory_updated_at: string | null;
   };
   const localProductSelect = `
-    SELECT p.id, p.name, p.updated_at, ii.updated_at AS inventory_updated_at
+    SELECT p.id, p.sync_id, p.name, p.updated_at, ii.updated_at AS inventory_updated_at
     FROM products p
     LEFT JOIN inventory_items ii ON ii.product_id = p.id`;
 
@@ -502,6 +507,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     // local descartava o evento em silêncio ou o atribuía ao produto errado.
     // (auditoria 2026-06-09 #2)
     const idPorNomeRecebido = new Map<string, number>();
+    await assertIncomingProductIdentitiesUnambiguous(transaction, snapshot.products);
 
     for (const prod of snapshot.products) {
       const nome = prod.name.trim();
@@ -510,10 +516,24 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       // do servidor; senão insere. (auditoria #1)
       let row = prod.syncId
         ? await transaction.getFirstAsync<LocalProduct>(
-            `${localProductSelect} WHERE p.sync_id = ? LIMIT 1`,
+            `${localProductSelect} WHERE p.sync_id = ?`,
             prod.syncId,
           )
         : null;
+
+      if (!row && prod.syncId) {
+        row = await transaction.getFirstAsync<LocalProduct>(
+          `${localProductSelect}
+           INNER JOIN product_sync_aliases psa ON psa.canonical_product_id = p.id
+           WHERE psa.old_sync_id = ?`,
+          prod.syncId,
+        );
+        if (row) {
+          // O snapshot remoto expõe a identidade canônica. Se ela era apenas um
+          // alias local, promove-a e aposenta o UUID local anterior. (#76)
+          await promoteRemoteProductSyncId(transaction, row, prod.syncId, now);
+        }
+      }
 
       if (!row && prod.barcode?.trim()) {
         // Casa por código de barras (não-nulo) quando o syncId não bate e antes
@@ -521,24 +541,27 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         // hortifrúti segue só pelo nome. Comparação com trim dos dois lados —
         // código legado com espaço nunca casaria. (auditoria #19, 2026-06-09 #9)
         const porBarcode = await transaction.getFirstAsync<LocalProduct>(
-          `${localProductSelect} WHERE trim(p.barcode) = ? LIMIT 1`,
+          `${localProductSelect} WHERE trim(p.barcode) = ? ORDER BY p.id ASC LIMIT 1`,
           prod.barcode.trim(),
         );
         if (porBarcode && prod.syncId) {
-          await transaction.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porBarcode.id);
+          await promoteRemoteProductSyncId(transaction, porBarcode, prod.syncId, now);
         }
         row = porBarcode;
       }
 
       if (!row) {
-        const porNome = await transaction.getFirstAsync<LocalProduct>(
-          `${localProductSelect} WHERE p.name_key = ? LIMIT 1`,
+        const porNome = await transaction.getAllAsync<LocalProduct>(
+          `${localProductSelect} WHERE p.name_key = ? ORDER BY p.id ASC`,
           productNameKey(nome), // Unicode-aware, alinhado ao web (auditoria #76)
         );
-        if (porNome && prod.syncId) {
-          await transaction.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porNome.id);
+        if (porNome.length > 1) {
+          throw new Error('PRODUCT_NAME_KEY_NOT_UNIQUE');
         }
-        row = porNome;
+        if (porNome[0] && prod.syncId) {
+          await promoteRemoteProductSyncId(transaction, porNome[0], prod.syncId, now);
+        }
+        row = porNome[0] ?? null;
       }
 
       let productId: number;
@@ -559,7 +582,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           let nomeFinal = nome;
           if (productNameKey(prod.name) !== productNameKey(row.name)) {
             const colide = await transaction.getFirstAsync<{ id: number }>(
-              'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
+              'SELECT id FROM products WHERE name_key = ? AND id <> ?',
               productNameKey(nome),
               row.id,
             );
@@ -670,6 +693,20 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
     const idPorNome = new Map<string, number>();
     const idPorSyncId = new Map<string, number>();
+    if (relevantSyncIds.length > 0) {
+      const aliases = await transaction.getAllAsync<{
+        old_sync_id: string;
+        canonical_product_id: number;
+      }>(
+        `SELECT old_sync_id, canonical_product_id
+         FROM product_sync_aliases
+         WHERE old_sync_id IN (${placeholders(relevantSyncIds.length)})`,
+        ...relevantSyncIds,
+      );
+      for (const alias of aliases) {
+        idPorSyncId.set(alias.old_sync_id, alias.canonical_product_id);
+      }
+    }
     const todos = await transaction.getAllAsync<{ id: number; name: string; sync_id: string | null }>(
       `SELECT id, name, sync_id FROM products WHERE ${predicates.join(' OR ')}`,
       ...args,

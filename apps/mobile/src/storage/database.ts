@@ -7,6 +7,7 @@ import {
   migratePurchaseHistoryPageIndex,
   migratePurchaseHistoryUpdatedAt,
   migrateSyncEventIdentity,
+  reconcileProductNameKeyCollisions,
   type MigrationAdapter,
 } from './sqliteMigrations';
 
@@ -236,12 +237,11 @@ async function initializeOnce() {
     // best-effort: não bloqueia a inicialização.
   }
 
-  // A v9 avança mesmo diante de colisões Unicode legadas. Repetir a tentativa
-  // permite instalar a proteção assim que os nomes forem reconciliados. (#76)
-  try {
-    await ensureProductNameKeyUnique(migrationAdapter(database));
-  } catch {
-    // best-effort: CRUD/sync ainda comparam name_key em JS até a reconciliação.
+  // A proteção Unicode é uma invariável de boot. Bancos que perderam o índice
+  // são reparados antes de qualquer CRUD/sync continuar. (#76)
+  const adapter = migrationAdapter(database);
+  if (!(await ensureProductNameKeyUnique(adapter))) {
+    await reconcileProductNameKeyCollisions(adapter);
   }
 
   return database;
@@ -384,8 +384,7 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
   // para dedupe Unicode-aware, alinhando o mobile ao Postgres do web (lá lower()
   // é Unicode e há índice único por lower(name); no SQLite o NOCASE/lower é só
   // ASCII e deixava "Açúcar"/"açúcar" coexistirem). O backfill roda em JS porque
-  // o SQLite não normaliza NFC. O índice único é criado só sem duplicata de chave
-  // (mesmo cuidado do v3); mesmo sem ele, o CRUD checa por name_key em JS.
+  // o SQLite não normaliza NFC. Colisões são fundidas antes do índice único.
   // (auditoria #76)
   async (db) => migrateProductNameKey(migrationAdapter(db)),
 
@@ -398,6 +397,12 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
   // v11: cobre o keyset do histórico mobile (deleted + data + origem + id).
   // Sem ele cada página voltaria a varrer todo o histórico. (#87)
   async (db) => migratePurchaseHistoryPageIndex(migrationAdapter(db)),
+
+  // v12: repara instalações que já tinham avançado pela antiga v9 sem índice e
+  // instala aliases para os UUIDs dos produtos fundidos. (#76)
+  async (db) => {
+    await reconcileProductNameKeyCollisions(migrationAdapter(db));
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

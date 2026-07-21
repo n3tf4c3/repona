@@ -161,7 +161,7 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   // lower() ASCII do SQLite. (auditoria #76)
   const nameKey = productNameKey(name);
   const existing = await database.getFirstAsync<{ id: number }>(
-    'SELECT id FROM products WHERE name_key = ? LIMIT 1',
+    'SELECT id FROM products WHERE name_key = ?',
     nameKey,
   );
 
@@ -236,7 +236,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   // Dedupe por name_key (Unicode-aware), excluindo o próprio produto. (auditoria #76)
   const nameKey = productNameKey(name);
   const existing = await database.getFirstAsync<{ id: number }>(
-    'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
+    'SELECT id FROM products WHERE name_key = ? AND id <> ?',
     nameKey,
     productId,
   );
