@@ -1,6 +1,7 @@
 import { uuidv4 } from '@repona/core';
 import * as SQLite from 'expo-sqlite';
 import {
+  ensureProductNameKeyUnique,
   migrateProductNameKey,
   migratePurchaseHistoryPageIndex,
   migratePurchaseHistoryUpdatedAt,
@@ -219,6 +220,14 @@ async function initializeOnce() {
     }
   } catch {
     // best-effort: não bloqueia a inicialização.
+  }
+
+  // A v9 avança mesmo diante de colisões Unicode legadas. Repetir a tentativa
+  // permite instalar a proteção assim que os nomes forem reconciliados. (#76)
+  try {
+    await ensureProductNameKeyUnique(migrationAdapter(database));
+  } catch {
+    // best-effort: CRUD/sync ainda comparam name_key em JS até a reconciliação.
   }
 
   return database;

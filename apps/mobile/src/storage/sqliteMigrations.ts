@@ -36,14 +36,22 @@ export async function migrateProductNameKey(db: MigrationAdapter): Promise<void>
     await db.run('UPDATE products SET name_key = ? WHERE id = ?', productNameKey(row.name), row.id);
   }
 
+  await ensureProductNameKeyUnique(db);
+}
+
+// A migration v9 precisa avançar mesmo se um banco legado já contiver colisões;
+// derrubar o boot seria pior. Este helper é repetido em todo startup: depois que
+// o usuário renomear/reconciliar os duplicados, o índice passa a existir sem
+// exigir uma nova versão de migration. (#76/#77)
+export async function ensureProductNameKeyUnique(db: MigrationAdapter): Promise<boolean> {
   const duplicate = await db.first<{ n: number }>(
     'SELECT COUNT(*) - COUNT(DISTINCT name_key) AS n FROM products WHERE name_key IS NOT NULL',
   );
-  if ((duplicate?.n ?? 0) === 0) {
-    await db.exec(
-      'CREATE UNIQUE INDEX IF NOT EXISTS products_name_key_unique ON products(name_key);',
-    );
-  }
+  if ((duplicate?.n ?? 0) !== 0) return false;
+  await db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS products_name_key_unique ON products(name_key);',
+  );
+  return true;
 }
 
 // v10: adiciona identidade aos eventos e converte a tabela de estoque para o

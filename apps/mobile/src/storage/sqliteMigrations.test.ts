@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import { productNameKey } from '@repona/core';
 import {
+  ensureProductNameKeyUnique,
   migrateProductNameKey,
   migratePurchaseHistoryPageIndex,
   migratePurchaseHistoryUpdatedAt,
@@ -224,4 +225,45 @@ test('dois devices geram a mesma identidade para o baseline v10', async (context
   );
 
   assert.deepEqual(baselineIds, [PRODUCT_SYNC_ID, PRODUCT_SYNC_ID]);
+});
+
+test('indice name_key e instalado depois que colisao legada e reconciliada', async (context) => {
+  const database = new DatabaseSync(':memory:');
+  context.after(() => database.close());
+  database.exec(`
+    CREATE TABLE products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      name_key TEXT
+    );
+    INSERT INTO products (name, name_key) VALUES
+      ('Café', '${productNameKey('Café')}'),
+      ('Cafe combinado', '${productNameKey('Café')}');
+  `);
+  const adapter = nodeAdapter(database);
+
+  assert.equal(await ensureProductNameKeyUnique(adapter), false);
+  assert.equal(
+    (
+      database
+        .prepare("SELECT count(*) AS n FROM pragma_index_list('products') WHERE name = 'products_name_key_unique'")
+        .get() as { n: number }
+    ).n,
+    0,
+  );
+
+  await adapter.run(
+    'UPDATE products SET name = ?, name_key = ? WHERE id = 2',
+    'Café reserva',
+    productNameKey('Café reserva'),
+  );
+  assert.equal(await ensureProductNameKeyUnique(adapter), true);
+  assert.equal(
+    (
+      database
+        .prepare("SELECT count(*) AS n FROM pragma_index_list('products') WHERE name = 'products_name_key_unique'")
+        .get() as { n: number }
+    ).n,
+    1,
+  );
 });

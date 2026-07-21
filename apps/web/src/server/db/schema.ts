@@ -108,7 +108,13 @@ export const products = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("products_casa_name_lower_unique").on(table.casaId, sql`lower(${table.name})`),
+    // A mesma chave do core/mobile: trim + NFC + lowercase. PostgreSQL 16 tem
+    // normalize(..., NFC) nativo; o indice fecha a corrida que antes permitia
+    // "Café" e "Cafe\u0301" coexistirem apesar do merge JS. (#76)
+    uniqueIndex("products_casa_name_key_unique").on(
+      table.casaId,
+      sql`lower(normalize(btrim(${table.name}), NFC))`
+    ),
     uniqueIndex("products_casa_syncid_unique").on(table.casaId, table.syncId),
     // Um código de barras é único por casa (parcial: NULL não colide, então
     // hortifrúti sem código fica livre). Fecha a duplicata por barcode na origem,

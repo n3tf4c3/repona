@@ -123,7 +123,12 @@ async function getProdutoDTO(casaId: number, id: number): Promise<ProductDTO | n
 }
 
 async function nomeJaExiste(casaId: number, name: string, exceptId?: number): Promise<boolean> {
-  const condicoes = [eq(products.casaId, casaId), sql`lower(${products.name}) = lower(${name})`];
+  const condicoes = [
+    eq(products.casaId, casaId),
+    // Alinhado a productNameKey (trim + NFC + lowercase) e ao indice unico do
+    // schema. Sem normalize, acento composto/decomposto escapava do lookup. (#76)
+    sql`lower(normalize(btrim(${products.name}), NFC)) = lower(normalize(btrim(${name}::text), NFC))`,
+  ];
   if (exceptId !== undefined) condicoes.push(ne(products.id, exceptId));
   const [existente] = await db
     .select({ id: products.id })

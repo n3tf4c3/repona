@@ -58,7 +58,8 @@ async function resolverProduto(casaId, ref) {
   const rows = await sql`
     SELECT id, casa_id, sync_id, name, archived, barcode, updated_at
     FROM products
-    WHERE casa_id = ${casaId} AND lower(name) = lower(${ref.trim()})
+    WHERE casa_id = ${casaId}
+      AND lower(normalize(btrim(name), NFC)) = lower(normalize(btrim(${ref.trim()}::text), NFC))
   `;
   if (rows.length > 1) {
     throw new Error(`Nome "${limpar(ref)}" casa com ${rows.length} produtos; use o id.`);
