@@ -167,14 +167,27 @@ jobs:
           TEST_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
         run: npx tsx --test "apps/web/src/**/*.integration.test.ts"
 
-      # Exercita o roteamento HTTP real e os recibos duraveis, inclusive resposta
-      # perdida/replay, verifier, troca de credencial e exclusao. O script nunca
-      # imprime tokens, payloads ou IDs de casa. (#71/#83/#88/#90)
+      # Exercita o roteamento HTTP real e os recibos duraveis (resposta perdida/
+      # replay, verifier, troca de credencial, exclusao). O script nunca imprime
+      # tokens, payloads ou IDs de casa. (#71/#83/#88/#90)
+      #
+      # O app usa o driver neon-http (@neondatabase/serverless), que NAO fala com um
+      # Postgres TCP comum — logo NAO roda contra o service localhost deste job. O
+      # smoke so executa quando ha um endpoint compativel com Neon no secret
+      # SMOKE_NEON_DATABASE_URL (ex.: uma branch Neon de teste JA com o schema
+      # aplicado via db:push). Sem o secret, e pulado com aviso e a CI segue verde;
+      # o script continua rodavel contra staging apontando SMOKE_BASE_URL.
       - name: Smoke HTTP de conta e sync
+        env:
+          SMOKE_NEON_DATABASE_URL: ${{ secrets.SMOKE_NEON_DATABASE_URL }}
         run: |
           set -euo pipefail
+          if [ -z "${SMOKE_NEON_DATABASE_URL:-}" ]; then
+            echo "::notice title=Smoke de conta pulado::SMOKE_NEON_DATABASE_URL ausente; o app neon-http nao roda contra o Postgres local. Configure uma branch Neon de teste para habilitar."
+            exit 0
+          fi
           log_path="$RUNNER_TEMP/repona-next-smoke.log"
-          setsid node node_modules/next/dist/bin/next dev apps/web \
+          DATABASE_URL="$SMOKE_NEON_DATABASE_URL" setsid node node_modules/next/dist/bin/next dev apps/web \
             --hostname 127.0.0.1 --port 3107 >"$log_path" 2>&1 &
           server_pid=$!
           cleanup() {
