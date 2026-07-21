@@ -9,10 +9,10 @@
   --color-surface-muted: #fbfaf5;
   --color-ink: #212418;
   --color-ink-soft: #5c604f;
-  --color-ink-faint: #8e9180;
+  --color-ink-faint: #6b6f5e;
   --color-line: #e7e5d9;
   --color-line2: #efede3;
-  --color-primary: #2e8b57;
+  --color-primary: #277a4b;
   --color-primary-strong: #236b43;
   --color-primary-soft: #e2f0e5;
   --color-primary-tint: #f0f7f0;
@@ -37,4 +37,20 @@ body {
   background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--color-primary-strong);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

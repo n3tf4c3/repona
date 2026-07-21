@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Search,
   Plus,
@@ -40,6 +40,80 @@ import {
 } from "./actions";
 
 type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string };
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function getFocusableElements(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => element.getAttribute("aria-hidden") !== "true"
+  );
+}
+
+/** Mantém teclado/leitor de tela dentro do modal e devolve foco ao acionador. */
+function useAccessibleDialog(onClose: () => void) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const initialFocus =
+        dialog.querySelector<HTMLElement>("[data-dialog-initial-focus]") ??
+        getFocusableElements(dialog)[0] ??
+        dialog;
+      initialFocus.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRef.current();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = getFocusableElements(dialog);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !dialog.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  return { dialogRef, onKeyDown };
+}
 
 export function ProdutosClient({
   produtos,
@@ -94,7 +168,7 @@ export function ProdutosClient({
             setCriando(true);
             setEditando(null);
           }}
-          className="flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          className="flex min-h-11 items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
         >
           <Plus size={16} strokeWidth={2.6} />
           Novo
@@ -107,15 +181,17 @@ export function ProdutosClient({
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar produto..."
+          aria-label="Buscar produtos por nome ou código"
           className="w-full rounded-xl border border-line bg-surface py-3 pl-10 pr-4 text-sm outline-none transition focus:border-primary"
         />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por categoria">
         {chips.map((chip) => (
           <button
             key={chip}
             onClick={() => setCategoria(chip)}
+            aria-pressed={categoria === chip}
             className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
               categoria === chip
                 ? "bg-primary text-white"
@@ -130,6 +206,7 @@ export function ProdutosClient({
       {arquivados.length > 0 && (
         <button
           onClick={() => setVerArquivados((v) => !v)}
+          aria-pressed={verArquivados}
           className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition ${
             verArquivados
               ? "bg-ink text-white"
@@ -150,7 +227,7 @@ export function ProdutosClient({
 
       <div className="space-y-3">
         {filtrados.length === 0 && (
-          <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line py-12 text-center text-ink-faint">
+          <div role="status" className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line py-12 text-center text-ink-faint">
             <PackageOpen size={32} strokeWidth={1.6} />
             <p className="text-sm">
               {verArquivados ? "Nenhum produto arquivado." : "Nenhum produto encontrado."}
@@ -268,7 +345,8 @@ function ProductCard({
             {resumoPreco && (
               <button
                 onClick={onVerPrecos}
-                className="mt-1 flex items-center gap-1 text-xs font-semibold text-ink-soft transition hover:text-primary-strong"
+                aria-label={`Ver evolução de preço de ${produto.name}`}
+                className="mt-1 flex min-h-11 items-center gap-1 text-xs font-semibold text-ink-soft transition hover:text-primary-strong"
               >
                 {formatCentsBRL(resumoPreco.lastCents)}
                 {resumoPreco.trend === "up" && <TrendingUp size={13} className="text-danger" />}
@@ -297,22 +375,22 @@ function ProductCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Stepper value={produto.inventoryQuantity} pending={pending} onStep={onStock} />
+        <Stepper productName={produto.name} value={produto.inventoryQuantity} pending={pending} onStep={onStock} />
 
-        <IconButton label="Adicionar à lista" pending={pending} onClick={onAddLista} variant="primary">
+        <IconButton label={`Adicionar ${produto.name} à lista`} pending={pending} onClick={onAddLista} variant="primary">
           <ShoppingCart size={15} strokeWidth={2.4} />
         </IconButton>
-        <IconButton label="Consumir" pending={pending || emFalta} onClick={onConsumir}>
+        <IconButton label={`Consumir ${produto.name}`} pending={pending || emFalta} onClick={onConsumir}>
           <Utensils size={15} strokeWidth={2.2} />
         </IconButton>
-        <IconButton label="Marcar em falta" pending={pending || emFalta} onClick={onFalta}>
+        <IconButton label={`Marcar ${produto.name} em falta`} pending={pending || emFalta} onClick={onFalta}>
           <PackageX size={15} strokeWidth={2.2} />
         </IconButton>
         <div className="ml-auto flex gap-2">
-          <IconButton label="Editar" pending={pending} onClick={onEditar}>
+          <IconButton label={`Editar ${produto.name}`} pending={pending} onClick={onEditar}>
             <Pencil size={15} strokeWidth={2.2} />
           </IconButton>
-          <IconButton label="Excluir" pending={pending} onClick={onExcluir} variant="danger">
+          <IconButton label={`Excluir ${produto.name}`} pending={pending} onClick={onExcluir} variant="danger">
             <Trash2 size={15} strokeWidth={2.2} />
           </IconButton>
         </div>
@@ -364,6 +442,7 @@ function PrecoModal({
   pontos: PricePoint[];
   onFechar: () => void;
 }) {
+  const { dialogRef, onKeyDown } = useAccessibleDialog(onFechar);
   // Ordem cronológica para o gráfico (o servidor manda mais recentes primeiro).
   const ordenados = useMemo(
     () => [...pontos].sort((a, b) => a.recordedAt.localeCompare(b.recordedAt)),
@@ -378,17 +457,31 @@ function PrecoModal({
       : null;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
-      <div className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl">
+    <div
+      className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onFechar();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="price-dialog-title"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl"
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-black">Evolução de preço</h2>
+            <h2 id="price-dialog-title" className="text-lg font-black">Evolução de preço</h2>
             <p className="text-sm text-ink-faint">{produto.name}</p>
           </div>
           <button
             onClick={onFechar}
-            aria-label="Fechar"
-            className="rounded-lg border border-line p-1.5 text-ink-soft transition hover:bg-bg"
+            aria-label="Fechar evolução de preço"
+            data-dialog-initial-focus
+            className="flex h-11 w-11 items-center justify-center rounded-lg border border-line text-ink-soft transition hover:bg-bg"
           >
             <X size={16} />
           </button>
@@ -508,30 +601,32 @@ function formatarData(iso: string): string {
 }
 
 function Stepper({
+  productName,
   value,
   pending,
   onStep,
 }: {
+  productName: string;
   value: string;
   pending: boolean;
   onStep: (dir: 1 | -1) => void;
 }) {
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-line p-1">
+    <div className="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label={`Estoque de ${productName}`}>
       <button
         disabled={pending}
         onClick={() => onStep(-1)}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
-        aria-label="Diminuir"
+        className="flex h-11 w-11 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+        aria-label={`Diminuir estoque de ${productName}`}
       >
         <Minus size={16} />
       </button>
-      <span className="min-w-16 text-center text-sm font-semibold tabular-nums">{value}</span>
+      <span className="min-w-16 text-center text-sm font-semibold tabular-nums" aria-live="polite" aria-atomic="true">{value}</span>
       <button
         disabled={pending}
         onClick={() => onStep(1)}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
-        aria-label="Aumentar"
+        className="flex h-11 w-11 items-center justify-center rounded-md text-ink-soft transition hover:bg-bg disabled:opacity-40"
+        aria-label={`Aumentar estoque de ${productName}`}
       >
         <Plus size={16} />
       </button>
@@ -563,7 +658,7 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-8 w-8 items-center justify-center rounded-lg transition disabled:opacity-40 ${estilos}`}
+      className={`flex h-11 w-11 items-center justify-center rounded-lg transition disabled:opacity-40 ${estilos}`}
     >
       {children}
     </button>
@@ -583,6 +678,7 @@ function ProdutoModal({
   onFechar: () => void;
   onSalvar: (input: NewProductInput) => void;
 }) {
+  const { dialogRef, onKeyDown } = useAccessibleDialog(onFechar);
   const [name, setName] = useState(produto?.name ?? "");
   const [category, setCategory] = useState(produto?.category ?? CATEGORIAS[0]);
   const [brand, setBrand] = useState(produto?.brand ?? "");
@@ -590,11 +686,26 @@ function ProdutoModal({
   const [occasional, setOccasional] = useState(produto?.occasional ?? false);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center">
-      <div className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl">
-        <h2 className="text-lg font-black">{produto ? "Editar produto" : "Novo produto"}</h2>
+    <div
+      className="fixed inset-0 z-30 flex items-end justify-center bg-ink/30 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onFechar();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-dialog-title"
+        aria-describedby={erro ? "product-dialog-error" : undefined}
+        aria-busy={pending}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="w-full max-w-md rounded-card bg-surface p-5 shadow-xl"
+      >
+        <h2 id="product-dialog-title" className="text-lg font-black">{produto ? "Editar produto" : "Novo produto"}</h2>
         {erro && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+          <div id="product-dialog-error" role="alert" className="mt-3 flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
             <AlertCircle size={16} />
             {erro}
           </div>
@@ -606,6 +717,7 @@ function ProdutoModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
+              data-dialog-initial-focus
               className="mt-1 w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
             />
           </label>
@@ -659,7 +771,7 @@ function ProdutoModal({
         <div className="mt-5 flex justify-end gap-2">
           <button
             onClick={onFechar}
-            className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink-soft transition hover:bg-bg"
+            className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink-soft transition hover:bg-bg"
           >
             Cancelar
           </button>
@@ -676,7 +788,7 @@ function ProdutoModal({
                 photoUri: produto?.photoUri ?? null,
               })
             }
-            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+            className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
             {pending ? "Salvando..." : "Salvar"}
           </button>

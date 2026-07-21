@@ -66,10 +66,15 @@ export function PriceEntryModal({
         style={styles.sheetKeyboardWrap}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-      <Pressable style={styles.modalScrim} onPress={onClose} />
-      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
-        <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>Registrar preço</Text>
+      <Pressable accessible={false} style={styles.modalScrim} onPress={onClose} />
+      <SafeAreaView
+        edges={['bottom']}
+        style={styles.sheetShell}
+        accessibilityViewIsModal
+        accessibilityLabel="Registrar preço"
+      >
+        <View accessible={false} style={styles.sheetHandle} />
+        <Text accessibilityRole="header" style={styles.sheetTitle}>Registrar preço</Text>
         <Text style={styles.sheetSubtitle}>{product?.name ?? ''} · guardamos os últimos 10 com a data.</Text>
         <Text style={styles.fieldLabel}>Preço (R$)</Text>
         <View style={styles.inputBox}>
@@ -82,10 +87,15 @@ export function PriceEntryModal({
             placeholderTextColor={colors.ink3}
             keyboardType="decimal-pad"
             autoFocus
+            accessibilityLabel="Preço em reais"
           />
         </View>
-        {localError || errorMessage ? <Text style={styles.formError}>{localError ?? errorMessage}</Text> : null}
-        <Pressable style={styles.saveButton} onPress={handleSave}>
+        {localError || errorMessage ? (
+          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+            {localError ?? errorMessage}
+          </Text>
+        ) : null}
+        <Pressable accessibilityRole="button" style={styles.saveButton} onPress={handleSave}>
           <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
           <Text style={styles.saveButtonText}>Salvar preço</Text>
         </Pressable>
@@ -168,16 +178,24 @@ export function PurchaseDetailModal({
 
   return (
     <Modal visible={purchase !== null} transparent animationType="slide" onRequestClose={handleClose}>
-      <Pressable style={styles.modalScrim} onPress={handleClose} />
-      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
-        <View style={styles.sheetHandle} />
+      <Pressable accessible={false} style={styles.modalScrim} onPress={handleClose} />
+      <SafeAreaView
+        edges={['bottom']}
+        style={styles.sheetShell}
+        accessibilityViewIsModal
+        accessibilityLabel="Detalhes da compra"
+      >
+        <View accessible={false} style={styles.sheetHandle} />
         <View style={styles.purchaseHeaderRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.sheetTitle}>{purchase?.title ?? ''}</Text>
+            <Text accessibilityRole="header" style={styles.sheetTitle}>{purchase?.title ?? ''}</Text>
             <Text style={styles.sheetSubtitle}>{purchase ? `${purchase.date} · ${purchase.count}` : ''}</Text>
           </View>
           <Pressable
             style={styles.purchaseEditButton}
+            accessibilityRole="button"
+            accessibilityLabel={isEditing ? 'Concluir edição da compra' : 'Editar itens da compra'}
+            accessibilityState={{ selected: isEditing }}
             onPress={() => {
               setIsEditing((v) => !v);
               setIsAddingProduct(false);
@@ -205,6 +223,7 @@ export function PurchaseDetailModal({
                 placeholder="Buscar produto..."
                 placeholderTextColor={colors.ink3}
                 autoFocus
+                accessibilityLabel="Buscar produto para adicionar à compra"
               />
             </View>
             {availableProducts.length === 0 ? (
@@ -214,6 +233,8 @@ export function PurchaseDetailModal({
               <Pressable
                 key={product.id}
                 style={styles.purchaseProductPickerItem}
+                accessibilityRole="button"
+                accessibilityLabel={`Adicionar ${product.name} à compra`}
                 onPress={() => handleAddProduct(product)}
               >
                 <Text style={styles.purchaseProductPickerName} numberOfLines={1}>{product.name}</Text>
@@ -226,7 +247,12 @@ export function PurchaseDetailModal({
             {purchase?.lines.map((line, index) => (
               <View key={`${line.name}-${index}`} style={styles.purchaseLine}>
                 {isEditing ? (
-                  <Pressable style={styles.purchaseLineRemove} onPress={() => handleRemoveLine(line.id)}>
+                  <Pressable
+                    style={styles.purchaseLineRemove}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remover ${line.name} da compra`}
+                    onPress={() => handleRemoveLine(line.id)}
+                  >
                     <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.coral} />
                   </Pressable>
                 ) : null}
@@ -237,13 +263,21 @@ export function PurchaseDetailModal({
           </ScrollView>
         )}
         {isEditing && !isAddingProduct ? (
-          <Pressable style={styles.purchaseAddButton} onPress={() => setIsAddingProduct(true)}>
+          <Pressable
+            style={styles.purchaseAddButton}
+            accessibilityRole="button"
+            onPress={() => setIsAddingProduct(true)}
+          >
             <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
             <Text style={styles.purchaseAddButtonText}>Adicionar produto</Text>
           </Pressable>
         ) : null}
         {isAddingProduct ? (
-          <Pressable style={styles.purchaseAddButton} onPress={() => { setIsAddingProduct(false); setSearchText(''); }}>
+          <Pressable
+            style={styles.purchaseAddButton}
+            accessibilityRole="button"
+            onPress={() => { setIsAddingProduct(false); setSearchText(''); }}
+          >
             <MaterialCommunityIcons name="arrow-left" size={18} color={colors.primaryStrong} />
             <Text style={styles.purchaseAddButtonText}>Voltar</Text>
           </Pressable>
@@ -465,17 +499,22 @@ export function NewProductSheet({
           style={styles.sheetKeyboardWrap}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-        <Pressable style={styles.modalScrim} onPress={onClose} />
+        <Pressable accessible={false} style={styles.modalScrim} onPress={onClose} />
         {/* flexShrink + ScrollView: com o teclado aberto o sheet encolhe e o
             formulário rola, em vez de os campos de baixo ficarem cobertos. */}
-        <SafeAreaView edges={['bottom']} style={[styles.sheetShell, styles.sheetShellShrink]}>
-          <View style={styles.sheetHandle} />
+        <SafeAreaView
+          edges={['bottom']}
+          style={[styles.sheetShell, styles.sheetShellShrink]}
+          accessibilityViewIsModal
+          accessibilityLabel={product ? 'Editar produto' : 'Novo produto'}
+        >
+          <View accessible={false} style={styles.sheetHandle} />
           <ScrollView
             contentContainerStyle={styles.sheetScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-          <Text style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
+          <Text accessibilityRole="header" style={styles.sheetTitle}>{product ? 'Editar produto' : 'Novo produto'}</Text>
           <Text style={styles.sheetSubtitle}>{product ? 'Ajuste nome e categoria do produto cadastrado.' : 'Só o nome já basta. O resto é opcional.'}</Text>
           <Text style={styles.fieldLabel}>Nome do produto</Text>
           <View style={styles.inputBox}>
@@ -487,9 +526,15 @@ export function NewProductSheet({
               placeholder="Nome do produto"
               placeholderTextColor={colors.ink3}
               maxLength={FIELD_LIMITS.name}
+              autoFocus
+              accessibilityLabel="Nome do produto"
             />
           </View>
-          {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
+          {errorMessage ? (
+            <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+              {errorMessage}
+            </Text>
+          ) : null}
           <Text style={styles.fieldLabel}>Categoria</Text>
           <ChipRow chips={[...CATEGORIAS]} selected={category} onSelect={setCategory} />
           <Text style={styles.fieldLabel}>Marca (opcional)</Text>
@@ -502,6 +547,7 @@ export function NewProductSheet({
               placeholder="Ex.: Urbano"
               placeholderTextColor={colors.ink3}
               maxLength={FIELD_LIMITS.brand}
+              accessibilityLabel="Marca opcional"
             />
           </View>
           <Text style={styles.fieldLabel}>Alerta de estoque (opcional)</Text>
@@ -514,9 +560,16 @@ export function NewProductSheet({
               placeholder="Ex.: 2 un ou 500 g"
               placeholderTextColor={colors.ink3}
               maxLength={FIELD_LIMITS.alertThreshold}
+              accessibilityLabel="Alerta de estoque opcional"
             />
           </View>
-          <Pressable style={styles.occasionalRow} onPress={() => setOccasional((value) => !value)}>
+          <Pressable
+            style={styles.occasionalRow}
+            accessibilityRole="checkbox"
+            accessibilityLabel="Compra eventual"
+            accessibilityState={{ checked: occasional }}
+            onPress={() => setOccasional((value) => !value)}
+          >
             <MaterialCommunityIcons
               name={occasional ? 'checkbox-marked' : 'checkbox-blank-outline'}
               size={22}
@@ -532,18 +585,36 @@ export function NewProductSheet({
             <OptionalCapture icon="camera-outline" label={photoUri ? 'Foto anexada' : 'Foto (opcional)'} onPress={openPhotoCamera} />
             <OptionalCapture icon="barcode-scan" label={barcode ? 'Código lido' : 'Código (opcional)'} onPress={openBarcodeScanner} />
           </View>
-          {photoError ? <Text style={styles.formError}>{photoError}</Text> : null}
+          {photoError ? (
+            <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+              {photoError}
+            </Text>
+          ) : null}
           {barcode ? <Text style={styles.captureResult}>Código: {barcode}</Text> : null}
           {isBuscandoDados ? <Text style={styles.captureResult}>Buscando dados do produto na internet...</Text> : null}
           {offSugestao ? (
-            <Pressable onPress={aplicarSugestaoOFF}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Usar dados encontrados para ${offSugestao.nome}`}
+              onPress={aplicarSugestaoOFF}
+            >
               <Text style={styles.captureResult}>
                 Encontrado na internet: {offSugestao.nome} — toque para usar
               </Text>
             </Pressable>
           ) : null}
-          {barcodeError ? <Text style={styles.formError}>{barcodeError}</Text> : null}
-          <Pressable style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]} onPress={handleSave}>
+          {barcodeError ? (
+            <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+              {barcodeError}
+            </Text>
+          ) : null}
+          <Pressable
+            style={[styles.saveButton, isSaving ? styles.saveButtonDisabled : null]}
+            disabled={isSaving}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: isSaving }}
+            onPress={handleSave}
+          >
             <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
             <Text style={styles.saveButtonText}>{isSaving ? 'Salvando...' : product ? 'Atualizar produto' : 'Salvar produto'}</Text>
           </Pressable>
@@ -552,13 +623,23 @@ export function NewProductSheet({
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={isScannerVisible} animationType="slide" onRequestClose={() => setIsScannerVisible(false)}>
-        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
+        <SafeAreaView
+          edges={['top', 'bottom']}
+          style={styles.scannerShell}
+          accessibilityViewIsModal
+          accessibilityLabel="Leitor de código de barras"
+        >
           <View style={styles.scannerHeader}>
             <View>
-              <Text style={styles.scannerTitle}>Ler código</Text>
+              <Text accessibilityRole="header" style={styles.scannerTitle}>Ler código</Text>
               <Text style={styles.scannerSubtitle}>Aponte a câmera para o código de barras.</Text>
             </View>
-            <Pressable style={styles.scannerClose} onPress={() => setIsScannerVisible(false)}>
+            <Pressable
+              style={styles.scannerClose}
+              accessibilityRole="button"
+              accessibilityLabel="Fechar leitor de código"
+              onPress={() => setIsScannerVisible(false)}
+            >
               <MaterialCommunityIcons name="close" size={22} color={colors.surface} />
             </Pressable>
           </View>
@@ -572,19 +653,36 @@ export function NewProductSheet({
         </SafeAreaView>
       </Modal>
       <Modal visible={isPhotoCameraVisible} animationType="slide" onRequestClose={() => setIsPhotoCameraVisible(false)}>
-        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
+        <SafeAreaView
+          edges={['top', 'bottom']}
+          style={styles.scannerShell}
+          accessibilityViewIsModal
+          accessibilityLabel="Câmera para foto do produto"
+        >
           <View style={styles.scannerHeader}>
             <View>
-              <Text style={styles.scannerTitle}>Foto do produto</Text>
+              <Text accessibilityRole="header" style={styles.scannerTitle}>Foto do produto</Text>
               <Text style={styles.scannerSubtitle}>Centralize a embalagem e tire uma foto simples.</Text>
             </View>
-            <Pressable style={styles.scannerClose} onPress={() => setIsPhotoCameraVisible(false)}>
+            <Pressable
+              style={styles.scannerClose}
+              accessibilityRole="button"
+              accessibilityLabel="Fechar câmera"
+              onPress={() => setIsPhotoCameraVisible(false)}
+            >
               <MaterialCommunityIcons name="close" size={22} color={colors.surface} />
             </Pressable>
           </View>
           <CameraView ref={photoCameraRef} style={styles.scannerCamera} facing="back" />
           <View style={styles.photoCaptureBar}>
-            <Pressable style={styles.photoCaptureButton} onPress={capturePhoto}>
+            <Pressable
+              style={styles.photoCaptureButton}
+              disabled={isTakingPhoto}
+              accessibilityRole="button"
+              accessibilityLabel="Capturar foto"
+              accessibilityState={{ disabled: isTakingPhoto }}
+              onPress={capturePhoto}
+            >
               <View style={styles.photoCaptureButtonInner} />
             </Pressable>
             <Text style={styles.scannerHint}>{isTakingPhoto ? 'Salvando foto...' : 'Toque para capturar a foto.'}</Text>
@@ -605,7 +703,12 @@ export function OptionalCapture({ icon, label, onPress }: { icon: IconName; labe
 
   if (onPress) {
     return (
-      <Pressable style={styles.optionalCapture} onPress={onPress}>
+      <Pressable
+        style={styles.optionalCapture}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={onPress}
+      >
         {content}
       </Pressable>
     );
@@ -704,13 +807,23 @@ export function ScanToListModal({
   return (
     <>
       <Modal visible={visible && foundProduct === null} animationType="slide" onRequestClose={onClose}>
-        <SafeAreaView edges={['top', 'bottom']} style={styles.scannerShell}>
+        <SafeAreaView
+          edges={['top', 'bottom']}
+          style={styles.scannerShell}
+          accessibilityViewIsModal
+          accessibilityLabel="Adicionar produto pela câmera"
+        >
           <View style={styles.scannerHeader}>
             <View>
-              <Text style={styles.scannerTitle}>Adicionar pela câmera</Text>
+              <Text accessibilityRole="header" style={styles.scannerTitle}>Adicionar pela câmera</Text>
               <Text style={styles.scannerSubtitle}>Aponte para o código de barras do produto.</Text>
             </View>
-            <Pressable style={styles.scannerClose} onPress={onClose}>
+            <Pressable
+              style={styles.scannerClose}
+              accessibilityRole="button"
+              accessibilityLabel="Fechar leitor de código"
+              onPress={onClose}
+            >
               <MaterialCommunityIcons name="close" size={22} color={colors.surface} />
             </Pressable>
           </View>
@@ -726,20 +839,36 @@ export function ScanToListModal({
           )}
           {notFoundCode ? (
             <>
-              <Text style={styles.scannerHint}>Nenhum produto cadastrado com este código.</Text>
-              <Pressable style={[styles.saveButton, styles.scannerRetryButton]} onPress={() => onRegister(notFoundCode)}>
+              <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.scannerHint}>
+                Nenhum produto cadastrado com este código.
+              </Text>
+              <Pressable
+                style={[styles.saveButton, styles.scannerRetryButton]}
+                accessibilityRole="button"
+                onPress={() => onRegister(notFoundCode)}
+              >
                 <MaterialCommunityIcons name="plus" size={20} color={colors.surface} />
                 <Text style={styles.saveButtonText}>Cadastrar agora</Text>
               </Pressable>
-              <Pressable style={[styles.saveButton, styles.scannerRetryButton]} onPress={handleRescan}>
+              <Pressable
+                style={[styles.saveButton, styles.scannerRetryButton]}
+                accessibilityRole="button"
+                onPress={handleRescan}
+              >
                 <MaterialCommunityIcons name="barcode-scan" size={20} color={colors.surface} />
                 <Text style={styles.saveButtonText}>Ler outro código</Text>
               </Pressable>
             </>
           ) : scanError ? (
             <>
-              <Text style={styles.scannerHint}>{scanError}</Text>
-              <Pressable style={[styles.saveButton, styles.scannerRetryButton]} onPress={handleRescan}>
+              <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.scannerHint}>
+                {scanError}
+              </Text>
+              <Pressable
+                style={[styles.saveButton, styles.scannerRetryButton]}
+                accessibilityRole="button"
+                onPress={handleRescan}
+              >
                 <MaterialCommunityIcons name="barcode-scan" size={20} color={colors.surface} />
                 <Text style={styles.saveButtonText}>Ler outro código</Text>
               </Pressable>
@@ -758,10 +887,15 @@ export function ScanToListModal({
           style={styles.sheetKeyboardWrap}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-        <Pressable style={styles.modalScrim} onPress={onClose} />
-        <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Adicionar à lista</Text>
+        <Pressable accessible={false} style={styles.modalScrim} onPress={onClose} />
+        <SafeAreaView
+          edges={['bottom']}
+          style={styles.sheetShell}
+          accessibilityViewIsModal
+          accessibilityLabel="Adicionar produto à lista"
+        >
+          <View accessible={false} style={styles.sheetHandle} />
+          <Text accessibilityRole="header" style={styles.sheetTitle}>Adicionar à lista</Text>
           <Text style={styles.sheetSubtitle}>{foundProduct?.name ?? ''}</Text>
           <Text style={styles.fieldLabel}>Quantidade</Text>
           <View style={styles.inputBox}>
@@ -774,11 +908,16 @@ export function ScanToListModal({
               placeholderTextColor={colors.ink3}
               keyboardType="decimal-pad"
               autoFocus
+              accessibilityLabel="Quantidade do produto"
             />
           </View>
           <ChipRow chips={['un', 'kg', 'g']} selected={unit} onSelect={setUnit} />
-          {quantityError ? <Text style={styles.formError}>{quantityError}</Text> : null}
-          <Pressable style={styles.saveButton} onPress={handleAdd}>
+          {quantityError ? (
+            <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+              {quantityError}
+            </Text>
+          ) : null}
+          <Pressable accessibilityRole="button" style={styles.saveButton} onPress={handleAdd}>
             <MaterialCommunityIcons name="cart-plus" size={20} color={colors.surface} />
             <Text style={styles.saveButtonText}>Adicionar à lista</Text>
           </Pressable>
@@ -826,10 +965,15 @@ export function QuantityEntryModal({
         style={styles.sheetKeyboardWrap}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-      <Pressable style={styles.modalScrim} onPress={onClose} />
-      <SafeAreaView edges={['bottom']} style={styles.sheetShell}>
-        <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>Quantidade</Text>
+      <Pressable accessible={false} style={styles.modalScrim} onPress={onClose} />
+      <SafeAreaView
+        edges={['bottom']}
+        style={styles.sheetShell}
+        accessibilityViewIsModal
+        accessibilityLabel="Alterar quantidade"
+      >
+        <View accessible={false} style={styles.sheetHandle} />
+        <Text accessibilityRole="header" style={styles.sheetTitle}>Quantidade</Text>
         <Text style={styles.sheetSubtitle}>{item?.name ?? ''}</Text>
         <View style={styles.inputBox}>
           <MaterialCommunityIcons name="scale-balance" size={20} color={colors.primaryStrong} />
@@ -841,11 +985,16 @@ export function QuantityEntryModal({
             placeholderTextColor={colors.ink3}
             keyboardType="decimal-pad"
             autoFocus
+            accessibilityLabel="Quantidade do produto"
           />
         </View>
         <ChipRow chips={['un', 'kg', 'g']} selected={unit} onSelect={setUnit} />
-        {error ? <Text style={styles.formError}>{error}</Text> : null}
-        <Pressable style={styles.saveButton} onPress={handleSave}>
+        {error ? (
+          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.formError}>
+            {error}
+          </Text>
+        ) : null}
+        <Pressable accessibilityRole="button" style={styles.saveButton} onPress={handleSave}>
           <MaterialCommunityIcons name="check" size={20} color={colors.surface} />
           <Text style={styles.saveButtonText}>Salvar</Text>
         </Pressable>

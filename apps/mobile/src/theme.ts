@@ -7,10 +7,12 @@ export const colors = {
   surface2: '#FBFAF5',
   ink: '#212418',
   ink2: '#5C604F',
-  ink3: '#8E9180',
+  // Texto auxiliar ainda precisa de 4,5:1 tanto sobre surface quanto sobre bg.
+  ink3: '#6B6F5E',
   line: '#E7E5D9',
   line2: '#EFEDE3',
-  primary: '#2E8B57',
+  // Mantém texto branco acima de 4,5:1 (WCAG AA para texto pequeno).
+  primary: '#277A4B',
   primaryStrong: '#236B43',
   primarySoft: '#E2F0E5',
   primaryTint: '#F0F7F0',

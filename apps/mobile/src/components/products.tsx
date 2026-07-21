@@ -36,7 +36,11 @@ export function ProductRow({
     <View style={styles.productCard}>
       <View style={styles.productHeader}>
         {product.photoUri ? (
-          <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
+          <Image
+            source={{ uri: product.photoUri }}
+            style={styles.productPhoto}
+            accessibilityLabel={`Foto de ${product.name}`}
+          />
         ) : (
           <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
         )}
@@ -54,21 +58,42 @@ export function ProductRow({
       </View>
       <View style={styles.productActions}>
         {onRegisterPrice ? (
-          <Pressable style={styles.productActionButton} onPress={() => onRegisterPrice(product)}>
+          <Pressable
+            style={styles.productActionButton}
+            accessibilityRole="button"
+            accessibilityLabel={`Registrar preço de ${product.name}`}
+            onPress={() => onRegisterPrice(product)}
+          >
             <MaterialCommunityIcons name="cash-multiple" size={17} color={colors.primaryStrong} />
           </Pressable>
         ) : null}
         {onEdit ? (
-          <Pressable style={styles.productActionButton} onPress={() => onEdit(product)}>
+          <Pressable
+            style={styles.productActionButton}
+            accessibilityRole="button"
+            accessibilityLabel={`Editar ${product.name}`}
+            onPress={() => onEdit(product)}
+          >
             <MaterialCommunityIcons name="pencil-outline" size={17} color={colors.ink2} />
           </Pressable>
         ) : null}
         {onRemove ? (
-          <Pressable style={[styles.productActionButton, styles.productDeleteButton]} onPress={() => onRemove(product)}>
+          <Pressable
+            style={[styles.productActionButton, styles.productDeleteButton]}
+            accessibilityRole="button"
+            accessibilityLabel={`Excluir ${product.name}`}
+            accessibilityHint="Arquiva o produto e preserva o histórico"
+            onPress={() => onRemove(product)}
+          >
             <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.coral} />
           </Pressable>
         ) : null}
-        <Pressable style={styles.addMini} onPress={() => onAdd(product)}>
+        <Pressable
+          style={styles.addMini}
+          accessibilityRole="button"
+          accessibilityLabel={`Adicionar ${product.name} à lista`}
+          onPress={() => onAdd(product)}
+        >
           <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
         </Pressable>
       </View>
@@ -94,7 +119,11 @@ export function EstoqueRow({
   return (
     <View style={styles.estoqueCard}>
       {product.photoUri ? (
-        <Image source={{ uri: product.photoUri }} style={styles.estoquePhoto} />
+        <Image
+          source={{ uri: product.photoUri }}
+          style={styles.estoquePhoto}
+          accessibilityLabel={`Foto de ${product.name}`}
+        />
       ) : (
         <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={34} />
       )}
@@ -107,7 +136,12 @@ export function EstoqueRow({
           onConsume={onConsume}
         />
       </View>
-      <Pressable style={styles.addMini} onPress={() => onAdd(product)}>
+      <Pressable
+        style={styles.addMini}
+        accessibilityRole="button"
+        accessibilityLabel={`Adicionar ${product.name} à lista`}
+        onPress={() => onAdd(product)}
+      >
         <MaterialCommunityIcons name="plus" size={18} color={colors.primaryStrong} />
       </Pressable>
     </View>
@@ -140,17 +174,40 @@ export function InventoryControls({
   return (
     <View style={styles.inventoryControls}>
       <View style={[styles.inventoryQuantityPill, isMissing ? styles.inventoryMissingPill : null]}>
-        <Pressable style={styles.inventoryMiniButton} disabled={busy} onPress={() => run(() => onChange(product, -1))}>
+        <Pressable
+          style={styles.inventoryMiniButton}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={`Diminuir estoque de ${product.name}`}
+          accessibilityState={{ disabled: busy }}
+          onPress={() => run(() => onChange(product, -1))}
+        >
           <MaterialCommunityIcons name="minus" size={13} color={colors.ink2} />
         </Pressable>
-        <Text style={styles.inventoryQuantityText}>{product.inventoryQuantity ?? '0 un'}</Text>
-        <Pressable style={styles.inventoryMiniButton} disabled={busy} onPress={() => run(() => onChange(product, 1))}>
+        <Text
+          style={styles.inventoryQuantityText}
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={`Estoque atual: ${product.inventoryQuantity ?? '0 un'}`}
+        >
+          {product.inventoryQuantity ?? '0 un'}
+        </Text>
+        <Pressable
+          style={styles.inventoryMiniButton}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={`Aumentar estoque de ${product.name}`}
+          accessibilityState={{ disabled: busy }}
+          onPress={() => run(() => onChange(product, 1))}
+        >
           <MaterialCommunityIcons name="plus" size={13} color={colors.ink2} />
         </Pressable>
       </View>
       <Pressable
         style={[styles.inventoryMissingButton, isMissing ? styles.inventoryMissingButtonActive : null]}
         disabled={busy}
+        accessibilityRole="button"
+        accessibilityLabel={`${isMissing ? 'Desmarcar' : 'Marcar'} ${product.name} como em falta`}
+        accessibilityState={{ disabled: busy, selected: isMissing }}
         onPress={() => run(() => onMarkMissing(product))}
       >
         <Text style={[styles.inventoryMissingButtonText, isMissing ? styles.inventoryMissingButtonTextActive : null]}>
@@ -160,6 +217,9 @@ export function InventoryControls({
       <Pressable
         style={[styles.inventoryConsumeButton, isMissing ? styles.inventoryConsumeButtonDisabled : null]}
         disabled={isMissing || busy}
+        accessibilityRole="button"
+        accessibilityLabel={`Consumir uma unidade de ${product.name}`}
+        accessibilityState={{ disabled: isMissing || busy }}
         onPress={() => run(() => onConsume(product))}
       >
         <Text style={styles.inventoryConsumeButtonText}>{isMissing ? 'Sem estoque' : 'Consumir'}</Text>
@@ -262,7 +322,11 @@ export function ArchivedProductRow({ product, onUnarchive }: { product: Product;
   return (
     <View style={styles.productRow}>
       {product.photoUri ? (
-        <Image source={{ uri: product.photoUri }} style={styles.productPhoto} />
+        <Image
+          source={{ uri: product.photoUri }}
+          style={styles.productPhoto}
+          accessibilityLabel={`Foto de ${product.name}`}
+        />
       ) : (
         <IconBubble icon={product.icon} background={product.background} tint={product.tint} size={44} />
       )}
@@ -270,7 +334,12 @@ export function ArchivedProductRow({ product, onUnarchive }: { product: Product;
         <Text style={styles.productName} numberOfLines={1}>{product.name}</Text>
         <Text style={styles.productMeta} numberOfLines={1}>{product.category ?? 'Mercearia'} · arquivado</Text>
       </View>
-      <Pressable style={styles.unarchiveButton} onPress={() => onUnarchive(product)}>
+      <Pressable
+        style={styles.unarchiveButton}
+        accessibilityRole="button"
+        accessibilityLabel={`Desarquivar ${product.name}`}
+        onPress={() => onUnarchive(product)}
+      >
         <MaterialCommunityIcons name="archive-arrow-up-outline" size={16} color={colors.primaryStrong} />
         <Text style={styles.unarchiveText}>Desarquivar</Text>
       </Pressable>
