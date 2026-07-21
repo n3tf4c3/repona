@@ -1,60 +1,38 @@
-// Mescla dois produtos duplicados de uma casa: reatribui todo o historico do
-// duplicado (B) para o canonico (A), deduplica e apaga B. Serve para limpar
-// duplicatas que o sync criou quando o mesmo item existia sob nomes diferentes
-// (renomeacao / scanner). A nuvem e o ponto de convergencia: depois do merge,
-// os celulares re-puxam o estado limpo.
+// Mescla dois produtos de uma casa sem perder estado. O duplicado (B) tem sua
+// identidade aposentada em product_sync_aliases e todo estado passa ao canônico
+// (A). O mesmo lock do endpoint /api/sync impede corrida com devices.
 //
 // Uso (da pasta apps/web):
-//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome>          dry-run
-//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> --yes    backup + merge
-//
-// Da raiz do monorepo:  npm run merge-produtos -w web -- <casa> <dup> <canonico> [--yes]
-//
-// O duplicado (B) e o que some; o canonico (A) e o que fica. purchase_history e
-// shopping_list_items sao FK NO ACTION: reatribuidos/limpos antes do DELETE de B.
-// price_history / inventory_events sao reatribuidos (preserva precos e consumo);
-// inventory_items de B cai por cascade (A mantem o seu).
+//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome>
+//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> --yes
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
+
 import { neon } from "@neondatabase/serverless";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 import { parseDatabaseUrl } from "../env-schema.mjs";
+import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
+import { construirPlanoMerge } from "./mergeProdutosPlan.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
+const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
+const LOCK_TTL_SECONDS = 15 * 60;
 
-// Sanitiza campos de dominio antes de imprimir (nomes aceitam qualquer caractere
-// no cadastro): C0 (00-1F), DEL+C1 (7F-9F) e marcas bidi (202A-202E, 2066-2069)
-// viram U+FFFD, para nao injetar ANSI/OSC/bidi no terminal de quem roda o CLI.
-// Checagem por code point (sem caracteres de controle literais no fonte).
-// (auditoria #97)
 function limpar(valor) {
   return String(valor ?? "").replace(/./gsu, (ch) => {
     const c = ch.codePointAt(0);
     const controle = c <= 0x1f || (c >= 0x7f && c <= 0x9f);
     const bidi = (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
-    return controle || bidi ? "�" : ch;
+    return controle || bidi ? "\uFFFD" : ch;
   });
 }
 
-const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
-
-const [casaRef, dupRef, canonRef, ...rest] = process.argv.slice(2);
-const confirmado = rest.includes("--yes");
-
-// invite_code é credencial: mascarado no stdout por padrão. (auditoria #38)
-const revelarToken = rest.includes("--show-token");
-function token(code) {
-  if (revelarToken) return code;
+function tokenMascarado(code, revelar) {
+  if (revelar) return code;
   return code.length <= 4 ? "****" : `${code.slice(0, 2)}****${code.slice(-2)}`;
-}
-
-if (!casaRef || !dupRef || !canonRef) {
-  console.log("Uso: node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> [--yes]");
-  process.exit(0);
 }
 
 async function resolverCasa(ref) {
@@ -62,123 +40,409 @@ async function resolverCasa(ref) {
     ? await sql`SELECT id, name, invite_code_enc FROM casas WHERE id = ${Number(ref)}`
     : [];
   if (porId.length) return porId[0];
-  const porCode = await sql`SELECT id, name, invite_code_enc FROM casas WHERE invite_code_enc = ${cifrarCodigo(ref.trim().toUpperCase())}`;
+  const code = cifrarCodigo(ref.trim().toUpperCase());
+  const porCode = await sql`
+    SELECT id, name, invite_code_enc FROM casas WHERE invite_code_enc = ${code}
+  `;
   return porCode[0] ?? null;
 }
 
-// Resolve produto por id numerico ou nome exato (case-insensitive) dentro da casa.
 async function resolverProduto(casaId, ref) {
   if (/^\d+$/.test(ref)) {
-    const r = await sql`SELECT id, name, archived, barcode FROM products WHERE casa_id = ${casaId} AND id = ${Number(ref)}`;
-    return r[0] ?? null;
+    const rows = await sql`
+      SELECT id, casa_id, sync_id, name, archived, barcode, updated_at
+      FROM products WHERE casa_id = ${casaId} AND id = ${Number(ref)}
+    `;
+    return rows[0] ?? null;
   }
-  const r = await sql`SELECT id, name, archived, barcode FROM products
-    WHERE casa_id = ${casaId} AND lower(name) = lower(${ref.trim()})`;
-  if (r.length > 1) {
-    console.error(`Nome "${limpar(ref)}" casa com ${r.length} produtos; use o id.`);
-    process.exit(1);
+  const rows = await sql`
+    SELECT id, casa_id, sync_id, name, archived, barcode, updated_at
+    FROM products
+    WHERE casa_id = ${casaId} AND lower(name) = lower(${ref.trim()})
+  `;
+  if (rows.length > 1) {
+    throw new Error(`Nome "${limpar(ref)}" casa com ${rows.length} produtos; use o id.`);
   }
-  return r[0] ?? null;
+  return rows[0] ?? null;
 }
 
-const casa = await resolverCasa(casaRef);
-if (!casa) {
-  console.error(`Casa "${casaRef}" nao encontrada.`);
-  process.exit(1);
-}
-const B = await resolverProduto(casa.id, dupRef);
-const A = await resolverProduto(casa.id, canonRef);
-if (!B) { console.error(`Duplicado "${dupRef}" nao encontrado na casa.`); process.exit(1); }
-if (!A) { console.error(`Canonico "${canonRef}" nao encontrado na casa.`); process.exit(1); }
-if (A.id === B.id) { console.error("Duplicado e canonico sao o mesmo produto."); process.exit(1); }
-
-async function contar(id) {
-  // Compras contadas só as vivas (deleted = false): tombstones nao devem inflar
-  // a metrica nem o purchase_count. (auditoria #86)
-  const [r] = await sql`SELECT
-    (SELECT count(*)::int FROM purchase_history WHERE product_id = ${id} AND deleted = false) AS compras,
-    (SELECT count(*)::int FROM price_history WHERE product_id = ${id}) AS precos,
-    (SELECT count(*)::int FROM inventory_events WHERE product_id = ${id}) AS consumos,
-    (SELECT count(*)::int FROM shopping_list_items WHERE product_id = ${id}) AS itens_lista`;
-  return r;
-}
-const cB = await contar(B.id);
-const cA = await contar(A.id);
-
-console.log(`Casa #${casa.id} "${limpar(casa.name)}" code=${token(decifrarCodigo(casa.invite_code_enc))}`);
-console.log(`  DUPLICADO (some): #${B.id} "${limpar(B.name)}"${B.archived ? " [ARQ]" : ""}  ${JSON.stringify(cB)}`);
-console.log(`  CANONICO (fica):  #${A.id} "${limpar(A.name)}"${A.archived ? " [ARQ]" : ""}  ${JSON.stringify(cA)}`);
-console.log(`\n  -> compras/precos/consumos de #${B.id} viram de #${A.id} (deduplicados); itens de lista de #${B.id} sao removidos; #${B.id} e apagado.`);
-
-if (!confirmado) {
-  console.log(`\nDRY-RUN. Nada alterado. Para aplicar (com backup antes):`);
-  console.log(`  node scripts/merge-produtos.mjs ${casa.id} ${B.id} ${A.id} --yes`);
-  process.exit(0);
+async function adquirirLock(casaId) {
+  const chave = `sync:lock:${casaId}`;
+  const lockToken = crypto.randomUUID();
+  const expiraEm = new Date(Date.now() + LOCK_TTL_SECONDS * 1000);
+  const rows = await sql`
+    INSERT INTO sync_locks (chave, token, expira_em)
+    VALUES (${chave}, ${lockToken}, ${expiraEm})
+    ON CONFLICT (chave) DO UPDATE
+      SET token = EXCLUDED.token, expira_em = EXCLUDED.expira_em
+      WHERE sync_locks.expira_em <= now()
+    RETURNING token
+  `;
+  return rows.length ? { chave, token: lockToken } : null;
 }
 
-// Backup dos dois produtos e tudo que os referencia (rede de seguranca).
-const ids = [A.id, B.id];
-const dump = {
-  exportadoEm: new Date().toISOString(),
-  casa,
-  canonico: A,
-  duplicado: B,
-  products: await sql`SELECT * FROM products WHERE id = ANY(${ids})`,
-  purchase_history: await sql`SELECT * FROM purchase_history WHERE product_id = ANY(${ids}) ORDER BY id`,
-  price_history: await sql`SELECT * FROM price_history WHERE product_id = ANY(${ids}) ORDER BY id`,
-  inventory_events: await sql`SELECT * FROM inventory_events WHERE product_id = ANY(${ids}) ORDER BY id`,
-  inventory_items: await sql`SELECT * FROM inventory_items WHERE product_id = ANY(${ids}) ORDER BY id`,
-  shopping_list_items: await sql`SELECT * FROM shopping_list_items WHERE product_id = ANY(${ids}) ORDER BY id`,
-};
-// O dump traz dados da casa em JSON claro. Cria diretorio e arquivo com permissao
-// restritiva (dono apenas, ~0700/0600) para nao herdar ACL de leitura ampla, o
-// mesmo que casas.mjs faz. Em Windows o modo POSIX e best-effort; ainda assim
-// mantenha o backup fora de compartilhamentos/backups. (auditoria #85)
-const dir = resolve(aqui, "../backups");
-mkdirSync(dir, { recursive: true, mode: 0o700 });
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const file = resolve(dir, `merge-${casa.id}-${B.id}-into-${A.id}-${stamp}.json`);
-writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
-console.log(`\nBackup salvo em:\n  ${file}`);
-console.log("  AVISO: contem dados da casa em texto claro.");
-console.log("  Guarde fora de compartilhamentos/backups e apague quando nao precisar mais.");
+async function renovarLock(lock) {
+  const expiraEm = new Date(Date.now() + LOCK_TTL_SECONDS * 1000);
+  const rows = await sql`
+    UPDATE sync_locks SET expira_em = ${expiraEm}
+    WHERE chave = ${lock.chave} AND token = ${lock.token} AND expira_em > now()
+    RETURNING token
+  `;
+  if (!rows.length) throw new Error("O lock do merge expirou; nada foi aplicado. Rode novamente.");
+}
 
-// Tudo numa transacao. Os DELETEs de dedupe mantem a linha de menor id por
-// (instante ao segundo + quantidade/preco), mesma regra do dedupe do sync.
-await sql.transaction([
-  sql`UPDATE purchase_history SET product_id = ${A.id} WHERE product_id = ${B.id}`,
-  sql`DELETE FROM purchase_history a
-      WHERE a.product_id = ${A.id} AND EXISTS (
-        SELECT 1 FROM purchase_history b
-        WHERE b.product_id = ${A.id} AND b.id < a.id
-          AND trim(b.quantity) = trim(a.quantity)
-          AND date_trunc('second', b.purchased_at) = date_trunc('second', a.purchased_at))`,
-  sql`UPDATE price_history SET product_id = ${A.id} WHERE product_id = ${B.id}`,
-  sql`DELETE FROM price_history a
-      WHERE a.product_id = ${A.id} AND EXISTS (
-        SELECT 1 FROM price_history b
-        WHERE b.product_id = ${A.id} AND b.id < a.id
-          AND b.price_cents = a.price_cents
-          AND date_trunc('second', b.recorded_at) = date_trunc('second', a.recorded_at))`,
-  sql`UPDATE inventory_events SET product_id = ${A.id} WHERE product_id = ${B.id}`,
-  // Deduplica consumos reatribuidos, mesma regra do dedupe do sync (mesmo tipo +
-  // quantidade + instante ao segundo). Antes o script so reatribuia
-  // inventory_events sem deduplicar, entao consumos iguais dos dois produtos
-  // acumulavam. (auditoria #86)
-  sql`DELETE FROM inventory_events a
-      WHERE a.product_id = ${A.id} AND EXISTS (
-        SELECT 1 FROM inventory_events b
-        WHERE b.product_id = ${A.id} AND b.id < a.id
-          AND b.event_type = a.event_type
-          AND trim(b.quantity) = trim(a.quantity)
-          AND date_trunc('second', b.occurred_at) = date_trunc('second', a.occurred_at))`,
-  sql`DELETE FROM shopping_list_items WHERE product_id = ${B.id}`,
-  sql`DELETE FROM products WHERE id = ${B.id}`,
-  sql`UPDATE products SET purchase_count = (
-        SELECT count(*) FROM purchase_history WHERE product_id = ${A.id} AND deleted = false
-      ) WHERE id = ${A.id}`,
-]);
+async function liberarLock(lock) {
+  await sql`
+    DELETE FROM sync_locks WHERE chave = ${lock.chave} AND token = ${lock.token}
+  `;
+}
 
-const cFinal = await contar(A.id);
-console.log(`\nMerge concluido. #${A.id} "${limpar(A.name)}" agora: ${JSON.stringify(cFinal)}`);
-console.log(`#${B.id} "${limpar(B.name)}" apagado. (re-puxe no celular para refletir)`);
+async function carregarEstado(casaId, canonicalId, duplicateId) {
+  const ids = [canonicalId, duplicateId];
+  const [products, purchases, prices, inventoryEvents, inventoryItems, listItems, aliases] =
+    await Promise.all([
+      sql`SELECT * FROM products WHERE casa_id = ${casaId} AND id = ANY(${ids}) ORDER BY id`,
+      sql`SELECT * FROM purchase_history WHERE product_id = ANY(${ids}) ORDER BY id`,
+      sql`SELECT * FROM price_history WHERE product_id = ANY(${ids}) ORDER BY id`,
+      sql`SELECT * FROM inventory_events WHERE product_id = ANY(${ids}) ORDER BY id`,
+      sql`SELECT * FROM inventory_items WHERE product_id = ANY(${ids}) ORDER BY id`,
+      sql`SELECT sli.*, sl.name AS list_name, sl.status AS list_status
+          FROM shopping_list_items sli
+          INNER JOIN shopping_lists sl ON sl.id = sli.shopping_list_id
+          WHERE sli.product_id = ANY(${ids})
+          ORDER BY sli.shopping_list_id, sli.id`,
+      sql`SELECT * FROM product_sync_aliases
+          WHERE casa_id = ${casaId} AND canonical_product_id = ANY(${ids})
+          ORDER BY id`,
+    ]);
+  return { products, purchases, prices, inventoryEvents, inventoryItems, listItems, aliases };
+}
+
+function criarPlano(canonical, duplicate, state) {
+  const plan = construirPlanoMerge({
+    canonical,
+    duplicate,
+    purchases: state.purchases,
+    prices: state.prices,
+    inventoryEvents: state.inventoryEvents,
+    inventoryItems: state.inventoryItems,
+    listItems: state.listItems,
+    aliasesPointingToDuplicate: state.aliases.filter(
+      (alias) => alias.canonical_product_id === duplicate.id
+    ).length,
+  });
+  plan.inventory.reconciliationSyncId = plan.inventory.emitsSetEvent
+    ? crypto.randomUUID()
+    : null;
+  return plan;
+}
+
+function mostrarResumoEventos(rotulo, summary) {
+  console.log(
+    `  ${rotulo}: preserva ${summary.preserved} ` +
+      `(A=${summary.canonical}, B=${summary.duplicate}); ` +
+      `${summary.legacyIdsToAssign} legado(s) recebem UUID; ` +
+      `${summary.stableIdReplays} replay(s) pelo mesmo UUID`
+  );
+}
+
+function imprimirPlano(casa, plan, revelarToken) {
+  const code = tokenMascarado(decifrarCodigo(casa.invite_code_enc), revelarToken);
+  console.log(`Casa #${casa.id} "${limpar(casa.name)}" code=${code}`);
+  console.log(
+    `  DUPLICADO (some): #${plan.duplicate.id} "${limpar(plan.duplicate.name)}" ` +
+      `sync_id=${plan.duplicate.sync_id}${plan.duplicate.archived ? " [ARQ]" : ""}`
+  );
+  console.log(
+    `  CANONICO (fica):  #${plan.canonical.id} "${limpar(plan.canonical.name)}" ` +
+      `sync_id=${plan.canonical.sync_id}${plan.canonical.archived ? " [ARQ]" : ""}`
+  );
+  console.log("\nPlano completo:");
+  console.log(
+    `  identidade: cria alias ${plan.duplicate.sync_id} -> #${plan.canonical.id}; ` +
+      `reaponta ${plan.aliases.repoint} alias(es) anterior(es); metadados do canônico vencem`
+  );
+  mostrarResumoEventos("compras", plan.purchases);
+  console.log(
+    `    vivas=${plan.purchases.live}, tombstones=${plan.purchases.tombstones}, ` +
+      `purchase_count final=${plan.purchases.finalPurchaseCount}`
+  );
+  mostrarResumoEventos("precos", plan.prices);
+  mostrarResumoEventos("eventos de estoque", plan.inventoryEvents);
+
+  if (plan.inventory.action === "none") {
+    console.log("  estoque atual: nenhum registro; nenhum saldo sintético será criado");
+  } else {
+    const result = plan.inventory.result;
+    console.log(
+      `  estoque atual: ${plan.inventory.action}; vence ${plan.inventory.winnerSource}; ` +
+        `saldo="${limpar(result.quantity)}" status=${limpar(result.status)}; ` +
+        `cria evento set ${plan.inventory.reconciliationSyncId}`
+    );
+  }
+
+  console.log(
+    `  itens de lista: ${plan.listItems.rows} linha(s), ${plan.listItems.moves} move(s), ` +
+      `${plan.listItems.collisions} colisao(oes) LWW`
+  );
+  for (const decision of plan.listItems.decisions) {
+    const result = decision.result;
+    console.log(
+      `    lista #${decision.listId} "${limpar(decision.listName)}" [${decision.listStatus}]: ` +
+        `${decision.action}, vence=${decision.winnerSource}, ` +
+        `quantidade="${limpar(result.quantity)}", checked=${result.checked}, deleted=${result.deleted}`
+    );
+  }
+  console.log(`  final: apaga somente products #${plan.duplicate.id}; todo vínculo já estará reconciliado`);
+  console.log("  dedupe: somente sync_id idêntico representa replay; conteúdo coincidente é preservado");
+}
+
+function salvarBackup(casa, plan, state) {
+  const dump = {
+    exportadoEm: new Date().toISOString(),
+    casa,
+    plano: plan,
+    products: state.products,
+    purchase_history: state.purchases,
+    price_history: state.prices,
+    inventory_events: state.inventoryEvents,
+    inventory_items: state.inventoryItems,
+    shopping_list_items: state.listItems,
+    product_sync_aliases: state.aliases,
+  };
+  const dir = resolve(aqui, "../backups");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const file = resolve(
+    dir,
+    `merge-${casa.id}-${plan.duplicate.id}-into-${plan.canonical.id}-${stamp}.json`
+  );
+  writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
+  console.log(`\nBackup salvo em:\n  ${file}`);
+  console.log("  AVISO: contem dados da casa em texto claro.");
+  console.log("  Guarde fora de compartilhamentos/backups e apague quando nao precisar mais.");
+}
+
+async function aplicarMerge(casaId, plan) {
+  const canonicalId = plan.canonical.id;
+  const duplicateId = plan.duplicate.id;
+  const productIds = [canonicalId, duplicateId];
+  const statements = [
+    // Trava ambos os produtos durante a transação, além do lock distribuído do sync.
+    sql`SELECT id FROM products
+        WHERE casa_id = ${casaId} AND id = ANY(${productIds})
+        ORDER BY id FOR UPDATE`,
+
+    // Eventos legados ganham identidade antes de mudar de produto. Nunca usamos
+    // timestamp/quantidade para dedupe: eventos simultâneos legítimos sobrevivem.
+    sql`UPDATE purchase_history SET sync_id = gen_random_uuid()
+        WHERE product_id = ANY(${productIds}) AND sync_id IS NULL`,
+    sql`UPDATE price_history SET sync_id = gen_random_uuid()
+        WHERE product_id = ANY(${productIds}) AND sync_id IS NULL`,
+    sql`UPDATE inventory_events SET sync_id = gen_random_uuid()
+        WHERE product_id = ANY(${productIds}) AND sync_id IS NULL`,
+    sql`UPDATE purchase_history SET product_id = ${canonicalId}
+        WHERE product_id = ${duplicateId}`,
+    sql`UPDATE price_history SET product_id = ${canonicalId}
+        WHERE product_id = ${duplicateId}`,
+    sql`UPDATE inventory_events SET product_id = ${canonicalId}
+        WHERE product_id = ${duplicateId}`,
+
+    // Em cada lista, se A e B coexistem, aplica LWW. Tombstone vence empate de
+    // relógio para não ressuscitar item removido; A vence os demais empates.
+    sql`WITH choices AS (
+          SELECT
+            a.id AS target_id,
+            CASE
+              WHEN b.updated_at > a.updated_at
+                OR (b.updated_at = a.updated_at AND b.deleted AND NOT a.deleted)
+              THEN b.quantity ELSE a.quantity
+            END AS quantity,
+            CASE
+              WHEN b.updated_at > a.updated_at
+                OR (b.updated_at = a.updated_at AND b.deleted AND NOT a.deleted)
+              THEN b.checked ELSE a.checked
+            END AS checked,
+            CASE
+              WHEN b.updated_at > a.updated_at
+                OR (b.updated_at = a.updated_at AND b.deleted AND NOT a.deleted)
+              THEN b.deleted ELSE a.deleted
+            END AS deleted,
+            LEAST(a.created_at, b.created_at) AS created_at,
+            GREATEST(a.updated_at, b.updated_at) AS updated_at
+          FROM shopping_list_items a
+          INNER JOIN shopping_list_items b
+            ON b.shopping_list_id = a.shopping_list_id
+           AND b.product_id = ${duplicateId}
+          WHERE a.product_id = ${canonicalId}
+        )
+        UPDATE shopping_list_items target SET
+          quantity = choices.quantity,
+          checked = choices.checked,
+          deleted = choices.deleted,
+          created_at = choices.created_at,
+          updated_at = choices.updated_at
+        FROM choices WHERE target.id = choices.target_id`,
+    sql`DELETE FROM shopping_list_items b
+        WHERE b.product_id = ${duplicateId}
+          AND EXISTS (
+            SELECT 1 FROM shopping_list_items a
+            WHERE a.shopping_list_id = b.shopping_list_id
+              AND a.product_id = ${canonicalId}
+          )`,
+    sql`UPDATE shopping_list_items SET product_id = ${canonicalId}
+        WHERE product_id = ${duplicateId}`,
+
+    // O saldo mais recente vence (A em empate), mas ambos os fluxos de eventos
+    // foram preservados acima. Um novo set torna a decisão explícita/convergente.
+    sql`UPDATE inventory_items a SET
+          quantity = CASE WHEN b.updated_at > a.updated_at THEN b.quantity ELSE a.quantity END,
+          status = CASE WHEN b.updated_at > a.updated_at THEN b.status ELSE a.status END,
+          created_at = LEAST(a.created_at, b.created_at),
+          updated_at = GREATEST(a.updated_at, b.updated_at)
+        FROM inventory_items b
+        WHERE a.product_id = ${canonicalId} AND b.product_id = ${duplicateId}`,
+    sql`DELETE FROM inventory_items b
+        WHERE b.product_id = ${duplicateId}
+          AND EXISTS (SELECT 1 FROM inventory_items a WHERE a.product_id = ${canonicalId})`,
+    sql`UPDATE inventory_items SET product_id = ${canonicalId}
+        WHERE product_id = ${duplicateId}`,
+  ];
+
+  if (plan.inventory.reconciliationSyncId) {
+    statements.push(sql`WITH event_state AS (
+          SELECT
+            ii.product_id,
+            ii.quantity,
+            GREATEST(
+              now(),
+              ii.updated_at + interval '1 millisecond',
+              COALESCE(
+                (SELECT MAX(ie.occurred_at) + interval '1 millisecond'
+                 FROM inventory_events ie WHERE ie.product_id = ii.product_id),
+                now()
+              )
+            ) AS occurred_at
+          FROM inventory_items ii WHERE ii.product_id = ${canonicalId}
+        ), inserted AS (
+          INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+          SELECT ${plan.inventory.reconciliationSyncId}, product_id, 'set', quantity, occurred_at
+          FROM event_state
+          RETURNING product_id, occurred_at
+        )
+        UPDATE inventory_items ii SET updated_at = inserted.occurred_at
+        FROM inserted WHERE ii.product_id = inserted.product_id`);
+  }
+
+  statements.push(
+    // Cadeias de aliases também convergem quando o canônico de um merge antigo
+    // vira duplicado neste merge.
+    sql`UPDATE product_sync_aliases SET canonical_product_id = ${canonicalId}
+        WHERE casa_id = ${casaId} AND canonical_product_id = ${duplicateId}`,
+    sql`INSERT INTO product_sync_aliases (casa_id, old_sync_id, canonical_product_id)
+        VALUES (${casaId}, ${plan.duplicate.sync_id}, ${canonicalId})
+        ON CONFLICT (casa_id, old_sync_id) DO UPDATE
+        SET canonical_product_id = EXCLUDED.canonical_product_id`,
+    sql`DELETE FROM products
+        WHERE casa_id = ${casaId} AND id = ${duplicateId}`,
+    sql`UPDATE products p SET
+          purchase_count = (
+            SELECT count(*)::int FROM purchase_history ph
+            WHERE ph.product_id = p.id AND ph.deleted = false
+          ),
+          status = COALESCE(
+            (SELECT CASE WHEN ii.status = 'missing' THEN 'missing' ELSE 'active' END
+             FROM inventory_items ii WHERE ii.product_id = p.id),
+            p.status
+          )
+        WHERE p.casa_id = ${casaId} AND p.id = ${canonicalId}`
+  );
+
+  await sql.transaction(statements);
+  const duplicateStillExists = await sql`
+    SELECT id FROM products WHERE casa_id = ${casaId} AND id = ${duplicateId}
+  `;
+  if (duplicateStillExists.length) throw new Error("Merge não removeu o produto duplicado.");
+}
+
+async function contarFinal(productId) {
+  const [row] = await sql`SELECT
+    (SELECT count(*)::int FROM purchase_history
+      WHERE product_id = ${productId} AND deleted = false) AS compras_vivas,
+    (SELECT count(*)::int FROM purchase_history
+      WHERE product_id = ${productId} AND deleted = true) AS tombstones_compra,
+    (SELECT count(*)::int FROM price_history WHERE product_id = ${productId}) AS precos,
+    (SELECT count(*)::int FROM inventory_events WHERE product_id = ${productId}) AS eventos_estoque,
+    (SELECT count(*)::int FROM shopping_list_items WHERE product_id = ${productId}) AS itens_lista,
+    (SELECT count(*)::int FROM product_sync_aliases
+      WHERE canonical_product_id = ${productId}) AS aliases`;
+  return row;
+}
+
+async function main() {
+  const [casaRef, duplicateRef, canonicalRef, ...flags] = process.argv.slice(2);
+  const confirmado = flags.includes("--yes");
+  const revelarToken = flags.includes("--show-token");
+  if (!casaRef || !duplicateRef || !canonicalRef) {
+    console.log(
+      "Uso: node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> [--yes]"
+    );
+    return;
+  }
+
+  const casa = await resolverCasa(casaRef);
+  if (!casa) throw new Error("Casa não encontrada.");
+  const lock = await adquirirLock(casa.id);
+  if (!lock) {
+    throw new Error("A casa está sincronizando ou em outro merge. Tente novamente em instantes.");
+  }
+
+  try {
+    const duplicate = await resolverProduto(casa.id, duplicateRef);
+    const canonical = await resolverProduto(casa.id, canonicalRef);
+    if (!duplicate) throw new Error(`Duplicado "${limpar(duplicateRef)}" não encontrado na casa.`);
+    if (!canonical) throw new Error(`Canônico "${limpar(canonicalRef)}" não encontrado na casa.`);
+    if (canonical.id === duplicate.id) throw new Error("Duplicado e canônico são o mesmo produto.");
+
+    const state = await carregarEstado(casa.id, canonical.id, duplicate.id);
+    const plan = criarPlano(canonical, duplicate, state);
+    imprimirPlano(casa, plan, revelarToken);
+
+    if (!confirmado) {
+      console.log("\nDRY-RUN. Nada foi alterado. Para aplicar (com backup antes):");
+      console.log(
+        `  node scripts/merge-produtos.mjs ${casa.id} ${duplicate.id} ${canonical.id} --yes`
+      );
+      return;
+    }
+
+    salvarBackup(casa, plan, state);
+    await renovarLock(lock);
+    await aplicarMerge(casa.id, plan);
+    const final = await contarFinal(canonical.id);
+    console.log(`\nMerge concluído. #${canonical.id} "${limpar(canonical.name)}":`);
+    console.log(`  ${JSON.stringify(final)}`);
+    console.log(
+      `#${duplicate.id} "${limpar(duplicate.name)}" foi aposentado; ` +
+        `sync_id ${duplicate.sync_id} agora resolve para o canônico.`
+    );
+  } finally {
+    try {
+      await liberarLock(lock);
+    } catch (error) {
+      // O token torna o lock autoexpirável e impede remover o lock de outro
+      // processo. Falha de cleanup não muda o resultado já commitado do merge.
+      console.error(
+        `AVISO: não foi possível liberar o lock agora; ele expira em até ${LOCK_TTL_SECONDS}s ` +
+          `(${limpar(error instanceof Error ? error.message : error)}).`
+      );
+    }
+  }
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error(`ERRO: ${limpar(error instanceof Error ? error.message : error)}`);
+  process.exitCode = 1;
+}

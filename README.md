@@ -55,6 +55,26 @@ projeto). **Não use `db:migrate`** — o script está desativado. O baseline
 npm run db:push --workspace apps/web
 ```
 
+## Merge administrativo de produtos
+
+O merge sempre começa em modo de simulação e imprime o plano completo. Ele usa
+o mesmo lock distribuído do sync da casa, preserva eventos por `sync_id`,
+reconcilia lista/estoque e mantém um alias permanente da identidade aposentada
+para o produto canônico. A aplicação grava antes um backup local restrito.
+
+```bash
+# dry-run (casa aceita id/token; produtos aceitam id/nome)
+npm run merge-produtos -w web -- <casa> <duplicado> <canonico>
+
+# aplicar exatamente o merge apresentado, com nova validação sob lock
+npm run merge-produtos -w web -- <casa> <duplicado> <canonico> --yes
+```
+
+Antes da primeira execução após esta versão, aplique o schema para criar
+`product_sync_aliases`. Em colisões, itens de lista usam LWW (tombstone vence
+empate), o estoque mais recente vence (canônico vence empate) e um evento `set`
+registra explicitamente o saldo reconciliado.
+
 ## Deploy na Vercel
 
 O projeto da Vercel deve apontar para o app web dentro do monorepo:

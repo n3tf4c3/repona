@@ -7,6 +7,7 @@ import {
   inventoryEvents,
   purchaseHistory,
   priceHistory,
+  productSyncAliases,
   shoppingListItems,
 } from "@/server/db/schema";
 import {
@@ -22,6 +23,7 @@ import {
   type SyncSnapshot,
 } from "@repona/core";
 import { garantirListaAtiva } from "@/server/modules/listas";
+import { indexProductSyncAliases } from "@/server/modules/syncAliases";
 
 // Tombstones de item de lista mais antigos que isto são podados (já propagaram a
 // deleção). Um device offline por mais que isso pode reviver um item. (auditoria #9)
@@ -106,20 +108,30 @@ export async function mergeCasaSnapshot(
   casaId: number,
   incoming: SyncSnapshot
 ): Promise<SyncSnapshot> {
-  const existentes = await db
-    .select({
-      id: products.id,
-      name: products.name,
-      syncId: products.syncId,
-      barcode: products.barcode,
-      metadataUpdatedAt: products.updatedAt,
-      inventoryUpdatedAt: inventoryItems.updatedAt,
-    })
-    .from(products)
-    .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
-    .where(eq(products.casaId, casaId));
+  const [existentes, aliases] = await Promise.all([
+    db
+      .select({
+        id: products.id,
+        name: products.name,
+        syncId: products.syncId,
+        barcode: products.barcode,
+        metadataUpdatedAt: products.updatedAt,
+        inventoryUpdatedAt: inventoryItems.updatedAt,
+      })
+      .from(products)
+      .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
+      .where(eq(products.casaId, casaId)),
+    db
+      .select({
+        oldSyncId: productSyncAliases.oldSyncId,
+        canonicalProductId: productSyncAliases.canonicalProductId,
+      })
+      .from(productSyncAliases)
+      .where(eq(productSyncAliases.casaId, casaId)),
+  ]);
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
+  const syncIdsAposentados = indexProductSyncAliases(idPorSyncId, aliases);
   // Só produtos com código não-nulo entram no mapa de barcode (hortifrúti sem
   // código nunca casa por aqui). Chave com trim() — o matchProduct também faz
   // trim no recebido, e um código legado com espaço nunca casaria. (auditoria
@@ -158,6 +170,7 @@ export async function mergeCasaSnapshot(
       idByName: idPorNome,
       idByBarcode: idPorBarcode,
     });
+    const identidadeAposentada = Boolean(prod.syncId && syncIdsAposentados.has(prod.syncId));
     let productId: number;
 
     const metadataIncoming = prod.metadataUpdatedAt ?? prod.updatedAt;
@@ -174,7 +187,13 @@ export async function mergeCasaSnapshot(
 
       // Metadados e estoque têm relógios independentes. Uma edição de nome no
       // device A não pode fazer o saldo mais recente do device B perder. (#2)
-      if (shouldApplyIncoming(metadataIncoming, info.metadataUpdatedAt.toISOString())) {
+      // Alias é também tombstone de identidade: o saldo/eventos offline ainda
+      // convergem, mas os metadados da duplicata aposentada não podem renomear
+      // ou sobrescrever novamente o produto canônico. (auditoria #86)
+      if (
+        !identidadeAposentada &&
+        shouldApplyIncoming(metadataIncoming, info.metadataUpdatedAt.toISOString())
+      ) {
         const donoDoNome = idPorNome.get(productNameKey(prod.name));
         const nomeColide = donoDoNome !== undefined && donoDoNome !== productId;
         const nomeFinal = nomeColide ? info.name : prod.name.trim();
