@@ -8,7 +8,7 @@ on:
 
 # Permissão mínima do GITHUB_TOKEN: só leitura do repo. Reduz o blast radius se
 # um passo/dep for comprometido. Actions pinadas por SHA (imutável) em vez de tag
-# móvel, e passo de auditoria de dependências (gate em critical). (auditoria #96)
+# móvel, e passo de auditoria de dependências (gate em MODERATE). (auditoria #96)
 permissions:
   contents: read
 
@@ -21,9 +21,12 @@ jobs:
     # Fixa a geração do runner; a imagem hospedada recebe patches do GitHub,
     # mas não muda silenciosamente para a próxima versão do Ubuntu.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      # O bundle mobile do CI usa o perfil seguro que nunca resolve para producao.
+      EXPO_PUBLIC_APP_ENV: "preview"
+      EXPO_PUBLIC_API_BASE_URL: "https://repona-preview.invalid"
       # Dummies para o build: rotas coletadas estaticamente podem tocar env.
       DATABASE_URL: "postgres://ci:ci@localhost:5432/ci"
       AUTH_SECRET: "ci-secret-apenas-para-build-0123456789abcdef"
@@ -47,6 +50,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Verificar alinhamento de dependencias Expo
+        working-directory: apps/mobile
+        run: npx expo install --check
+
+      - name: Diagnosticar projeto Expo
+        working-directory: apps/mobile
+        run: npx --yes expo-doctor@1.20.1
+
       - name: Validar contrato do ambiente de produção
         run: npm run env:check:production
 
@@ -66,6 +77,43 @@ jobs:
 
       - name: Build web
         run: npm run web:build
+
+      - name: Exportar bundle Android
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          export_dir="$(mktemp -d "$RUNNER_TEMP/repona-expo-export.XXXXXX")"
+          npx expo export --platform android --output-dir "$export_dir"
+
+      - name: Gerar Android nativo e validar politica de backup
+        run: |
+          set -euo pipefail
+          prebuild_root="$(mktemp -d "$RUNNER_TEMP/repona-prebuild.XXXXXX")"
+          git archive --format=tar HEAD apps/mobile | tar -xf - -C "$prebuild_root"
+          prebuild_dir="$prebuild_root/apps/mobile"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$prebuild_dir/node_modules"
+          (
+            cd "$prebuild_dir"
+            npx expo prebuild -p android --no-install --clean
+          )
+
+          manifest_path="$prebuild_dir/android/app/src/main/AndroidManifest.xml"
+          MANIFEST_PATH="$manifest_path" node <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          const source = readFileSync(process.env.MANIFEST_PATH, "utf8");
+          const applications = source.match(/<application\b[^>]*>/g) ?? [];
+          if (applications.length !== 1) {
+            throw new Error("AndroidManifest deve conter exatamente uma tag <application>.");
+          }
+
+          const attributes = [
+            ...applications[0].matchAll(/\bandroid:allowBackup\s*=\s*(["'])([^"']*)\1/g),
+          ];
+          if (attributes.length !== 1 || attributes[0][2] !== "false") {
+            throw new Error('AndroidManifest efetivo deve declarar android:allowBackup="false".');
+          }
+          NODE
 
   # Baseline do banco reproduzível (auditoria #23): garante que o schema.ts aplica
   # do zero num Postgres limpo e que o baseline Drizzle commitado continua em
