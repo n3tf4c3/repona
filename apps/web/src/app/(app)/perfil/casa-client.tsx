@@ -104,7 +104,7 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
       </div>
 
       {erro && (
-        <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+        <div role="alert" className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
           <AlertCircle size={16} />
           {erro}
         </div>
@@ -121,6 +121,7 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
           </code>
           <button
             onClick={copiarCodigo}
+            aria-label="Copiar código"
             title="Copiar"
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-line text-ink-soft transition hover:bg-bg"
           >
@@ -129,6 +130,7 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
           <button
             disabled={pending}
             onClick={() => setConfirmandoRotacao((v) => !v)}
+            aria-label="Gerar novo token"
             title="Gerar novo token"
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-line text-ink-soft transition hover:bg-bg disabled:opacity-50"
           >

@@ -61,7 +61,7 @@ export default function LoginPage() {
           />
         </div>
         {error && (
-          <p className="flex items-center gap-1.5 text-sm font-medium text-danger">
+          <p role="alert" className="flex items-center gap-1.5 text-sm font-medium text-danger">
             <AlertCircle size={15} />
             {error}
           </p>

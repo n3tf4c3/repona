@@ -32,7 +32,12 @@ export function BottomNavigation({
       <View style={styles.bottomBar}>
         <TabButton tab={tabs[0]} active={activeTab === tabs[0].key} onPress={() => onChange(tabs[0].key)} />
         <TabButton tab={secondaryTab} active={activeTab === secondaryTab.key} onPress={() => onChange(secondaryTab.key)} />
-        <Pressable style={styles.fab} onPress={onAdd}>
+        <Pressable
+          style={styles.fab}
+          onPress={onAdd}
+          accessibilityRole="button"
+          accessibilityLabel="Novo produto"
+        >
           <MaterialCommunityIcons name="plus" size={28} color={colors.surface} />
         </Pressable>
         <TabButton tab={tabs[2]} active={activeTab === tabs[2].key} onPress={() => onChange(tabs[2].key)} />
@@ -52,7 +57,13 @@ function TabButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.tabButton} onPress={onPress}>
+    <Pressable
+      style={styles.tabButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={tab.label}
+      accessibilityState={{ selected: active }}
+    >
       <MaterialCommunityIcons name={tab.icon} size={23} color={active ? colors.primaryStrong : colors.ink3} />
       <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>{tab.label}</Text>
     </Pressable>

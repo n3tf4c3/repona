@@ -82,7 +82,7 @@ export function ListaClient({
       </div>
 
       {erro && (
-        <div className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
+        <div role="alert" className="flex items-center gap-2 rounded-xl bg-coral-soft px-4 py-3 text-sm font-medium text-danger">
           <AlertCircle size={16} />
           {erro}
         </div>
