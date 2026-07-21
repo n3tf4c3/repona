@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 // Headers de hardening: defesa em profundidade contra clickjacking, sniffing de
 // MIME e vazamento de referrer. A Content-Security-Policy completa (default-src/
 // script-src/style-src/connect-src com nonce por requisição) é definida no
-// middleware, que é onde o nonce pode ser gerado por request. (auditoria #34)
+// proxy, que é onde o nonce pode ser gerado por request. (auditoria #34)
 const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },

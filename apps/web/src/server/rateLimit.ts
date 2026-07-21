@@ -60,7 +60,7 @@ export async function rateLimited(
 export async function tryLock(chave: string, ttlSeg: number): Promise<string | null> {
   // crypto global (Web Crypto), disponível no Node 20+ e no Edge runtime — sem
   // import de `node:crypto`, para este módulo poder ser usado também no
-  // middleware (Edge) que agora aplica rate limit no /admin. (auditoria #48)
+  // proxy do Next que aplica rate limit no /admin. (auditoria #48)
   const token = crypto.randomUUID();
   const expiraEm = new Date(Date.now() + ttlSeg * 1000);
   // Adquire só se não há lock vivo: insere e, em conflito, sobrescreve apenas se

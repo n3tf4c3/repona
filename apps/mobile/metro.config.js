@@ -1,19 +1,6 @@
-// Metro config ciente do monorepo: observa a raiz do workspace para resolver
-// dependências hasteadas e o pacote @repona/core (TypeScript de origem).
-// A partir do SDK 52 o Expo já configura monorepos automaticamente, mas deixamos
-// explícito para garantir a resolução do pacote symlinkado.
+// Expo SDK 52+ detecta workspaces automaticamente quando a configuração parte de
+// expo/metro-config. Overrides manuais de watchFolders/nodeModulesPaths podem
+// divergir do resolvedor oficial e por isso não são necessários aqui.
 const { getDefaultConfig } = require('expo/metro-config');
-const path = require('path');
 
-const projectRoot = __dirname;
-const monorepoRoot = path.resolve(projectRoot, '../..');
-
-const config = getDefaultConfig(projectRoot);
-
-config.watchFolders = [monorepoRoot];
-config.resolver.nodeModulesPaths = [
-  path.resolve(projectRoot, 'node_modules'),
-  path.resolve(monorepoRoot, 'node_modules'),
-];
-
-module.exports = config;
+module.exports = getDefaultConfig(__dirname);

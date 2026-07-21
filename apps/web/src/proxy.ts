@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 import { adminSecretConfigurado, autorizadoAdmin } from "@/server/auth/adminAuth";
 
-// O middleware faz duas coisas:
+// O proxy faz duas coisas:
 //   1. CSP completa com nonce por requisição em TODAS as rotas de documento
 //      (auditoria #34) — enforcing.
 //   2. Proteção do painel admin (/admin) por HTTP Basic Auth — só nesse prefixo.
@@ -18,7 +18,7 @@ export const config = {
 // script-src usa nonce por requisição + 'strict-dynamic': o Next lê o nonce do
 // header Content-Security-Policy da REQUISIÇÃO e o aplica automaticamente aos
 // seus próprios scripts de bootstrap/hidratação. style-src mantém 'unsafe-inline'
-// de propósito: next/font e estilos inline do React não recebem nonce de forma
+// de propósito: estilos inline do React não recebem nonce de forma
 // confiável, e injeção de estilo é risco muito menor que a de script. Sem
 // recursos externos no app (imagens, fontes, fetch são todos same-origin), então
 // default-src/img-src/font-src/connect-src ficam em 'self'.
@@ -74,7 +74,7 @@ async function protegerAdmin(req: NextRequest): Promise<NextResponse | null> {
   });
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   if (req.nextUrl.pathname.startsWith("/admin")) {
     const bloqueio = await protegerAdmin(req);
     if (bloqueio) return bloqueio;

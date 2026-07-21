@@ -4,14 +4,14 @@ import { listarCasas } from "@/server/modules/admin";
 import { requireAdmin } from "@/server/auth/requireAdmin";
 import { DeleteCasaButton } from "./delete-button.client";
 
-// Acesso protegido pelo middleware (Basic Auth via ADMIN_SECRET). Não usa a
+// Acesso protegido pelo proxy (Basic Auth via ADMIN_SECRET). Não usa a
 // sessão de casa do (app); fica fora daquele grupo de rotas de propósito.
 export const dynamic = "force-dynamic";
 
 async function excluirCasaAction(formData: FormData) {
   "use server";
   // Revalida a autorização por dentro da Action, não só no perímetro do
-  // middleware: exclusão de casa é destrutiva e global. (auditoria #70)
+  // proxy: exclusão de casa é destrutiva e global. (auditoria #70)
   await requireAdmin();
   const id = Number(formData.get("id"));
   if (Number.isInteger(id) && id > 0) {

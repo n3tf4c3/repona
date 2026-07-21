@@ -26,6 +26,10 @@ jobs:
       DATABASE_URL: "postgres://ci:ci@localhost:5432/ci"
       AUTH_SECRET: "ci-secret-apenas-para-build-0123456789abcdef"
       NEXTAUTH_SECRET: "ci-secret-apenas-para-build-0123456789abcdef"
+      INVITE_TOKEN_SECRET: "ci-invite-token-secret-0123456789abcdef"
+      ADMIN_SECRET: "ci-admin-secret-0123456789abcdef012345"
+      NEXTAUTH_URL: "https://ci.repona.invalid"
+      RATE_LIMIT_PEPPER: "ci-rate-limit-pepper-0123456789abcdef"
     steps:
       # Actions pinadas por SHA (o comentário registra a versão legível). Uma tag
       # como @v4 é móvel e pode ser reapontada para código malicioso; o SHA é
@@ -40,6 +44,9 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Validar contrato do ambiente de produção
+        run: npm run env:check:production
 
       # Scan de dependências: gate bloqueante em HIGH+ (inclui critical). Os três
       # advisories high (js-yaml, brace-expansion, shell-quote) foram fechados por
