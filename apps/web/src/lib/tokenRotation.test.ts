@@ -58,7 +58,7 @@ test("resposta perdida preserva id+verifier e retry promove o mesmo token", asyn
   });
 });
 
-test("localStorage persiste somente mode/id/verifier para legados 8/12 e atual", async () => {
+test("localStorage nunca persiste o bearer; sourceProof só para 12/26 (não para 8)", async () => {
   await withFixedUuid(async () => {
     for (const source of ["2".repeat(8), "3".repeat(12), CURRENT]) {
       const storage = new MemoryStorage();
@@ -67,7 +67,14 @@ test("localStorage persiste somente mode/id/verifier para legados 8/12 e atual",
         Response.json({ token: "B".repeat(26), casaId: 7, credentialVersion: 1 })
       );
       const persisted = JSON.parse([...storage.values.values()][0]) as Record<string, unknown>;
-      assert.deepEqual(Object.keys(persisted).sort(), ["mode", "operationId", "verifier"]);
+      // O bearer de 8 chars (~40 bits) nunca ganha proof persistido (viraria oracle
+      // offline); 12/26 chars recebem o digest contextual sourceProof. (tokenRotation.ts)
+      const expectedKeys =
+        source.length === 8
+          ? ["mode", "operationId", "verifier"]
+          : ["mode", "operationId", "sourceProof", "verifier"];
+      assert.deepEqual(Object.keys(persisted).sort(), expectedKeys);
+      // Propriedade central: o token bruto nunca é persistido, em nenhum caso.
       assert.equal(JSON.stringify(persisted).includes(source), false);
       acknowledgeTokenRotation(result.operation, storage);
     }
