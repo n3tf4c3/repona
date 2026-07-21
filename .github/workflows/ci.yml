@@ -41,14 +41,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Scan de dependências: reporta advisories high/critical no log do CI. Não
-      # bloqueia por enquanto (continue-on-error) porque há uma critica transitiva
-      # conhecida no tooling de build do Expo (node-tar, via @expo/cli), cuja
-      # correcao depende do upgrade de Expo tratado no #35. Ao limpar o #35,
-      # remover o continue-on-error para o scan virar gate. (auditoria #96, #35)
-      - name: Audit (high+critical, report-only)
-        continue-on-error: true
-        run: npm audit --audit-level=high
+      # Scan de dependências: gate bloqueante em vulnerabilidade CRITICA. A critica
+      # transitiva do node-tar (via @expo/cli) foi resolvida pelo patch expo
+      # 54.0.36 (#35), entao o gate pode bloquear. Advisories high/moderate
+      # remanescentes dependem de majors planejados (next-auth->uuid etc.); quando
+      # o #35 subir esses majors, apertar para --audit-level=high. (auditoria #96, #35)
+      - name: Audit (critical)
+        run: npm audit --audit-level=critical
 
       - name: Lint
         run: npm run lint
