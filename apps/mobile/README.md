@@ -113,6 +113,22 @@ Para abrir direto no Android:
 npm run android
 ```
 
+### Ambientes da API
+
+O app exige `EXPO_PUBLIC_APP_ENV` e `EXPO_PUBLIC_API_BASE_URL`; a inicialização
+falha se qualquer uma faltar. Perfis `development` e `preview` também são
+impedidos de apontar para a API de produção.
+
+- `development`: API local no emulador Android (`http://10.0.2.2:3000`).
+- `preview`: build interno/local-only. Enquanto não existe backend de staging, a
+  URL usa o domínio reservado `repona-preview.invalid`, portanto a sincronização
+  remota não funciona e o perfil nunca cai silenciosamente em produção.
+- `production`: `https://repona.vercel.app`.
+
+Ao usar `expo start` fora dos perfis EAS, defina as duas variáveis para o backend
+local desejado. Em dispositivo físico, use o IP da máquina na rede em vez de
+`10.0.2.2`.
+
 ## Documentacao
 
 - [Backlog](docs/BACKLOG.md): lista de funcionalidades e tarefas.

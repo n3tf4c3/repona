@@ -13,7 +13,7 @@
     "test": "tsx --test \"src/**/*.test.ts\"",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). As migrations 0000_* sao historicas e estao desatualizadas.'); process.exit(1)\"",
+    "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). O baseline 0000_* e reproduzivel, mas nao e o journal autoritativo do banco existente.'); process.exit(1)\"",
     "casas": "node scripts/casas.mjs",
     "merge-produtos": "node scripts/merge-produtos.mjs",
     "rate-limit:limpar": "node scripts/limpar-rate-limit-legado.mjs"
