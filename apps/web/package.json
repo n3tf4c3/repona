@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\" && node --test scripts/mergeProdutosPlan.test.mjs",
+    "test": "tsx --test \"src/**/*.test.ts\" && node --test scripts/mergeProdutosPlan.test.mjs scripts/privateBackup.test.mjs",
     "env:check": "node scripts/env-check.mjs",
     "env:check:production": "node scripts/env-check.mjs --production",
     "db:push": "drizzle-kit push --config drizzle.config.ts",

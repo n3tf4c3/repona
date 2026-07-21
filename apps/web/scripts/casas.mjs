@@ -16,10 +16,10 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 import { neon } from "@neondatabase/serverless";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
+import { ensurePrivateDirectorySync, writePrivateFileSync } from "./privateBackup.mjs";
 import { parseDatabaseUrl } from "../env-schema.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
@@ -127,15 +127,15 @@ async function exportar(ref) {
     shopping_list_items: await sql`SELECT * FROM shopping_list_items WHERE casa_id = ${id} ORDER BY id`,
   };
 
-  // O dump traz dados da casa e o blob cifrado da credencial em JSON claro. Cria o
-  // diretorio e o arquivo com permissao restritiva (dono apenas, ~0700/0600) para
-  // nao herdar ACL de leitura ampla. Em Windows o modo POSIX e best-effort; ainda
-  // assim mantenha o backup fora de compartilhamentos/backups. (auditoria #85)
+  // O dump traz dados da casa e o blob cifrado da credencial em JSON claro. O
+  // helper aplica e VERIFICA 0700/0600 em POSIX; no Windows substitui a DACL por
+  // usuario atual + SYSTEM + Administradores, sem heranca. Falha antes de manter
+  // o arquivo se nao conseguir comprovar a protecao. (auditoria #85)
   const dir = resolve(aqui, "../backups");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  ensurePrivateDirectorySync(dir);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const file = resolve(dir, `casa-${casa.id}-${stamp}.json`);
-  writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
+  writePrivateFileSync(file, JSON.stringify(dump, null, 2));
 
   console.log(`Backup de #${casa.id} "${limpar(casa.name)}" salvo em:`);
   console.log(`  ${file}`);

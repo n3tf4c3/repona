@@ -10,12 +10,12 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 
 import { neon } from "@neondatabase/serverless";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDatabaseUrl } from "../env-schema.mjs";
 import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 import { construirPlanoMerge } from "./mergeProdutosPlan.mjs";
+import { ensurePrivateDirectorySync, writePrivateFileSync } from "./privateBackup.mjs";
 import { casaMutationLockStatement } from "../casa-mutation-lock.mjs";
 import {
   construirExpectativaMerge,
@@ -217,13 +217,13 @@ function salvarBackup(casa, plan, state) {
     product_sync_aliases: state.aliases,
   };
   const dir = resolve(aqui, "../backups");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  ensurePrivateDirectorySync(dir);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const file = resolve(
     dir,
     `merge-${casa.id}-${plan.duplicate.id}-into-${plan.canonical.id}-${stamp}.json`
   );
-  writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
+  writePrivateFileSync(file, JSON.stringify(dump, null, 2));
   console.log(`\nBackup salvo em:\n  ${file}`);
   console.log("  AVISO: contem dados da casa em texto claro.");
   console.log("  Guarde fora de compartilhamentos/backups e apague quando nao precisar mais.");
