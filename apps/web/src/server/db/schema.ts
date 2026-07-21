@@ -100,6 +100,33 @@ export const products = pgTable(
   ]
 );
 
+// Identidades de produto aposentadas por merge administrativo. Um aparelho que
+// ficou offline ainda pode reenviar o sync_id antigo; o merge de sync consulta
+// esta tabela e encaminha o snapshot/eventos para o produto canônico, em vez de
+// recriar a duplicata. A FK composta mantém alias e produto na mesma casa.
+// (auditoria #86)
+export const productSyncAliases = pgTable(
+  "product_sync_aliases",
+  {
+    id: serial("id").primaryKey(),
+    casaId: integer("casa_id")
+      .notNull()
+      .references(() => casas.id, { onDelete: "cascade" }),
+    oldSyncId: uuid("old_sync_id").notNull(),
+    canonicalProductId: integer("canonical_product_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("product_sync_aliases_casa_old_unique").on(table.casaId, table.oldSyncId),
+    index("product_sync_aliases_canonical_idx").on(table.canonicalProductId),
+    foreignKey({
+      columns: [table.canonicalProductId, table.casaId],
+      foreignColumns: [products.id, products.casaId],
+      name: "product_sync_aliases_product_casa_fk",
+    }).onDelete("cascade"),
+  ]
+);
+
 export const shoppingLists = pgTable(
   "shopping_lists",
   {
