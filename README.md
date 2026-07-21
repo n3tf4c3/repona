@@ -55,6 +55,18 @@ projeto). **Não use `db:migrate`** — o script está desativado. O baseline
 npm run db:push --workspace apps/web
 ```
 
+Ao atualizar um banco que ja possui dados para a versao com sync v2, rode tambem
+o backfill idempotente (primeiro apenas conta, depois aplica):
+
+```bash
+npm run sync-v2:backfill -w web
+npm run sync-v2:backfill -w web -- --yes
+```
+
+O `db:push` aplica DDL, mas nao executa os backfills de eventos escritos nas
+migrations SQL. Veja o procedimento completo em
+`docs/auditoria-rollout-2026-07-21.md`.
+
 ## Merge administrativo de produtos
 
 O merge sempre começa em modo de simulação e imprime o plano completo. Ele usa

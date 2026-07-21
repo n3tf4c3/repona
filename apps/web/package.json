@@ -18,7 +18,8 @@
     "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). O baseline 0000_* e reproduzivel, mas nao e o journal autoritativo do banco existente.'); process.exit(1)\"",
     "casas": "node scripts/casas.mjs",
     "merge-produtos": "node scripts/merge-produtos.mjs",
-    "rate-limit:limpar": "node scripts/limpar-rate-limit-legado.mjs"
+    "rate-limit:limpar": "node scripts/limpar-rate-limit-legado.mjs",
+    "sync-v2:backfill": "node scripts/backfill-sync-v2.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

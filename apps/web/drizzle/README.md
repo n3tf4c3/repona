@@ -32,3 +32,18 @@ O CI (job `db-schema`) garante que a cadeia não fica defasada:
 Sempre que mudar o `schema.ts`: rode `npm run db:push -w web` (aplica no banco) e
 `npm run db:generate -w web` (gera a próxima migration). Não rode `db:migrate`
 contra o banco existente, cujo journal histórico não foi retroalimentado.
+
+## Upgrade de dados do sync v2
+
+Em um banco existente, `db:push` cria colunas/indices/tabelas, mas nao executa os
+backfills de dados escritos em `0002_early_doorman.sql`. Depois do `db:push` e
+antes de publicar o runtime novo, execute primeiro o dry-run e depois a aplicacao:
+
+```bash
+npm run sync-v2:backfill -w web
+npm run sync-v2:backfill -w web -- --yes
+```
+
+O script e idempotente, imprime somente contagens, usa advisory lock transacional
+e reverifica zero antes do commit. Ele preenche `sync_id` legado e cria o baseline
+de estoque com a identidade estavel do produto, igual em todos os aparelhos.
