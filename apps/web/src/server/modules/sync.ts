@@ -49,12 +49,16 @@ type Escrita = Parameters<typeof db.batch>[0][number];
 // só os produtos novos persistem, e o retry os reconcilia por syncId (o merge é
 // idempotente). O lock por casa na rota já impede merges concorrentes.
 //
-// (auditoria #26, ABERTO/aceito) O estado parcial — produto novo sem o resto do
-// merge — é auto-curável: o próximo sync casa por syncId e completa, e nada fica
-// quebrado (o snapshot/listagem fazem coalesce do estoque ausente). Eliminar de
-// vez o parcial exigiria transação interativa (indisponível no driver neon-http)
-// ou reescrever o merge em CTEs resolvendo ids gerados — risco alto para um
-// caminho já idempotente. Mantido aceito; revisitar se trocarmos de driver.
+// (auditoria #26) Se o batch falha depois de o produto novo já ter sido inserido
+// individualmente, o retry casa por syncId, mas o updatedAt empata e o LWW
+// rejeita o produto — antes o `continue` pulava JUNTO o upsert de estoque, e o
+// produto podia ficar sem estoque na nuvem indefinidamente (não era auto-curável
+// por retry, ao contrário do que se supunha). Contenção: no caminho de LWW-reject
+// enfileiramos um insert de estoque idempotente (ON CONFLICT DO NOTHING) que
+// preenche a linha ausente sem tocar estoque vivo. Eliminar de vez o parcial
+// exigiria transação interativa (indisponível no driver neon-http) ou reescrever
+// o merge em CTEs resolvendo ids gerados (redesenho de idempotência do sync, com
+// #22/#90) — fora do escopo desta contenção.
 export async function mergeCasaSnapshot(
   casaId: number,
   incoming: SyncSnapshot
@@ -110,6 +114,18 @@ export async function mergeCasaSnapshot(
       const info = infoPorId.get(match.id)!;
       // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
       if (!shouldApplyIncoming(prod.updatedAt, info.updatedAt.toISOString())) {
+        // Contenção #26: se um merge anterior inseriu o produto mas o batch
+        // falhou antes do estoque, o inventory_items pode estar AUSENTE. No
+        // retry o updatedAt empata, o LWW rejeita e o `continue` pulava também o
+        // upsert de estoque — o produto ficava sem estoque na nuvem até outra
+        // mutação. Enfileira um insert idempotente que só preenche a linha
+        // ausente (ON CONFLICT DO NOTHING) sem sobrescrever estoque vivo.
+        escritas.push(
+          db
+            .insert(inventoryItems)
+            .values({ productId: match.id, quantity: prod.inventoryQuantity, status: prod.inventoryStatus })
+            .onConflictDoNothing({ target: inventoryItems.productId })
+        );
         continue;
       }
       // Renomeia só se o novo nome não pertence a outro produto (evita violar a
