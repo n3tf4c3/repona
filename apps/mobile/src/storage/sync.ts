@@ -2,6 +2,8 @@ import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, shouldApplyIncom
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 
+export { parseSyncSnapshot } from './syncSnapshot';
+
 // Compras/consumos mais antigos que isto ficam fora do snapshot enviado. O
 // histórico local e o da nuvem permanecem completos (o merge nunca apaga e o
 // dedupe ignora o que não viaja); a janela só impede que o acúmulo append-only
@@ -149,59 +151,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
 // Aplica o snapshot mesclado vindo da nuvem no SQLite local. Nunca apaga:
 // produtos são upsert por nome, compras e consumos entram só se ainda não
 // existirem (dedupe por produto+instante+quantidade).
-// Validação de runtime do snapshot recebido da nuvem (auditoria #83). O apply
-// insere/atualiza direto no SQLite confiando no shape; uma resposta malformada
-// (servidor com bug, proxy, corpo corrompido) inseriria lixo ou lançaria no meio
-// da transação. Aqui checamos estrutura e tipos dos campos que o apply lê; um
-// snapshot inválido é rejeitado antes de tocar o banco. Sem zod — o core é puro
-// e não vale adicionar a dependência ao mobile só por isto.
-function isObj(x: unknown): x is Record<string, unknown> {
-  return typeof x === 'object' && x !== null;
-}
-function isStr(x: unknown): x is string {
-  return typeof x === 'string';
-}
-function isFiniteNum(x: unknown): x is number {
-  return typeof x === 'number' && Number.isFinite(x);
-}
-function validProduct(p: unknown): boolean {
-  return (
-    isObj(p) &&
-    isStr(p.name) &&
-    isStr(p.category) &&
-    isStr(p.status) &&
-    isStr(p.inventoryQuantity) &&
-    isStr(p.inventoryStatus) &&
-    isFiniteNum(p.purchaseCount)
-  );
-}
-function validPurchase(e: unknown): boolean {
-  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.purchasedAt);
-}
-function validConsumption(e: unknown): boolean {
-  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.occurredAt);
-}
-function validPrice(e: unknown): boolean {
-  return isObj(e) && isStr(e.productName) && isFiniteNum(e.priceCents) && isStr(e.recordedAt);
-}
-function validListItem(e: unknown): boolean {
-  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.updatedAt);
-}
-
-// Valida o snapshot recebido e o devolve tipado, ou null se estiver malformado.
-export function parseSyncSnapshot(raw: unknown): SyncSnapshot | null {
-  if (!isObj(raw)) return null;
-  const { products, purchases, consumptions, prices, listItems } = raw;
-  if (![products, purchases, consumptions, prices].every(Array.isArray)) return null;
-  if (listItems !== undefined && !Array.isArray(listItems)) return null;
-  if (!(products as unknown[]).every(validProduct)) return null;
-  if (!(purchases as unknown[]).every(validPurchase)) return null;
-  if (!(consumptions as unknown[]).every(validConsumption)) return null;
-  if (!(prices as unknown[]).every(validPrice)) return null;
-  if (listItems && !(listItems as unknown[]).every(validListItem)) return null;
-  return raw as unknown as SyncSnapshot;
-}
-
+// O caller valida a resposta remota com parseSyncSnapshot antes de chegar aqui.
 export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
   const database = await initializeDatabase();
   const now = new Date().toISOString();

@@ -5,6 +5,7 @@ import { getSetting, setSetting, deleteSetting } from './settings';
 import { buildLocalSnapshot, applySnapshot, parseSyncSnapshot } from './sync';
 import { setActiveScope, deleteScopeDatabase } from './database';
 import { resolveCreateOperationId, resolveDeleteOperation } from './accountOperations';
+import { captureUnexpectedResult } from './resultBoundary';
 
 const CASA_CODE_KEY = 'casa_code';
 // casaId da casa pareada (auditoria #68): determina qual arquivo SQLite abrir, por
@@ -87,7 +88,7 @@ async function setActiveCasaId(casaId: number): Promise<void> {
 async function getActiveCasaId(): Promise<number | null> {
   const raw = await SecureStore.getItemAsync(ACTIVE_CASA_ID_KEY);
   const n = raw ? Number(raw) : NaN;
-  return Number.isInteger(n) ? n : null;
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 // Restaura o arquivo SQLite ativo a partir do casaId pareado. Deve rodar no
@@ -142,7 +143,11 @@ export async function unpairCasa(): Promise<void> {
 
 // Envia o snapshot local e aplica o snapshot mesclado que a nuvem devolve.
 // O escopo já é o da casa ativa; build e apply operam no arquivo dela.
-export async function syncNow(): Promise<SyncResult> {
+export function syncNow(): Promise<SyncResult> {
+  return captureUnexpectedResult(syncNowUnsafe, () => ({ ok: false, error: 'SERVER' }));
+}
+
+async function syncNowUnsafe(): Promise<SyncResult> {
   const code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   let snapshot: SyncSnapshot;
@@ -167,7 +172,11 @@ const NOME_PADRAO = 'Minha casa';
 // Cria a conta na nuvem e devolve o token gerado, que fica salvo e é a
 // credencial usada para acessar pelo web. Já faz a primeira sincronização.
 // Sem parâmetros: o nome é automático (NOME_PADRAO) para o fluxo ser um toque só.
-export async function criarConta(): Promise<SyncResult> {
+export function criarConta(): Promise<SyncResult> {
+  return captureUnexpectedResult(criarContaUnsafe, () => ({ ok: false, error: 'SERVER' }));
+}
+
+async function criarContaUnsafe(): Promise<SyncResult> {
   // Cria a conta e MIGRA os dados locais (scratch) para ela: o snapshot local
   // atual vira o conteúdo inicial da casa nova. É dado do próprio usuário indo
   // para a própria conta nova — não é cruzamento entre casas. (auditoria #68)
@@ -212,7 +221,8 @@ export async function criarConta(): Promise<SyncResult> {
     typeof token !== 'string' ||
     !CASA_CODE_REGEX.test(token) ||
     typeof casaId !== 'number' ||
-    !Number.isInteger(casaId)
+    !Number.isSafeInteger(casaId) ||
+    casaId <= 0
   ) {
     // Mantém a operação pendente: um retry obtém o resultado memoizado correto.
     return { ok: false, error: 'SERVER' };
@@ -240,7 +250,11 @@ export async function criarConta(): Promise<SyncResult> {
 // troca para o arquivo da casa e aplica lá. Nenhum dado cruza de conta. O token
 // e o casaId só são persistidos se o pull der certo, para falha de rede/servidor
 // não deixar o app "pareado" sem nunca ter sincronizado. (auditoria #68)
-export async function pairAndSync(code: string): Promise<SyncResult> {
+export function pairAndSync(code: string): Promise<SyncResult> {
+  return captureUnexpectedResult(() => pairAndSyncUnsafe(code), () => ({ ok: false, error: 'SERVER' }));
+}
+
+async function pairAndSyncUnsafe(code: string): Promise<SyncResult> {
   const normalized = code.trim().toUpperCase();
   if (!CASA_CODE_REGEX.test(normalized)) return { ok: false, error: 'INVALID_CODE' };
 
@@ -255,7 +269,11 @@ export async function pairAndSync(code: string): Promise<SyncResult> {
 // Exclui a conta na nuvem (todos os dados, para todos os aparelhos com este
 // token) e desconecta este aparelho. Os dados locais permanecem. (exigência da
 // Play: exclusão de conta self-service)
-export async function excluirConta(): Promise<DeleteResult> {
+export function excluirConta(): Promise<DeleteResult> {
+  return captureUnexpectedResult(excluirContaUnsafe, () => ({ ok: false, error: 'SERVER' }));
+}
+
+async function excluirContaUnsafe(): Promise<DeleteResult> {
   const code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   const casaId = await getActiveCasaId();
@@ -325,7 +343,7 @@ async function postSync(code: string, snapshot: SyncSnapshot): Promise<PostSyncR
   // Resposta corrompida/inesperada não deve tocar o SQLite. (auditoria #83)
   const merged = parseSyncSnapshot(data);
   const casaId = isRecord(data) ? data.casaId : undefined;
-  if (!merged || typeof casaId !== 'number' || !Number.isInteger(casaId)) {
+  if (!merged || typeof casaId !== 'number' || !Number.isSafeInteger(casaId) || casaId <= 0) {
     return { ok: false, error: 'SERVER' };
   }
   return { ok: true, casaId, merged };
