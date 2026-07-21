@@ -21,12 +21,9 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 import { neon } from "@neondatabase/serverless";
+import { parseDatabaseUrl } from "../env-schema.mjs";
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
-  process.exit(1);
-}
-const sql = neon(process.env.DATABASE_URL);
+const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
 
 const confirmado = process.argv.slice(2).includes("--yes");
 

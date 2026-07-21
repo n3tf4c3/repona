@@ -3,15 +3,12 @@
 // construção (versão, infos de HKDF, derivação do IV) para interoperar com a
 // app — os scripts admin e a migração de backfill precisam casar byte-a-byte.
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync } from "node:crypto";
+import { parseInviteTokenSecret } from "../env-schema.mjs";
 
 const VERSAO = "v1";
 
 function segredo() {
-  const s = process.env.INVITE_TOKEN_SECRET;
-  if (!s || s.length < 16) {
-    throw new Error("INVITE_TOKEN_SECRET ausente ou curto (>= 16 chars).");
-  }
-  return Buffer.from(s, "utf8");
+  return Buffer.from(parseInviteTokenSecret(process.env.INVITE_TOKEN_SECRET), "utf8");
 }
 
 function derivar(info) {

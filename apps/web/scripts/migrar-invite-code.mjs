@@ -15,16 +15,10 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 import { neon } from "@neondatabase/serverless";
 import { cifrarCodigo } from "./inviteToken.mjs";
+import { parseDatabaseUrl, parseInviteTokenSecret } from "../env-schema.mjs";
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
-  process.exit(1);
-}
-if (!process.env.INVITE_TOKEN_SECRET) {
-  console.error("INVITE_TOKEN_SECRET ausente. Defina o mesmo segredo que o app usará.");
-  process.exit(1);
-}
-const sql = neon(process.env.DATABASE_URL);
+const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
+parseInviteTokenSecret(process.env.INVITE_TOKEN_SECRET);
 const confirmado = process.argv.slice(2).includes("--yes");
 
 async function colunaExiste(nome) {

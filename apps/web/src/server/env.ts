@@ -1,106 +1,63 @@
 import "server-only";
-import { z } from "zod";
+import {
+  parseAuthSecret,
+  parseDatabaseUrl,
+  parseInviteTokenSecret,
+  parseNextAuthOrigin,
+  parseRateLimitPepper,
+} from "../../env-schema.mjs";
 
-// Ponto único de leitura/validação das variáveis de ambiente sensíveis do
-// servidor (auditoria #89). Antes cada módulo lia process.env com regras próprias
-// e dispersas; aqui a regra de cada segredo fica num só lugar, com mensagem
-// consistente e sem valores no erro.
-//
-// Superfície completa de env crítica e onde é validada:
-//   - DATABASE_URL        -> databaseUrl() (aqui)  | tooling: drizzle.config.ts
-//   - AUTH_SECRET /
-//     NEXTAUTH_SECRET     -> authSecret() (aqui)
-//   - INVITE_TOKEN_SECRET -> inviteTokenSecret() (aqui)
-//   - NEXTAUTH_URL        -> nextauthOrigin() (aqui)
-//   - RATE_LIMIT_PEPPER   -> rateLimitPepper() (aqui, opcional)
-//   - ADMIN_SECRET        -> server/auth/adminAuth.ts (precisa ser Edge-safe,
-//                            usado pelo middleware; não pode importar este módulo
-//                            server-only). É a única leitura direta de process.env
-//                            que sobra, por essa restrição de runtime.
-//
-// A validação é PREGUIÇOSA e por campo: só dispara quando o consumidor lê aquele
-// valor, para não exigir todas as variáveis durante o build/dev parcial nem
-// falhar no import (o mesmo motivo pelo qual os módulos originais liam em
-// runtime). Cada resultado é memoizado.
+// Adaptador server-only para o contrato puro de env. As regras vivem em
+// env-schema.mjs e são as mesmas usadas pelo middleware Edge, Drizzle, CLIs e
+// pelo comando env:check. A leitura continua preguiçosa para o build do Next não
+// exigir credenciais durante a análise estática; o deploy valida o conjunto
+// completo explicitamente com `npm run env:check`. (auditoria #89)
 
-// Mínimo de 32 chars para segredos gerados (auditoria #89): material de chave
-// abaixo disso é fraco para os usos criptográficos (assinatura de sessão, cifra
-// do token da casa em repouso). Segredos padrão (openssl rand -base64 32 -> 44
-// chars) já satisfazem; um valor curto herdado deve ser rotacionado.
-const secretSchema = z.string().min(32, "defina um segredo aleatório (>= 32 chars)");
-const urlSchema = z.string().url();
-
-function validar<T>(schema: z.ZodType<T>, valor: unknown, nome: string, dica: string): T {
-  const r = schema.safeParse(valor);
-  if (!r.success) throw new Error(`${nome} ausente ou inválido: ${dica}`);
-  return r.data;
-}
-
-let _databaseUrl: string | undefined;
+let cachedDatabaseUrl: string | undefined;
 export function databaseUrl(): string {
-  if (_databaseUrl === undefined) {
-    _databaseUrl = validar(
-      urlSchema,
-      process.env.DATABASE_URL,
-      "DATABASE_URL",
-      "URL de conexão do Postgres (ex.: Neon)."
-    );
+  if (cachedDatabaseUrl === undefined) {
+    cachedDatabaseUrl = parseDatabaseUrl(process.env.DATABASE_URL);
   }
-  return _databaseUrl;
+  return cachedDatabaseUrl;
 }
 
-let _authSecret: string | undefined;
+let cachedAuthSecret: string | undefined;
 export function authSecret(): string {
-  if (_authSecret === undefined) {
-    // AUTH_SECRET é o canônico; NEXTAUTH_SECRET é o alias aceito pela Vercel/
-    // NextAuth (mesmo valor). Basta um estar presente e forte.
-    _authSecret = validar(
-      secretSchema,
-      process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
-      "AUTH_SECRET/NEXTAUTH_SECRET",
-      "segredo do NextAuth para assinar a sessão (>= 32 chars)."
-    );
+  if (cachedAuthSecret === undefined) {
+    cachedAuthSecret = parseAuthSecret({
+      AUTH_SECRET: process.env.AUTH_SECRET,
+      NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
+    });
   }
-  return _authSecret;
+  return cachedAuthSecret;
 }
 
-let _inviteTokenSecret: string | undefined;
+let cachedInviteTokenSecret: string | undefined;
 export function inviteTokenSecret(): string {
-  if (_inviteTokenSecret === undefined) {
-    _inviteTokenSecret = validar(
-      secretSchema,
-      process.env.INVITE_TOKEN_SECRET,
-      "INVITE_TOKEN_SECRET",
-      "segredo para cifrar o token da casa em repouso (>= 32 chars)."
+  if (cachedInviteTokenSecret === undefined) {
+    cachedInviteTokenSecret = parseInviteTokenSecret(process.env.INVITE_TOKEN_SECRET);
+  }
+  return cachedInviteTokenSecret;
+}
+
+let cachedNextAuthOrigin: string | undefined;
+export function nextauthOrigin(): string {
+  if (cachedNextAuthOrigin === undefined) {
+    cachedNextAuthOrigin = parseNextAuthOrigin(
+      process.env.NEXTAUTH_URL,
+      process.env.NODE_ENV
     );
   }
-  return _inviteTokenSecret;
+  return cachedNextAuthOrigin;
 }
 
-// Origem pública do app (NEXTAUTH_URL), usada para validar Origin em rotas de
-// navegador (auditoria #91). Fail-closed suave: ausente/malformada -> null, para
-// o consumidor negar a requisição em vez de derrubar o handler. Memoizado.
-let _nextauthOrigin: string | null | undefined;
-export function nextauthOrigin(): string | null {
-  if (_nextauthOrigin === undefined) {
-    const raw = process.env.NEXTAUTH_URL;
-    try {
-      _nextauthOrigin = raw ? new URL(raw).origin : null;
-    } catch {
-      _nextauthOrigin = null;
-    }
-  }
-  return _nextauthOrigin;
-}
-
-// Pepper dedicado do rate limit (auditoria #43), opcional: quando ausente/curto,
-// devolve null e o consumidor deriva o material de INVITE_TOKEN_SECRET via HKDF.
-// Memoizado.
-let _rateLimitPepper: string | null | undefined;
+// O pepper dedicado é opcional: ausente, rateLimitToken deriva material separado
+// de INVITE_TOKEN_SECRET via HKDF. Se estiver definido, porém, precisa satisfazer
+// o mesmo mínimo de 32 caracteres; valor curto não é mais ignorado em silêncio.
+let cachedRateLimitPepper: string | null | undefined;
 export function rateLimitPepper(): string | null {
-  if (_rateLimitPepper === undefined) {
-    const raw = process.env.RATE_LIMIT_PEPPER;
-    _rateLimitPepper = raw && raw.length >= 16 ? raw : null;
+  if (cachedRateLimitPepper === undefined) {
+    cachedRateLimitPepper = parseRateLimitPepper(process.env.RATE_LIMIT_PEPPER);
   }
-  return _rateLimitPepper;
+  return cachedRateLimitPepper;
 }

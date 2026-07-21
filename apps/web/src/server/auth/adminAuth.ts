@@ -7,6 +7,8 @@
 // Action destrutiva revalida por dentro, sem depender só do perímetro de rota.
 // (auditoria #70)
 
+import { parseAdminSecret } from "../../../env-schema.mjs";
+
 // Comparação de tempo constante: o comprimento pode curto-circuitar (revela só o
 // tamanho da tentativa, não do segredo), o resto não vaza por timing.
 function constEq(a: string, b: string): boolean {
@@ -16,17 +18,25 @@ function constEq(a: string, b: string): boolean {
   return diff === 0;
 }
 
-// True só quando ADMIN_SECRET está configurado com tamanho mínimo. Sem isso o
-// painel fica indisponível (503), nunca aberto.
+// Usa o mesmo schema puro do runtime/CLIs. Mantemos fail-closed no middleware:
+// configuração ausente/curta deixa o painel indisponível (503), enquanto o
+// `env:check` fornece o erro detalhado antes do deploy. (auditoria #89)
+function adminSecret(): string | null {
+  try {
+    return parseAdminSecret(process.env.ADMIN_SECRET);
+  } catch {
+    return null;
+  }
+}
+
 export function adminSecretConfigurado(): boolean {
-  const secret = process.env.ADMIN_SECRET;
-  return Boolean(secret && secret.length >= 16);
+  return adminSecret() !== null;
 }
 
 // Valida o header Authorization: Basic <base64(user:pass)> contra ADMIN_SECRET.
 export function autorizadoAdmin(authorizationHeader: string | null): boolean {
-  const secret = process.env.ADMIN_SECRET;
-  if (!secret || secret.length < 16) return false;
+  const secret = adminSecret();
+  if (!secret) return false;
 
   const [scheme, encoded] = (authorizationHeader ?? "").split(" ");
   if (scheme !== "Basic" || !encoded) return false;

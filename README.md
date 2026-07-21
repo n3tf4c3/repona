@@ -28,11 +28,22 @@ npm run typecheck  # typecheck de todos os workspaces
 Copie `apps/web/.env.example` para `apps/web/.env.local` e preencha:
 
 - `DATABASE_URL` — conexão Neon/PostgreSQL
-- `AUTH_SECRET` (e `NEXTAUTH_SECRET` com o mesmo valor) — segredo do NextAuth
-- `NEXTAUTH_URL` — `http://localhost:3000` em dev
-- `INVITE_TOKEN_SECRET` — segredo para cifrar o token da casa em repouso
-- `ADMIN_SECRET` — senha do Basic Auth do painel `/admin`; sem ela o painel
+- `AUTH_SECRET` (e `NEXTAUTH_SECRET`, se definido, com o mesmo valor) — segredo
+  do NextAuth com no mínimo 32 caracteres
+- `NEXTAUTH_URL` — `http://localhost:3000` em dev e obrigatoriamente HTTPS em produção
+- `INVITE_TOKEN_SECRET` — segredo de no mínimo 32 caracteres para cifrar o token
+  da casa em repouso
+- `ADMIN_SECRET` — senha de no mínimo 32 caracteres do Basic Auth do painel `/admin`; sem ela o painel
   responde 503 (fail-closed)
+- `RATE_LIMIT_PEPPER` — opcional, com no mínimo 32 caracteres; quando ausente é
+  derivado de `INVITE_TOKEN_SECRET` via HKDF
+
+Valide o conjunto completo sem abrir conexão nem exibir valores sensíveis:
+
+```bash
+npm run env:check                 # ambiente local/teste
+npm run env:check:production      # exige NEXTAUTH_URL com HTTPS
+```
 
 Com o banco configurado, aplique o schema com `db:push` (fluxo canônico do
 projeto). **Não use `db:migrate`** — o script está desativado. O baseline
@@ -50,7 +61,8 @@ O projeto da Vercel deve apontar para o app web dentro do monorepo:
 
 1. **Settings → General → Root Directory** = `apps/web`.
 2. **Settings → Environment Variables**: defina `DATABASE_URL`, `AUTH_SECRET`,
-   `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (a URL do deploy), `INVITE_TOKEN_SECRET` e
-   `ADMIN_SECRET` (senha do painel `/admin`).
+   `NEXTAUTH_SECRET` (mesmo valor de `AUTH_SECRET`), `NEXTAUTH_URL` (HTTPS do
+   deploy), `INVITE_TOKEN_SECRET`, `ADMIN_SECRET` e, opcionalmente,
+   `RATE_LIMIT_PEPPER`.
 3. Build/Install commands: padrão — a Vercel detecta os workspaces, instala na raiz
    e builda em `apps/web`.

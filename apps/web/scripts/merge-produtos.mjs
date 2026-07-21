@@ -22,6 +22,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
+import { parseDatabaseUrl } from "../env-schema.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 
@@ -39,11 +40,7 @@ function limpar(valor) {
   });
 }
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL ausente. Configure apps/web/.env.local.");
-  process.exit(1);
-}
-const sql = neon(process.env.DATABASE_URL);
+const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
 
 const [casaRef, dupRef, canonRef, ...rest] = process.argv.slice(2);
 const confirmado = rest.includes("--yes");

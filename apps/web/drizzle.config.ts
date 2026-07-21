@@ -1,15 +1,13 @@
 import { config } from "dotenv";
 import { defineConfig } from "drizzle-kit";
+import { parseDatabaseUrl } from "./env-schema.mjs";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-  throw new Error(
-    "DATABASE_URL ausente. Defina a conexão (ex.: Neon) em .env.local antes de rodar comandos do Drizzle."
-  );
-}
+// Mesma regra do runtime e dos CLIs: além de existir, precisa ser uma URL
+// postgres:// ou postgresql://. (auditoria #89)
+const url = parseDatabaseUrl(process.env.DATABASE_URL);
 
 export default defineConfig({
   schema: "./src/server/db/schema.ts",

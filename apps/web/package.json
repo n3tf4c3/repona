@@ -11,6 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
+    "env:check": "node scripts/env-check.mjs",
+    "env:check:production": "node scripts/env-check.mjs --production",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). O baseline 0000_* e reproduzivel, mas nao e o journal autoritativo do banco existente.'); process.exit(1)\"",

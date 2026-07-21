@@ -12,6 +12,8 @@
     "mobile": "npm run start --workspace apps/mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present"
+    "lint": "npm run lint --workspaces --if-present",
+    "env:check": "npm run env:check --workspace apps/web",
+    "env:check:production": "npm run env:check:production --workspace apps/web"
   }
 }
