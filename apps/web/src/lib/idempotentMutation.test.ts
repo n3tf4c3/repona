@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   clearOperationId,
   getOrCreateOperationId,
+  readOperationId,
   type OperationStorage,
 } from "./idempotentMutation";
 
@@ -31,4 +32,12 @@ test("estado inválido nunca vira Idempotency-Key", () => {
   const storage = fakeStorage();
   storage.setItem("repona:pending-operation:finalize", "corrompido");
   assert.equal(getOrCreateOperationId("finalize", storage, () => UUID_A), UUID_A);
+});
+
+test("leitura de recovery aceita somente operationId válida", () => {
+  const storage = fakeStorage();
+  storage.setItem("repona:pending-operation:rotate", UUID_A);
+  assert.equal(readOperationId("rotate", storage), UUID_A);
+  storage.setItem("repona:pending-operation:rotate", "invalida");
+  assert.equal(readOperationId("rotate", storage), null);
 });

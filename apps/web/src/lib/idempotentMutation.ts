@@ -20,3 +20,8 @@ export function getOrCreateOperationId(
 export function clearOperationId(key: string, storage: OperationStorage): void {
   storage.removeItem(`${PREFIX}${key}`);
 }
+
+export function readOperationId(key: string, storage: OperationStorage): string | null {
+  const stored = storage.getItem(`${PREFIX}${key}`);
+  return stored && UUID_RE.test(stored) ? stored : null;
+}

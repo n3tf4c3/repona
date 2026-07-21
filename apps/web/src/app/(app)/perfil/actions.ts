@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireCasa } from "@/server/auth/session";
-import { excluirCasa, regenerarCodigo, renomearCasa } from "@/server/modules/casa";
+import { excluirCasa, renomearCasa } from "@/server/modules/casa";
 import {
   genericActionError,
   reportUnexpectedActionFailure,
@@ -23,22 +23,6 @@ async function tratar(action: string, error: unknown): Promise<{ ok: false; erro
   if (mensagem) return { ok: false, error: mensagem };
   const requestId = await reportUnexpectedActionFailure(action);
   return { ok: false, error: genericActionError(requestId) };
-}
-
-type RotacaoResultado = { ok: true; novoToken: string } | { ok: false; error: string };
-
-export async function regenerarCodigoAction(): Promise<RotacaoResultado> {
-  const { casaId } = await requireCasa();
-  try {
-    const { token } = await regenerarCodigo(casaId);
-    // NÃO revalidar /perfil aqui: a sessão atual ainda carrega a
-    // credentialVersion antiga e um re-render server-side cairia em requireCasa
-    // -> /login (lockout). O cliente reautentica com o novo token (nova sessão)
-    // e só então atualiza a tela. (auditoria #13)
-    return { ok: true, novoToken: token };
-  } catch (error) {
-    return tratar("casa.regenerar_codigo", error);
-  }
 }
 
 export async function excluirContaAction(): Promise<Resultado> {

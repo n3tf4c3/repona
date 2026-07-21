@@ -13,7 +13,11 @@ const recursos: { title: string; description: string; Icon: LucideIcon; status: 
   { title: "Ciclo de vida do item", description: "Planejado, comprado, consumido e em falta em um único fluxo.", Icon: RefreshCw, status: "app" },
 ];
 
-export default async function PerfilPage() {
+export default async function PerfilPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tokenAtualizado?: string }>;
+}) {
   const { casaId } = await requireCasa();
   const session = await getAuthSession();
   const casa = await obterCasaPorId(casaId);
@@ -40,7 +44,10 @@ export default async function PerfilPage() {
       </div>
 
       {/* Casa (token de acesso) */}
-      <CasaClient casa={casa} />
+      <CasaClient
+        casa={casa}
+        tokenAtualizado={(await searchParams).tokenAtualizado === "1"}
+      />
 
       {/* Hero */}
       <div className="rounded-card border border-line bg-primary-tint p-5">

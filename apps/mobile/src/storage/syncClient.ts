@@ -1,9 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
+import { getRandomBytesAsync, randomUUID as secureRandomUUID } from 'expo-crypto';
 import {
+  CASA_CODE_CURRENT_REGEX,
   CASA_CODE_REGEX,
   SYNC_COLLECTIONS,
   SYNC_PROTOCOL_VERSION,
   emptySyncSnapshot,
+  isLegacyCasaCode,
   syncCollectionSize,
   uuidv4,
   type SyncSnapshot,
@@ -19,7 +22,21 @@ import {
   parseSyncSnapshot,
 } from './sync';
 import { getActiveScope, setActiveScope, deleteScopeDatabase } from './database';
-import { resolveCreateOperationId, resolveDeleteOperation } from './accountOperations';
+import {
+  hasPendingDeleteOperation,
+  hasPendingTokenRotation,
+  pendingVerifiedOperationMatches,
+  parsePendingCreateAck,
+  pendingCreateAckMatches,
+  parseTokenRotationOperation,
+  resolveCreateOperation,
+  resolveDeleteOperation,
+  resolveTokenRotationOperation,
+  verifierFromRandomBytes,
+  type PendingTokenRotation,
+  type PendingVerifiedOperation,
+  type PendingCreateAck,
+} from './accountOperations';
 import { captureUnexpectedResult } from './resultBoundary';
 import {
   classifySyncV2HttpFailure,
@@ -54,8 +71,14 @@ import { createPromiseMutex } from './promiseMutex';
 import {
   resolveCreateAccountAction,
   resolvePairAccountAction,
+  resolveUnpairAccountAction,
 } from './accountFlowState';
-import { reportMobileUnexpectedFailure } from './mobileTelemetry';
+import {
+  reportMobileRemoteFailure,
+  reportMobileUnexpectedFailure,
+  type MobileOperation,
+} from './mobileTelemetry';
+import { planTokenMigrationPromotion } from './tokenMigrationState';
 
 const CASA_CODE_KEY = 'casa_code';
 // casaId da casa pareada (auditoria #68): determina qual arquivo SQLite abrir, por
@@ -65,11 +88,12 @@ const ACTIVE_CASA_ID_KEY = 'active_casa_id';
 const LAST_SYNC_KEY = 'last_sync_at';
 const CREATE_ACCOUNT_OPERATION_KEY = 'pending_create_account_operation_id';
 const DELETE_ACCOUNT_OPERATION_KEY = 'pending_delete_account_operation';
+const TOKEN_ROTATION_OPERATION_KEY = 'pending_token_rotation_v1';
 const SYNC_V2_SESSION_KEY = 'sync_v2_session_v1';
 const ACCOUNT_BINDING_KEY = 'account_binding_v1';
 const PENDING_CREATE_BINDING_KEY = 'pending_create_binding_v1';
 const PENDING_LOCAL_DELETE_KEY = 'pending_local_delete_v1';
-export const SYNC_V2_CLIENT_VERSION = '1.1.0';
+export const SYNC_V2_CLIENT_VERSION = '1.2.0';
 const runAccountOperation = createPromiseMutex();
 
 // Snapshot vazio: usado no pareamento para PUXAR os dados da casa sem ENVIAR
@@ -82,6 +106,7 @@ const runAccountOperation = createPromiseMutex();
 type CredentialState =
   | { kind: 'binding'; binding: AccountBinding }
   | { kind: 'pending-create'; binding: AccountBinding }
+  | { kind: 'pending-create-request' }
   | { kind: 'pending-pair'; code: string; casaId?: number }
   | { kind: 'legacy-unverified'; code: string; casaId: number }
   | { kind: 'legacy-unbound'; code: string }
@@ -96,8 +121,6 @@ async function persistBinding(code: string, casaId: number): Promise<AccountBind
     SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY).catch(() => {}),
     SecureStore.deleteItemAsync(CASA_CODE_KEY).catch(() => {}),
     SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY).catch(() => {}),
-    SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY).catch(() => {}),
-    SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY).catch(() => {}),
     deleteSetting(CASA_CODE_KEY).catch(() => {}),
   ]);
   return parseAccountBinding(serialized)!;
@@ -120,6 +143,12 @@ async function getCredentialState(): Promise<CredentialState> {
   const pending = parsePendingCreateBinding(pendingRaw);
   if (pending) return { kind: 'pending-create', binding: pending };
   if (pendingRaw !== null) await SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY);
+
+  // Um CREATE pode ter commitado e perdido a resposta. A intenção persistida
+  // bloqueia pareamento/troca de conta até que o mesmo id+verifier seja refeito.
+  if (await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY) !== null) {
+    return { kind: 'pending-create-request' };
+  }
 
   // Pair é pull-only e ainda não possui binding antes da 1ª resposta. A
   // sessão global funciona como intent durável; depois de crash, syncNow retoma
@@ -156,30 +185,64 @@ async function getCredentialState(): Promise<CredentialState> {
 
 async function getCasaCodeSeguro(): Promise<string | null> {
   const state = await getCredentialState();
-  return state.kind === 'none'
+  return state.kind === 'none' || state.kind === 'pending-create-request'
     ? null
     : state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified' || state.kind === 'pending-pair'
       ? state.code
       : state.binding.code;
 }
 
-async function getOrCreateCreateOperationId(): Promise<string> {
+async function newVerifiedOperation(): Promise<PendingVerifiedOperation> {
+  const verifier = verifierFromRandomBytes(await getRandomBytesAsync(32));
+  return { operationId: secureRandomUUID(), verifier };
+}
+
+async function getOrCreateCreateOperation(): Promise<PendingVerifiedOperation> {
   const current = await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
-  const operationId = resolveCreateOperationId(current);
-  if (operationId !== current) {
-    await SecureStore.setItemAsync(CREATE_ACCOUNT_OPERATION_KEY, operationId);
+  const generated = current === null ? await newVerifiedOperation() : null;
+  const operation = resolveCreateOperation(current, () => generated!);
+  const serialized = JSON.stringify(operation);
+  if (current === null) {
+    await SecureStore.setItemAsync(CREATE_ACCOUNT_OPERATION_KEY, serialized);
   }
-  return operationId;
+  return operation;
+}
+
+async function getOrCreateTokenRotationOperation(
+  casaCode: string,
+): Promise<PendingTokenRotation> {
+  const current = await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY);
+  const generated = current === null ? await newVerifiedOperation() : null;
+  const operation = resolveTokenRotationOperation(current, casaCode, () => generated!);
+  if (current === null) {
+    await SecureStore.setItemAsync(TOKEN_ROTATION_OPERATION_KEY, JSON.stringify(operation));
+  }
+  return operation;
 }
 
 async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
   const raw = await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
-  const operation = resolveDeleteOperation(raw, casaCode);
+  const operation = resolveDeleteOperation(raw, casaCode, secureRandomUUID);
   const serialized = JSON.stringify(operation);
   if (serialized !== raw) {
     await SecureStore.setItemAsync(DELETE_ACCOUNT_OPERATION_KEY, serialized);
   }
   return operation.operationId;
+}
+
+async function acknowledgeCreateOperation(
+  operation: PendingCreateAck,
+): Promise<void> {
+  const current = await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
+  if (pendingCreateAckMatches(current, operation)) {
+    await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
+  }
+}
+
+async function hasPendingRemoteDelete(): Promise<boolean> {
+  return hasPendingDeleteOperation(
+    await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY),
+  );
 }
 
 async function getActiveCasaId(): Promise<number | null> {
@@ -206,6 +269,7 @@ async function clearCredentialsAfterLocalDelete(): Promise<void> {
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
   await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
+  await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
 
@@ -280,6 +344,7 @@ export type SyncResult =
         | 'BUSY'
         | 'SYNC_LIMIT'
         | 'ACCOUNT_STATE_CONFLICT'
+        | 'MIGRATION_EXPIRED'
         | 'SERVER';
     };
 
@@ -299,7 +364,215 @@ export function unpairCasa(): Promise<void> {
   return runAccountFlow(unpairCasaUnsafe);
 }
 
+type TokenMigrationResponse = {
+  token: string;
+  casaId: number;
+  credentialVersion: number;
+};
+
+export type TokenMigrationResult =
+  | { ok: true; token: string; casaId: number }
+  | {
+      ok: false;
+      error:
+        | 'NOT_PAIRED'
+        | 'NOT_LEGACY'
+        | 'NETWORK'
+        | 'CASA_NOT_FOUND'
+        | 'MIGRATION_EXPIRED'
+        | 'ACCOUNT_STATE_CONFLICT'
+        | 'SERVER';
+    };
+
+function legacyCodeFromState(state: CredentialState): string | null {
+  const code =
+    state.kind === 'binding' || state.kind === 'pending-create'
+      ? state.binding.code
+      : state.kind === 'pending-pair' ||
+          state.kind === 'legacy-unverified' ||
+          state.kind === 'legacy-unbound'
+        ? state.code
+        : null;
+  return code && isLegacyCasaCode(code) ? code : null;
+}
+
+function parseTokenMigrationResponse(value: unknown): TokenMigrationResponse | null {
+  if (!isRecord(value)) return null;
+  if (
+    typeof value.token !== 'string' ||
+    !CASA_CODE_CURRENT_REGEX.test(value.token) ||
+    typeof value.casaId !== 'number' ||
+    !Number.isSafeInteger(value.casaId) ||
+    value.casaId <= 0 ||
+    typeof value.credentialVersion !== 'number' ||
+    !Number.isSafeInteger(value.credentialVersion) ||
+    value.credentialVersion < 0
+  ) {
+    return null;
+  }
+  return value as TokenMigrationResponse;
+}
+
+type TokenMigrationError = Extract<TokenMigrationResult, { ok: false }>['error'];
+type TokenMigrationAttempt =
+  | { ok: true; result: TokenMigrationResponse }
+  | { ok: false; error: TokenMigrationError; code?: string };
+
+async function patchTokenMigration(
+  operation: PendingTokenRotation,
+  recover: boolean,
+  telemetryOperation: MobileOperation,
+): Promise<TokenMigrationAttempt> {
+  let response: Response;
+  try {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': operation.operationId,
+        'x-operation-verifier': operation.verifier,
+        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+        'x-request-id': secureRandomUUID(),
+        ...(recover ? {} : { 'x-casa-code': operation.casaCode }),
+      },
+      body: JSON.stringify({ mode: recover ? 'recover' : 'migrate' }),
+    });
+  } catch {
+    return { ok: false, error: 'NETWORK' };
+  }
+
+  let raw: unknown = null;
+  try {
+    raw = await response.json();
+  } catch {
+    // Mantém id+verifier: um 2xx malformado pode ter vindo depois do commit.
+  }
+  if (response.ok) {
+    const result = parseTokenMigrationResponse(raw);
+    if (!result) reportMobileRemoteFailure(telemetryOperation, response);
+    return result ? { ok: true, result } : { ok: false, error: 'SERVER' };
+  }
+  reportMobileRemoteFailure(telemetryOperation, response);
+  const code = isRecord(raw) && typeof raw.error === 'string' ? raw.error : undefined;
+  if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND', code };
+  if (response.status === 410) return { ok: false, error: 'MIGRATION_EXPIRED', code };
+  if (response.status === 409) return { ok: false, error: 'ACCOUNT_STATE_CONFLICT', code };
+  return { ok: false, error: 'SERVER', code };
+}
+
+async function acknowledgeTokenMigration(operation: PendingTokenRotation): Promise<void> {
+  const current = parseTokenRotationOperation(
+    await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY),
+  );
+  if (
+    current?.operationId === operation.operationId &&
+    current.verifier === operation.verifier &&
+    current.casaCode === operation.casaCode
+  ) {
+    await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
+  }
+}
+
+async function promoteMigratedToken(
+  state: CredentialState,
+  operation: PendingTokenRotation,
+  result: TokenMigrationResponse,
+): Promise<TokenMigrationResult> {
+  const plan = planTokenMigrationPromotion(state, operation.casaCode, result);
+  if (plan.kind === 'conflict') {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+  if (plan.kind === 'persist-binding') {
+    // Primeiro torna token+casaId autoritativos; só depois invalida sessão
+    // paginada que ainda poderia conter o bearer antigo.
+    await persistBinding(result.token, result.casaId);
+    await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  } else if (plan.kind === 'persist-pending-create') {
+    // O scratch ainda precisa de upload; não promove a binding antes da sync.
+    await persistPendingCreate(result.token, result.casaId);
+    await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  } else if (plan.kind === 'persist-pull-only') {
+    await saveSyncSession({
+      ...createSyncSession(result.token, false, null, null),
+      casaId: result.casaId,
+    });
+  }
+
+  await acknowledgeTokenMigration(operation);
+  return { ok: true, token: result.token, casaId: result.casaId };
+}
+
+async function executeTokenMigration(
+  startIfMissing: boolean,
+  recoveryOnly: boolean,
+  telemetryOperation: MobileOperation,
+): Promise<TokenMigrationResult | null> {
+  if (
+    hasPendingDeleteOperation(
+      await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY),
+    )
+  ) {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+  const state = await getCredentialState();
+  const rawPending = await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY);
+  let operation = parseTokenRotationOperation(rawPending);
+  const legacyCode = legacyCodeFromState(state);
+
+  if (!operation) {
+    if (!startIfMissing) return null;
+    if (state.kind === 'none' || state.kind === 'pending-create-request') {
+      return { ok: false, error: 'NOT_PAIRED' };
+    }
+    if (!legacyCode) return { ok: false, error: 'NOT_LEGACY' };
+    operation = await getOrCreateTokenRotationOperation(legacyCode);
+  }
+
+  // Recovery não envia o bearer anterior. Se ainda não há recibo, o 404 pode
+  // ter vencido a requisição inicial esperando o lock; nunca apaga o verifier.
+  const recovered = await patchTokenMigration(operation, true, telemetryOperation);
+  if (recovered.ok) return promoteMigratedToken(state, operation, recovered.result);
+  if (recoveryOnly || recovered.error !== 'CASA_NOT_FOUND') return recovered;
+
+  if (!legacyCode || legacyCode !== operation.casaCode) {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+  const migrated = await patchTokenMigration(operation, false, telemetryOperation);
+  if (!migrated.ok) return migrated;
+  return promoteMigratedToken(state, operation, migrated.result);
+}
+
+export function migrarTokenLegado(): Promise<TokenMigrationResult> {
+  return runAccountFlow(async () => {
+    try {
+      return (await executeTokenMigration(true, false, 'migrate-token')) ?? {
+        ok: false,
+        error: 'NOT_PAIRED',
+      };
+    } catch {
+      return { ok: false, error: 'SERVER' };
+    }
+  });
+}
+
 async function unpairCasaUnsafe(): Promise<void> {
+  if (
+    hasPendingDeleteOperation(
+      await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY),
+    )
+  ) {
+    throw new Error('PENDING_DELETE_OPERATION');
+  }
+  if (resolveUnpairAccountAction(await getCredentialState()).kind === 'reject') {
+    throw new Error('PENDING_CREATE_OPERATION');
+  }
+  if (
+    hasPendingTokenRotation(
+      await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY),
+    )
+  ) {
+    throw new Error('PENDING_TOKEN_ROTATION');
+  }
   // Fecha primeiro o arquivo da casa. Se isso falhar, o binding ainda existe e
   // o boot consegue restaurá-lo; nunca ficamos sem credencial apontando ao DB aberto.
   await setActiveScope('local');
@@ -310,6 +583,7 @@ async function unpairCasaUnsafe(): Promise<void> {
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
   await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
+  await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
 
@@ -326,8 +600,26 @@ export function syncNow(): Promise<SyncResult> {
 }
 
 async function syncNowUnsafe(): Promise<SyncResult> {
+  const migration = await executeTokenMigration(true, false, 'sync');
+  if (migration && !migration.ok && migration.error !== 'NOT_LEGACY') {
+    return { ok: false, error: syncErrorFromMigration(migration.error) };
+  }
   const state = await getCredentialState();
-  if (state.kind === 'none') return { ok: false, error: 'NOT_PAIRED' };
+  if (state.kind === 'none' || state.kind === 'pending-create-request') {
+    return { ok: false, error: 'NOT_PAIRED' };
+  }
+  let createOperation: PendingCreateAck | null = null;
+  if (state.kind === 'pending-create') {
+    try {
+      // Captura o registro que esta tentativa efetivamente está confirmando.
+      // O ACK posterior compara id+verifier e não pode apagar um sucessor.
+      createOperation = parsePendingCreateAck(
+        await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY),
+      );
+    } catch {
+      return { ok: false, error: 'SERVER' };
+    }
+  }
 
   const isLegacy = state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified';
   const code = isLegacy || state.kind === 'pending-pair' ? state.code : state.binding.code;
@@ -356,11 +648,30 @@ async function syncNowUnsafe(): Promise<SyncResult> {
   ) {
     return { ok: false, error: 'SERVER' };
   }
-  if (state.kind !== 'binding') await persistBinding(code, r.casaId);
+  if (state.kind !== 'binding') {
+    await persistBinding(code, r.casaId);
+    if (createOperation) await acknowledgeCreateOperation(createOperation).catch(() => {});
+  }
   // A sessão `download complete` só deixa de ser a fonte de recuperação
   // DEPOIS que o binding atômico code+casaId foi promovido com sucesso.
   await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
   return { ok: true, lastSyncAt: r.lastSyncAt };
+}
+
+function syncErrorFromMigration(
+  error: TokenMigrationError,
+): Exclude<SyncResult, { ok: true }>['error'] {
+  return error === 'NOT_PAIRED'
+    ? 'NOT_PAIRED'
+    : error === 'NETWORK'
+      ? 'NETWORK'
+      : error === 'CASA_NOT_FOUND'
+        ? 'CASA_NOT_FOUND'
+        : error === 'ACCOUNT_STATE_CONFLICT'
+          ? 'ACCOUNT_STATE_CONFLICT'
+          : error === 'MIGRATION_EXPIRED'
+            ? 'MIGRATION_EXPIRED'
+            : 'SERVER';
 }
 
 // Nome padrão da conta. O nome é só um rótulo (não é credencial nem tem
@@ -381,17 +692,29 @@ export function criarConta(): Promise<SyncResult> {
   );
 }
 
-async function resumePendingCreateSync(code: string, casaId: number): Promise<SyncResult> {
+async function resumePendingCreateSync(
+  code: string,
+  casaId: number,
+  operation?: PendingVerifiedOperation,
+): Promise<SyncResult> {
   await setActiveScope('local');
   const r = await runPagedSync(code, true, casaId);
   if (!r.ok) return { ok: false, error: r.error };
   if (r.casaId !== casaId) return { ok: false, error: 'SERVER' };
   await persistBinding(code, casaId);
-  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  // O binding code+casaId já está durável; só agora o recibo de CREATE deixa
+  // de ser necessário para recuperar uma resposta perdida.
+  if (operation) {
+    await acknowledgeCreateOperation({ kind: 'verified', operation }).catch(() => {});
+  }
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY).catch(() => {});
   return { ok: true, lastSyncAt: r.lastSyncAt };
 }
 
 async function criarContaUnsafe(): Promise<SyncResult> {
+  if (await hasPendingRemoteDelete()) {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
   const action = resolveCreateAccountAction(await getCredentialState());
   if (action.kind === 'reject') {
     return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
@@ -399,17 +722,23 @@ async function criarContaUnsafe(): Promise<SyncResult> {
   if (action.kind === 'resume') {
     // O POST ja foi confirmado e token+casaId estao salvos. Um novo POST aqui
     // poderia criar uma segunda casa; o retry retoma somente a sync pendente.
-    return resumePendingCreateSync(action.code, action.casaId);
+    let operation: PendingVerifiedOperation;
+    try {
+      operation = await getOrCreateCreateOperation();
+    } catch {
+      return { ok: false, error: 'SERVER' };
+    }
+    return resumePendingCreateSync(action.code, action.casaId, operation);
   }
 
   // Cria a conta e MIGRA os dados locais (scratch) para ela: o snapshot local
   // atual vira o conteúdo inicial da casa nova. É dado do próprio usuário indo
   // para a própria conta nova — não é cruzamento entre casas. (auditoria #68)
-  let operationId: string;
+  let operation: PendingVerifiedOperation;
   try {
     // Persistido ANTES do request. Se o servidor fizer commit e a resposta se
     // perder, a próxima tentativa reutiliza a chave e recebe a mesma casa/token.
-    operationId = await getOrCreateCreateOperationId();
+    operation = await getOrCreateCreateOperation();
   } catch {
     return { ok: false, error: 'SERVER' };
   }
@@ -418,31 +747,42 @@ async function criarContaUnsafe(): Promise<SyncResult> {
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationId },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': operation.operationId,
+        'x-operation-verifier': operation.verifier,
+        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+        'x-request-id': secureRandomUUID(),
+      },
       body: JSON.stringify({ nome: NOME_PADRAO }),
     });
   } catch {
     return { ok: false, error: 'NETWORK' };
   }
 
-  if (!response.ok) return { ok: false, error: 'SERVER' };
+  if (!response.ok) {
+    reportMobileRemoteFailure('create-account', response);
+    return { ok: false, error: 'SERVER' };
+  }
 
   let data: unknown;
   try {
     data = await response.json();
   } catch {
+    reportMobileRemoteFailure('create-account', response);
     return { ok: false, error: 'SERVER' };
   }
   const token = isRecord(data) ? data.token : undefined;
   const casaId = isRecord(data) ? data.casaId : undefined;
   if (
     typeof token !== 'string' ||
-    !CASA_CODE_REGEX.test(token) ||
+    !CASA_CODE_CURRENT_REGEX.test(token) ||
     typeof casaId !== 'number' ||
     !Number.isSafeInteger(casaId) ||
     casaId <= 0
   ) {
     // Mantém a operação pendente: um retry obtém o resultado memoizado correto.
+    reportMobileRemoteFailure('create-account', response);
     return { ok: false, error: 'SERVER' };
   }
   // Persiste o token ANTES da primeira sincronização (auditoria #58). Ele é a
@@ -456,7 +796,7 @@ async function criarContaUnsafe(): Promise<SyncResult> {
   // também cobre a resposta perdida ANTES de recebermos o token. (#90)
   await persistPendingCreate(token, casaId);
   // Empurra o scratch para a casa nova e adota o merge no arquivo dela.
-  return resumePendingCreateSync(token, casaId);
+  return resumePendingCreateSync(token, casaId, operation);
 }
 
 // Conecta a uma casa existente PUXANDO os dados dela, sem enviar o arquivo local
@@ -477,6 +817,9 @@ export function pairAndSync(code: string): Promise<SyncResult> {
 async function pairAndSyncUnsafe(code: string): Promise<SyncResult> {
   const normalized = code.trim().toUpperCase();
   if (!CASA_CODE_REGEX.test(normalized)) return { ok: false, error: 'INVALID_CODE' };
+  if (await hasPendingRemoteDelete()) {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
 
   const action = resolvePairAccountAction(await getCredentialState(), normalized);
   if (action.kind === 'reject') {
@@ -485,14 +828,31 @@ async function pairAndSyncUnsafe(code: string): Promise<SyncResult> {
 
   // A sessao pull-only e a intencao duravel do pareamento. Se ela ja existe,
   // somente o mesmo token pode retoma-la e o casaId observado nao pode mudar.
-  const requiredCasaId = action.kind === 'resume' ? action.casaId : undefined;
+  if (action.kind === 'start') {
+    await saveSyncSession(createSyncSession(normalized, false, null, null));
+  }
+  if (isLegacyCasaCode(normalized)) {
+    const migration = await executeTokenMigration(true, false, 'pair-account');
+    if (!migration?.ok) {
+      return {
+        ok: false,
+        error: syncErrorFromMigration(migration?.error ?? 'SERVER'),
+      };
+    }
+  }
+  const prepared = await getCredentialState();
+  if (prepared.kind !== 'pending-pair') {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+  const syncCode = prepared.code;
+  const requiredCasaId = prepared.casaId;
   await setActiveScope(requiredCasaId ?? 'local');
-  const r = await runPagedSync(normalized, false, requiredCasaId);
+  const r = await runPagedSync(syncCode, false, requiredCasaId);
   if (!r.ok) return { ok: false, error: r.error };
   if (requiredCasaId !== undefined && r.casaId !== requiredCasaId) {
     return { ok: false, error: 'SERVER' };
   }
-  await persistBinding(normalized, r.casaId);
+  await persistBinding(syncCode, r.casaId);
   await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
   return { ok: true, lastSyncAt: r.lastSyncAt };
 }
@@ -511,7 +871,24 @@ export function excluirConta(): Promise<DeleteResult> {
 }
 
 async function excluirContaUnsafe(): Promise<DeleteResult> {
-  const code = await getCasaCode();
+  const pendingDeleteRaw = await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
+  if (!hasPendingDeleteOperation(pendingDeleteRaw)) {
+    const migration = await executeTokenMigration(true, false, 'delete-account');
+    if (migration && !migration.ok && migration.error !== 'NOT_LEGACY') {
+      return {
+        ok: false,
+        error:
+          migration.error === 'NETWORK'
+            ? 'NETWORK'
+            : migration.error === 'CASA_NOT_FOUND'
+              ? 'CASA_NOT_FOUND'
+              : migration.error === 'NOT_PAIRED'
+                ? 'NOT_PAIRED'
+                : 'SERVER',
+      };
+    }
+  }
+  let code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   const casaId = await getActiveCasaId();
   // Sem identidade validada do arquivo não há como cumprir o contrato de
@@ -532,14 +909,27 @@ async function excluirContaUnsafe(): Promise<DeleteResult> {
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'DELETE',
-      headers: { 'x-casa-code': code, 'Idempotency-Key': operationId },
+      headers: {
+        'x-casa-code': code,
+        'Idempotency-Key': operationId,
+        'x-request-id': secureRandomUUID(),
+      },
     });
   } catch {
     return { ok: false, error: 'NETWORK' };
   }
 
-  if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND' };
-  if (!response.ok) return { ok: false, error: 'SERVER' };
+  if (response.status === 404) {
+    reportMobileRemoteFailure('delete-account', response);
+    // Não migra/revincula após um único 404: uma tentativa anterior pode ainda
+    // estar esperando o mutex e commitar com o hash legado. Mantém a intenção
+    // para retry/recuperação operacional, sem risco de limpar a casa errada.
+    return { ok: false, error: 'CASA_NOT_FOUND' };
+  }
+  if (!response.ok) {
+    reportMobileRemoteFailure('delete-account', response);
+    return { ok: false, error: 'SERVER' };
+  }
 
   // Commit remoto confirmado: registra o cleanup ANTES de trocar escopo/apagar.
   // Se o processo morrer em qualquer linha seguinte, restoreActiveScope conclui.
@@ -592,6 +982,7 @@ async function postV2Upload(
         'x-casa-code': code,
         'x-repona-sync-protocol': String(SYNC_PROTOCOL_VERSION),
         'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+        'x-request-id': secureRandomUUID(),
       },
       body: JSON.stringify({
         protocolVersion: SYNC_PROTOCOL_VERSION,
@@ -606,14 +997,21 @@ async function postV2Upload(
     return { ok: false, error: 'NETWORK' };
   }
   const httpError = syncV2HttpError(response);
-  if (httpError) return { ok: false, error: httpError };
+  if (httpError) {
+    if (httpError !== 'UNSUPPORTED_PROTOCOL') {
+      reportMobileRemoteFailure('sync', response);
+    }
+    return { ok: false, error: httpError };
+  }
   let raw: unknown;
   try {
     raw = await response.json();
   } catch {
+    reportMobileRemoteFailure('sync', response);
     return { ok: false, error: 'SERVER' };
   }
   const parsed = parseSyncV2UploadResponse(raw, pageId);
+  if (!parsed) reportMobileRemoteFailure('sync', response);
   return parsed ? { ok: true, casaId: parsed.casaId } : { ok: false, error: 'SERVER' };
 }
 
@@ -631,6 +1029,7 @@ async function postV2Download(
         'x-casa-code': code,
         'x-repona-sync-protocol': String(SYNC_PROTOCOL_VERSION),
         'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+        'x-request-id': secureRandomUUID(),
       },
       body: JSON.stringify({
         protocolVersion: SYNC_PROTOCOL_VERSION,
@@ -643,14 +1042,21 @@ async function postV2Download(
     return { ok: false, error: 'NETWORK' };
   }
   const httpError = syncV2HttpError(response);
-  if (httpError) return { ok: false, error: httpError };
+  if (httpError) {
+    if (httpError !== 'UNSUPPORTED_PROTOCOL') {
+      reportMobileRemoteFailure('sync', response);
+    }
+    return { ok: false, error: httpError };
+  }
   let raw: unknown;
   try {
     raw = await response.json();
   } catch {
+    reportMobileRemoteFailure('sync', response);
     return { ok: false, error: 'SERVER' };
   }
   const parsed = parseSyncV2DownloadResponse(raw);
+  if (!parsed) reportMobileRemoteFailure('sync', response);
   return parsed ? { ok: true, ...parsed } : { ok: false, error: 'SERVER' };
 }
 
@@ -836,6 +1242,7 @@ async function postLegacySync(code: string, snapshot: SyncSnapshot): Promise<Leg
         'x-casa-code': code,
         'x-repona-sync-protocol': '1',
         'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+        'x-request-id': secureRandomUUID(),
       },
       body: JSON.stringify(snapshot),
     });
@@ -843,14 +1250,19 @@ async function postLegacySync(code: string, snapshot: SyncSnapshot): Promise<Leg
     return { ok: false, error: 'NETWORK' };
   }
   const httpError = legacyHttpError(response);
-  if (httpError) return { ok: false, error: httpError };
+  if (httpError) {
+    reportMobileRemoteFailure('sync', response);
+    return { ok: false, error: httpError };
+  }
   let raw: unknown;
   try {
     raw = await response.json();
   } catch {
+    reportMobileRemoteFailure('sync', response);
     return { ok: false, error: 'SERVER' };
   }
   const parsed = parseLegacySyncResponse(raw);
+  if (!parsed) reportMobileRemoteFailure('sync', response);
   return parsed ? { ok: true, ...parsed } : { ok: false, error: 'SERVER' };
 }
 
