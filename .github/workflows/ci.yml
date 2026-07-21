@@ -48,14 +48,10 @@ jobs:
       - name: Validar contrato do ambiente de produção
         run: npm run env:check:production
 
-      # Scan de dependências: gate bloqueante em HIGH+ (inclui critical). Os três
-      # advisories high (js-yaml, brace-expansion, shell-quote) foram fechados por
-      # patch within-range via npm audit fix (#35), então o gate pode apertar de
-      # critical para high sem depender de major. Os moderates remanescentes estão
-      # em Expo CLI/Metro/Drizzle-kit e só saem com majors planejados (Balde 3 do
-      # #35); por isso o gate para em high, não em moderate. (auditoria #96, #35)
-      - name: Audit (high)
-        run: npm audit --audit-level=high
+      # Os transitivos vulneráveis de Next/Expo/Drizzle usam overrides mínimos e
+      # validados; o gate em MODERATE impede a regressão silenciosa do #35.
+      - name: Audit (moderate)
+        run: npm audit --audit-level=moderate
 
       - name: Lint
         run: npm run lint
