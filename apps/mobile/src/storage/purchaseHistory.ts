@@ -1,4 +1,10 @@
 import { uuidv4 } from '@repona/core';
+import {
+  createPurchaseHistoryKeyWindow,
+  normalizePurchaseHistoryCursor,
+  normalizePurchaseHistoryLimit,
+  type PurchaseHistoryCursor,
+} from '../purchaseHistoryPagination';
 import { initializeDatabase } from './database';
 
 export type PurchaseHistoryRecord = {
@@ -23,9 +29,69 @@ type PurchaseHistoryRow = {
   source_list_name: string | null;
 };
 
-export async function listPurchaseHistoryRecords(): Promise<PurchaseHistoryRecord[]> {
+type PurchaseHistoryKeyRow = {
+  purchased_at: string;
+  source_name_key: string;
+};
+
+export type PurchaseHistoryPage = {
+  records: PurchaseHistoryRecord[];
+  nextCursor: PurchaseHistoryCursor | null;
+};
+
+export async function listPurchaseHistoryPage(
+  options: { limit?: number; cursor?: PurchaseHistoryCursor | null } = {},
+): Promise<PurchaseHistoryPage> {
   const database = await initializeDatabase();
-  const rows = await database.getAllAsync<PurchaseHistoryRow>(`
+  const limit = normalizePurchaseHistoryLimit(options.limit);
+  const cursor = normalizePurchaseHistoryCursor(options.cursor);
+  const cursorCondition = cursor
+    ? `AND (
+         ph.purchased_at < ?
+         OR (ph.purchased_at = ? AND COALESCE(ph.source_list_name, sl.name, '') > ?)
+       )`
+    : '';
+  const cursorArguments = cursor
+    ? [cursor.purchasedAt, cursor.purchasedAt, cursor.sourceNameKey]
+    : [];
+
+  // Primeiro pagina as CHAVES de compra. Assim, uma compra com muitas linhas
+  // nunca é cortada no meio e só as linhas das compras desta página são lidas.
+  const keyRows = await database.getAllAsync<PurchaseHistoryKeyRow>(
+    `SELECT
+       ph.purchased_at,
+       COALESCE(ph.source_list_name, sl.name, '') AS source_name_key
+     FROM purchase_history ph
+     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
+     WHERE ph.deleted = 0
+       ${cursorCondition}
+     GROUP BY ph.purchased_at, COALESCE(ph.source_list_name, sl.name, '')
+     ORDER BY ph.purchased_at DESC, source_name_key ASC
+     LIMIT ?`,
+    ...cursorArguments,
+    limit + 1,
+  );
+  const window = createPurchaseHistoryKeyWindow(
+    keyRows.map((row) => ({
+      purchasedAt: row.purchased_at,
+      sourceNameKey: row.source_name_key,
+    })),
+    limit,
+  );
+
+  if (window.keys.length === 0) {
+    return { records: [], nextCursor: null };
+  }
+
+  const keyConditions = window.keys
+    .map(
+      () =>
+        `(ph.purchased_at = ? AND COALESCE(ph.source_list_name, sl.name, '') = ?)`,
+    )
+    .join(' OR ');
+  const keyArguments = window.keys.flatMap((key) => [key.purchasedAt, key.sourceNameKey]);
+  const rows = await database.getAllAsync<PurchaseHistoryRow>(
+    `
     SELECT
       ph.id,
       ph.product_id,
@@ -38,10 +104,43 @@ export async function listPurchaseHistoryRecords(): Promise<PurchaseHistoryRecor
     FROM purchase_history ph
     INNER JOIN products p ON p.id = ph.product_id
     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
-    WHERE ph.deleted = 0
-    ORDER BY ph.purchased_at DESC, ph.id ASC
-  `);
+    WHERE ph.deleted = 0 AND (${keyConditions})
+    ORDER BY
+      ph.purchased_at DESC,
+      COALESCE(ph.source_list_name, sl.name, '') ASC,
+      ph.id ASC
+    `,
+    ...keyArguments,
+  );
 
+  return { records: rows.map(mapPurchaseHistoryRow), nextCursor: window.nextCursor };
+}
+
+export async function listPurchaseHistoryGroupRecords(
+  purchasedAt: string,
+  sourceListName: string | null,
+): Promise<PurchaseHistoryRecord[]> {
+  const database = await initializeDatabase();
+  const rows = await database.getAllAsync<PurchaseHistoryRow>(
+    `SELECT
+       ph.id,
+       ph.product_id,
+       p.name AS product_name,
+       p.category,
+       ph.quantity,
+       ph.purchased_at,
+       ph.source_list_id,
+       COALESCE(ph.source_list_name, sl.name) AS source_list_name
+     FROM purchase_history ph
+     INNER JOIN products p ON p.id = ph.product_id
+     LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
+     WHERE ph.deleted = 0
+       AND ph.purchased_at = ?
+       AND COALESCE(ph.source_list_name, sl.name, '') = ?
+     ORDER BY ph.id ASC`,
+    purchasedAt,
+    sourceListName ?? '',
+  );
   return rows.map(mapPurchaseHistoryRow);
 }
 

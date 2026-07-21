@@ -2,11 +2,11 @@
 // #12.1).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, SectionList, Text, View } from 'react-native';
 
 import { estimateShoppingTotal, type PriceSummary } from '@repona/core';
 
-import { EmptyState, Header, IconBubble, MetaLabel, ScreenScroll } from '../components/ui';
+import { EmptyState, Header, IconBubble, MetaLabel } from '../components/ui';
 import { formatCentsBRL } from '../priceFormat';
 import type { PurchaseHistoryGroup, PurchaseHistoryItem } from '../purchaseHistoryPresentation';
 import { styles } from '../styles';
@@ -16,27 +16,68 @@ export function HistoryScreen({
   historyGroups,
   priceSummaries,
   isReady,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
   onOpenPurchase,
 }: {
   historyGroups: PurchaseHistoryGroup[];
   priceSummaries: Map<number, PriceSummary>;
   isReady: boolean;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onLoadMore: () => void;
   onOpenPurchase: (item: PurchaseHistoryItem) => void;
 }) {
+  const sections = useMemo(
+    () => historyGroups.map((group) => ({ title: group.title, data: group.items })),
+    [historyGroups],
+  );
+
   return (
-    <ScreenScroll>
-      <Header eyebrow="Suas compras anteriores" title="Histórico" />
-      {!isReady ? <EmptyState title="Carregando histórico" description="Buscando as compras finalizadas." /> : null}
-      {isReady && historyGroups.length === 0 ? <EmptyState title="Nenhuma compra registrada" description="Finalize itens marcados na lista para criar o primeiro histórico." /> : null}
-      {historyGroups.map((group) => (
-        <View key={group.title}>
-          <Text style={styles.historyGroupTitle}>{group.title}</Text>
-          {group.items.map((item) => (
-            <HistoryCard key={item.id} item={item} priceSummaries={priceSummaries} onOpen={onOpenPurchase} />
-          ))}
+    <SectionList
+      style={styles.screen}
+      contentContainerStyle={styles.historyListContent}
+      sections={sections}
+      keyExtractor={(item) => item.id}
+      renderSectionHeader={({ section }) => (
+        <Text style={styles.historyGroupTitle}>{section.title}</Text>
+      )}
+      renderItem={({ item }) => (
+        <HistoryCard item={item} priceSummaries={priceSummaries} onOpen={onOpenPurchase} />
+      )}
+      ListHeaderComponent={<Header eyebrow="Suas compras anteriores" title="Histórico" />}
+      ListEmptyComponent={
+        !isReady ? (
+          <EmptyState title="Carregando histórico" description="Buscando as compras finalizadas." />
+        ) : (
+          <EmptyState
+            title="Nenhuma compra registrada"
+            description="Finalize itens marcados na lista para criar o primeiro histórico."
+          />
+        )
+      }
+      ListFooterComponent={
+        <View style={styles.historyListFooter}>
+          {isLoadingMore ? <ActivityIndicator color={colors.primaryStrong} /> : null}
+          {hasMore && !isLoadingMore ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Carregar compras mais antigas"
+              style={styles.historyLoadMoreButton}
+              onPress={onLoadMore}
+            >
+              <Text style={styles.historyLoadMoreText}>Carregar compras mais antigas</Text>
+            </Pressable>
+          ) : null}
         </View>
-      ))}
-    </ScreenScroll>
+      }
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      stickySectionHeadersEnabled={false}
+      showsVerticalScrollIndicator={false}
+    />
   );
 }
 

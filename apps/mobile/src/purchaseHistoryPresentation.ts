@@ -1,4 +1,9 @@
 import type { PurchaseHistoryRecord } from './storage/purchaseHistory';
+import {
+  groupPurchaseHistoryRecords,
+  mergeHistoryGroups,
+  type GroupedPurchaseHistory,
+} from './purchaseHistoryPagination';
 import { colors } from './theme';
 import type { IconName } from './types';
 
@@ -32,12 +37,7 @@ export type PurchaseHistoryGroup = {
   items: PurchaseHistoryItem[];
 };
 
-type Purchase = {
-  key: string;
-  purchasedAt: string;
-  sourceListName: string | null;
-  records: PurchaseHistoryRecord[];
-};
+type Purchase = GroupedPurchaseHistory<PurchaseHistoryRecord>;
 
 const categoryVisuals: Record<string, PurchaseHistoryThumb> = {
   'Laticínios': thumb('bottle-tonic-outline', colors.amberSoft, colors.amber),
@@ -54,40 +54,35 @@ const shortMonths = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'se
 const longMonths = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 export function purchaseHistoryRecordsToGroups(records: PurchaseHistoryRecord[]): PurchaseHistoryGroup[] {
-  const purchases = records.reduce<Purchase[]>((items, record) => {
-    // Agrupa pela verdade compartilhada (nome da lista), não pelo source_list_id
-    // — o id é local a cada device e vem nulo nas compras sincronizadas, então
-    // agrupar por ele divergia entre origens. (auditoria 2026-06-09 #5)
-    const key = `${record.purchasedAt}-${record.sourceListName ?? 'manual'}`;
-    const existing = items.find((item) => item.key === key);
+  // Agrupa pela verdade compartilhada (nome da lista), não pelo source_list_id
+  // — o id é local em cada device. O helper usa Map e mantém custo linear. (#87)
+  const purchases: Purchase[] = groupPurchaseHistoryRecords(records);
 
-    if (existing) {
-      existing.records.push(record);
-    } else {
-      items.push({
-        key,
-        purchasedAt: record.purchasedAt,
-        sourceListName: record.sourceListName,
-        records: [record],
-      });
-    }
-
-    return items;
-  }, []);
-
-  return purchases.reduce<PurchaseHistoryGroup[]>((groups, purchase) => {
+  // Maps preservam a ordem da primeira ocorrência e eliminam o reduce+find
+  // quadrático que congelava a tela em históricos grandes. (#87)
+  const groups: PurchaseHistoryGroup[] = [];
+  const groupByTitle = new Map<string, PurchaseHistoryGroup>();
+  for (const purchase of purchases) {
     const title = getGroupTitle(purchase.purchasedAt);
-    const existing = groups.find((group) => group.title === title);
+    const existing = groupByTitle.get(title);
     const item = purchaseToHistoryItem(purchase);
 
     if (existing) {
       existing.items.push(item);
     } else {
-      groups.push({ title, items: [item] });
+      const group = { title, items: [item] };
+      groups.push(group);
+      groupByTitle.set(title, group);
     }
+  }
+  return groups;
+}
 
-    return groups;
-  }, []);
+export function mergePurchaseHistoryGroups(
+  current: PurchaseHistoryGroup[],
+  incoming: PurchaseHistoryGroup[],
+): PurchaseHistoryGroup[] {
+  return mergeHistoryGroups(current, incoming);
 }
 
 function purchaseToHistoryItem(purchase: Purchase): PurchaseHistoryItem {

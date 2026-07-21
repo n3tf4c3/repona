@@ -750,6 +750,30 @@ export const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
+  historyListContent: {
+    paddingHorizontal: spacing.screen,
+    paddingTop: 18,
+    paddingBottom: 112,
+  },
+  historyListFooter: {
+    minHeight: 60,
+    justifyContent: 'center',
+    paddingTop: 8,
+  },
+  historyLoadMoreButton: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  historyLoadMoreText: {
+    ...typography.labelStrong,
+    color: colors.primaryStrong,
+  },
   historyCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.card,

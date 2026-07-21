@@ -26,8 +26,12 @@ import {
   ScanToListModal,
 } from './src/components/modals';
 import { productRecordToProduct } from './src/productPresentation';
-import { purchaseHistoryRecordsToGroups } from './src/purchaseHistoryPresentation';
+import {
+  mergePurchaseHistoryGroups,
+  purchaseHistoryRecordsToGroups,
+} from './src/purchaseHistoryPresentation';
 import type { PurchaseHistoryGroup, PurchaseHistoryItem } from './src/purchaseHistoryPresentation';
+import type { PurchaseHistoryCursor } from './src/purchaseHistoryPagination';
 import { EstoqueScreen } from './src/screens/EstoqueScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -48,7 +52,12 @@ import {
   unarchiveProduct,
   updateProduct,
 } from './src/storage/products';
-import { listPurchaseHistoryRecords, addPurchaseHistoryRecord, removePurchaseHistoryRecord } from './src/storage/purchaseHistory';
+import {
+  addPurchaseHistoryRecord,
+  listPurchaseHistoryGroupRecords,
+  listPurchaseHistoryPage,
+  removePurchaseHistoryRecord,
+} from './src/storage/purchaseHistory';
 import {
   addProductToActiveShoppingList,
   createNewActiveShoppingList,
@@ -75,6 +84,8 @@ export default function App() {
   const [archivedProducts, setArchivedProducts] = useState<Product[]>([]);
   const [isProductsReady, setIsProductsReady] = useState(false);
   const [historyGroups, setHistoryGroups] = useState<PurchaseHistoryGroup[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<PurchaseHistoryCursor | null>(null);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
   const [isFinalizingPurchase, setIsFinalizingPurchase] = useState(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
@@ -91,6 +102,7 @@ export default function App() {
   // Lock por item da lista para serializar toques rápidos no seletor de
   // quantidade (ref, não state: não precisa re-renderizar). (auditoria #39)
   const pendingItems = useRef<Set<number>>(new Set());
+  const historyPagePending = useRef(false);
 
   // Carrega os dados locais preservando resultados PARCIAIS: cada leitura é
   // independente (Promise.allSettled), então a falha de uma não zera as outras.
@@ -108,7 +120,7 @@ export default function App() {
         listProducts(),
         listArchivedProducts(),
         listActiveShoppingItems(),
-        listPurchaseHistoryRecords(),
+        listPurchaseHistoryPage(),
         listRecentPricesByProduct(),
       ]);
 
@@ -123,9 +135,10 @@ export default function App() {
     if (listRecords.status === 'fulfilled')
       setShoppingItems(listRecords.value.map(shoppingListRecordToItem));
     else algumaFalha = true;
-    if (historyRecords.status === 'fulfilled')
-      setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords.value));
-    else algumaFalha = true;
+    if (historyRecords.status === 'fulfilled') {
+      setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords.value.records));
+      setHistoryCursor(historyRecords.value.nextCursor);
+    } else algumaFalha = true;
     if (prices.status === 'fulfilled') setPricesByProduct(prices.value);
     else algumaFalha = true;
 
@@ -185,8 +198,27 @@ export default function App() {
   }
 
   async function refreshHistory() {
-    const historyRecords = await listPurchaseHistoryRecords();
-    setHistoryGroups(purchaseHistoryRecordsToGroups(historyRecords));
+    const page = await listPurchaseHistoryPage();
+    setHistoryGroups(purchaseHistoryRecordsToGroups(page.records));
+    setHistoryCursor(page.nextCursor);
+  }
+
+  async function loadMoreHistory() {
+    if (!historyCursor || historyPagePending.current) return;
+    historyPagePending.current = true;
+    setIsLoadingMoreHistory(true);
+    try {
+      const page = await listPurchaseHistoryPage({ cursor: historyCursor });
+      const incoming = purchaseHistoryRecordsToGroups(page.records);
+      setHistoryGroups((current) => mergePurchaseHistoryGroups(current, incoming));
+      setHistoryCursor(page.nextCursor);
+    } catch (error) {
+      console.error('Failed to load another history page', error);
+      Alert.alert('Erro ao carregar', 'Não foi possível carregar compras mais antigas agora.');
+    } finally {
+      historyPagePending.current = false;
+      setIsLoadingMoreHistory(false);
+    }
   }
 
   async function refreshPrices() {
@@ -493,8 +525,11 @@ export default function App() {
       await addPurchaseHistoryRecord(productId, quantity, purchase.purchasedAt, purchase.sourceListName);
       // refreshProducts também: a edição recalcula purchase_count.
       await Promise.all([refreshHistory(), refreshProducts()]);
-      // Recarrega o histórico inteiro e re-seleciona a compra atualizada.
-      const freshRecords = await listPurchaseHistoryRecords();
+      // Recarrega apenas a compra aberta; não materializa o histórico inteiro.
+      const freshRecords = await listPurchaseHistoryGroupRecords(
+        purchase.purchasedAt,
+        purchase.sourceListName,
+      );
       const freshGroups = purchaseHistoryRecordsToGroups(freshRecords);
       const freshPurchase = freshGroups.flatMap((g) => g.items).find((i) => i.id === purchase.id);
       if (freshPurchase) setSelectedPurchase(freshPurchase);
@@ -608,7 +643,17 @@ export default function App() {
               onConsumeProduct={handleConsumeProduct}
             />
           ) : null}
-          {activeTab === 'history' ? <HistoryScreen historyGroups={historyGroups} priceSummaries={priceSummaries} isReady={isHistoryReady} onOpenPurchase={setSelectedPurchase} /> : null}
+          {activeTab === 'history' ? (
+            <HistoryScreen
+              historyGroups={historyGroups}
+              priceSummaries={priceSummaries}
+              isReady={isHistoryReady}
+              hasMore={historyCursor !== null}
+              isLoadingMore={isLoadingMoreHistory}
+              onLoadMore={() => void loadMoreHistory()}
+              onOpenPurchase={setSelectedPurchase}
+            />
+          ) : null}
           {activeTab === 'future' ? (
             <FutureScreen
               onSynced={() => {

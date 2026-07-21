@@ -1,18 +1,57 @@
 import "server-only";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import type { PricePoint, PurchaseHistoryDTO } from "@repona/core";
+import type { HistoricoCursor } from "@/lib/historicoCursor";
 import { db } from "@/server/db";
 import { products, shoppingLists, purchaseHistory, priceHistory } from "@/server/db/schema";
 
-// Histórico de compras da casa, do mais recente ao mais antigo. `limit` opcional
-// limita a consulta para paginação — sem ele, devolve tudo (compat). A ordem é
-// determinística (purchased_at desc, id asc), então páginas por limite crescente
-// são contíguas e estáveis. (auditoria #87)
+export type HistoricoPage = { items: PurchaseHistoryDTO[]; nextCursor: HistoricoCursor | null };
+
+// Histórico por keyset da COMPRA (data + nome de origem), não da linha. Assim
+// uma compra com muitos produtos nunca aparece dividida entre páginas. (#87)
 export async function listarHistorico(
   casaId: number,
-  limit?: number
-): Promise<PurchaseHistoryDTO[]> {
-  const consulta = db
+  options: { limit?: number; cursor?: HistoricoCursor } = {}
+): Promise<HistoricoPage> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+  const cursorDate = options.cursor ? new Date(options.cursor.purchasedAt) : null;
+  const cursorValido =
+    cursorDate &&
+    !Number.isNaN(cursorDate.getTime()) &&
+    typeof options.cursor?.sourceNameKey === "string" &&
+    options.cursor.sourceNameKey.length <= 200
+      ? options.cursor
+      : null;
+  const sourceNameKey = sql<string>`coalesce(${purchaseHistory.sourceListName}, ${shoppingLists.name}, '')`;
+
+  const keyRows = await db
+    .select({ purchasedAt: purchaseHistory.purchasedAt, sourceNameKey })
+    .from(purchaseHistory)
+    .leftJoin(shoppingLists, eq(shoppingLists.id, purchaseHistory.sourceListId))
+    .where(
+      and(
+        eq(purchaseHistory.casaId, casaId),
+        eq(purchaseHistory.deleted, false),
+        cursorValido && cursorDate
+          ? or(
+              lt(purchaseHistory.purchasedAt, cursorDate),
+              and(
+                eq(purchaseHistory.purchasedAt, cursorDate),
+                gt(sourceNameKey, cursorValido.sourceNameKey)
+              )
+            )
+          : undefined
+      )
+    )
+    .groupBy(purchaseHistory.purchasedAt, sourceNameKey)
+    .orderBy(desc(purchaseHistory.purchasedAt), asc(sourceNameKey))
+    .limit(limit + 1);
+
+  const hasMore = keyRows.length > limit;
+  const pageKeys = hasMore ? keyRows.slice(0, limit) : keyRows;
+  if (pageKeys.length === 0) return { items: [], nextCursor: null };
+
+  const rows = await db
     .select({
       id: purchaseHistory.id,
       productId: purchaseHistory.productId,
@@ -28,12 +67,25 @@ export async function listarHistorico(
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .leftJoin(shoppingLists, eq(shoppingLists.id, purchaseHistory.sourceListId))
-    .where(and(eq(products.casaId, casaId), eq(purchaseHistory.deleted, false)))
-    .orderBy(desc(purchaseHistory.purchasedAt), asc(purchaseHistory.id));
+    .where(
+      and(
+        // Filtra pela própria coluna que abre o índice; o join de products fica
+        // apenas para os atributos exibidos. (#87)
+        eq(purchaseHistory.casaId, casaId),
+        eq(purchaseHistory.deleted, false),
+        or(
+          ...pageKeys.map((key) =>
+            and(
+              eq(purchaseHistory.purchasedAt, key.purchasedAt),
+              eq(sourceNameKey, key.sourceNameKey)
+            )
+          )
+        )
+      )
+    )
+    .orderBy(desc(purchaseHistory.purchasedAt), asc(sourceNameKey), asc(purchaseHistory.id));
 
-  const rows = await (limit !== undefined ? consulta.limit(limit) : consulta);
-
-  return rows.map((row) => ({
+  const items = rows.map((row) => ({
     id: row.id,
     productId: row.productId,
     productName: row.productName,
@@ -43,28 +95,29 @@ export async function listarHistorico(
     sourceListId: row.sourceListId,
     sourceListName: row.sourceListName,
   }));
+  const last = hasMore ? pageKeys.at(-1) : null;
+  return {
+    items,
+    nextCursor: last
+      ? { purchasedAt: last.purchasedAt.toISOString(), sourceNameKey: last.sourceNameKey }
+      : null,
+  };
 }
 
 // Último preço conhecido por produto (centavos), para estimar o total da compra
 // no histórico — mesma base do "Total estimado" do mobile. (auditoria UI)
 export async function ultimoPrecoPorProduto(casaId: number): Promise<Map<number, number>> {
   const rows = await db
-    .select({
+    .selectDistinctOn([priceHistory.productId], {
       productId: priceHistory.productId,
       priceCents: priceHistory.priceCents,
-      recordedAt: priceHistory.recordedAt,
     })
     .from(priceHistory)
     .innerJoin(products, eq(products.id, priceHistory.productId))
     .where(eq(products.casaId, casaId))
-    .orderBy(desc(priceHistory.recordedAt));
+    .orderBy(priceHistory.productId, desc(priceHistory.recordedAt), desc(priceHistory.id));
 
-  const mapa = new Map<number, number>();
-  for (const row of rows) {
-    // Linhas em ordem decrescente: a primeira de cada produto é a mais recente.
-    if (!mapa.has(row.productId)) mapa.set(row.productId, row.priceCents);
-  }
-  return mapa;
+  return new Map(rows.map((row) => [row.productId, row.priceCents]));
 }
 
 // Pontos de preço por produto (até 12 mais recentes cada), para o gráfico de
@@ -73,23 +126,30 @@ export async function ultimoPrecoPorProduto(casaId: number): Promise<Map<number,
 export async function listarPrecosPorProduto(
   casaId: number
 ): Promise<Record<number, PricePoint[]>> {
-  const rows = await db
-    .select({
-      productId: priceHistory.productId,
-      priceCents: priceHistory.priceCents,
-      recordedAt: priceHistory.recordedAt,
-    })
-    .from(priceHistory)
-    .innerJoin(products, eq(products.id, priceHistory.productId))
-    .where(eq(products.casaId, casaId))
-    .orderBy(desc(priceHistory.recordedAt));
+  const result = await db.execute<{
+    productId: number;
+    priceCents: number;
+    recordedAt: Date | string;
+  }>(sql`
+    select product_id as "productId", price_cents as "priceCents", recorded_at as "recordedAt"
+    from (
+      select ph.product_id, ph.price_cents, ph.recorded_at,
+             row_number() over (
+               partition by ph.product_id order by ph.recorded_at desc, ph.id desc
+             ) as rn
+      from price_history ph
+      inner join products p on p.id = ph.product_id
+      where p.casa_id = ${casaId}
+    ) ranked
+    where rn <= 12
+    order by product_id, recorded_at desc
+  `);
 
   const mapa: Record<number, PricePoint[]> = {};
-  for (const row of rows) {
+  for (const row of result.rows) {
     const lista = (mapa[row.productId] ??= []);
-    if (lista.length < 12) {
-      lista.push({ priceCents: row.priceCents, recordedAt: row.recordedAt.toISOString() });
-    }
+    const recordedAt = row.recordedAt instanceof Date ? row.recordedAt : new Date(row.recordedAt);
+    lista.push({ priceCents: row.priceCents, recordedAt: recordedAt.toISOString() });
   }
   return mapa;
 }

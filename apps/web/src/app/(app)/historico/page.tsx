@@ -2,31 +2,24 @@ import { ChevronDown, Receipt, ShoppingBag } from "lucide-react";
 import { requireCasa } from "@/server/auth/session";
 import { listarHistorico, ultimoPrecoPorProduto } from "@/server/modules/historico";
 import { agruparHistorico } from "@/lib/historico";
+import { decodeHistoricoCursor, encodeHistoricoCursor } from "@/lib/historicoCursor";
 import { formatCentsBRL } from "@/lib/preco";
 
-// Tamanho da página do histórico. Cada "carregar mais" soma uma página ao
-// limite, mantendo os grupos por data contíguos e estáveis. (auditoria #87)
 const TAMANHO_PAGINA = 50;
 
 export default async function HistoricoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ pagina?: string }>;
+  searchParams: Promise<{ cursor?: string }>;
 }) {
   const { casaId: id } = await requireCasa();
-  const paramPagina = Number((await searchParams).pagina);
-  const pagina = Number.isInteger(paramPagina) && paramPagina > 0 ? paramPagina : 1;
-  const limite = TAMANHO_PAGINA * pagina;
+  const cursor = decodeHistoricoCursor((await searchParams).cursor);
 
-  const [registrosBrutos, precoPorProduto] = await Promise.all([
-    // Busca um a mais que o limite para saber se há próxima página sem uma
-    // contagem extra.
-    listarHistorico(id, limite + 1),
+  const [pagina, precoPorProduto] = await Promise.all([
+    listarHistorico(id, { limit: TAMANHO_PAGINA, cursor }),
     ultimoPrecoPorProduto(id),
   ]);
-  const temMais = registrosBrutos.length > limite;
-  const registros = temMais ? registrosBrutos.slice(0, limite) : registrosBrutos;
-  const grupos = agruparHistorico(registros, precoPorProduto);
+  const grupos = agruparHistorico(pagina.items, precoPorProduto);
 
   return (
     <div className="space-y-4">
@@ -103,14 +96,24 @@ export default async function HistoricoPage({
         </div>
       ))}
 
-      {temMais && (
-        <a
-          href={`/historico?pagina=${pagina + 1}`}
-          className="mt-2 flex items-center justify-center rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink-soft shadow-sm transition hover:bg-bg"
-        >
-          Carregar mais
-        </a>
-      )}
+      <div className="flex gap-2">
+        {cursor && (
+          <a
+            href="/historico"
+            className="mt-2 flex flex-1 items-center justify-center rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink-soft shadow-sm transition hover:bg-bg"
+          >
+            Mais recentes
+          </a>
+        )}
+        {pagina.nextCursor && (
+          <a
+            href={`/historico?cursor=${encodeURIComponent(encodeHistoricoCursor(pagina.nextCursor))}`}
+            className="mt-2 flex flex-1 items-center justify-center rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink-soft shadow-sm transition hover:bg-bg"
+          >
+            Mais antigos
+          </a>
+        )}
+      </div>
     </div>
   );
 }
