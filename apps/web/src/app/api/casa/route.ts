@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { criarContaNuvem, excluirCasa, obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
+import {
+  criarContaNuvem,
+  excluirContaNuvem,
+  CASA_CODE_REGEX,
+  IDEMPOTENCY_CONFLICT,
+  IDEMPOTENCY_RESULT_GONE,
+} from "@/server/modules/casa";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
 import { nextauthOrigin } from "@/server/env";
@@ -8,6 +14,17 @@ import { nextauthOrigin } from "@/server/env";
 const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
 });
+
+const idempotencyKeySchema = z.string().uuid();
+
+function idempotencyKey(req: NextRequest): string | null {
+  const parsed = idempotencyKeySchema.safeParse(req.headers.get("idempotency-key")?.trim());
+  return parsed.success ? parsed.data.toLowerCase() : null;
+}
+
+function errorCode(error: unknown): string | null {
+  return error instanceof Error ? error.message : null;
+}
 
 // Criar conta é evento raro (uma vez por casa). Teto duplo por IP — por hora e
 // por dia — para barrar tanto rajada quanto criação pingo-a-pingo que furava o
@@ -50,6 +67,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "FORBIDDEN_ORIGIN" }, { status: 403 });
   }
 
+  const operationId = idempotencyKey(req);
+  if (!operationId) {
+    return NextResponse.json({ error: "INVALID_IDEMPOTENCY_KEY" }, { status: 400 });
+  }
+
   const ip = ipDaRequest(req.headers);
   if (
     (await rateLimited(`casa:hora:${ip}`, CRIAR_MAX_HORA, CRIAR_JANELA_HORA)) ||
@@ -70,13 +92,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
   }
 
-  const conta = await criarContaNuvem(parsed.data.nome);
-  return NextResponse.json(conta, { status: 201 });
+  try {
+    const conta = await criarContaNuvem(parsed.data.nome, operationId);
+    return NextResponse.json(conta, { status: 201 });
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === IDEMPOTENCY_CONFLICT) {
+      return NextResponse.json({ error: code }, { status: 409 });
+    }
+    if (code === IDEMPOTENCY_RESULT_GONE) {
+      return NextResponse.json({ error: code }, { status: 410 });
+    }
+    throw error;
+  }
 }
 
 // Exclusão de conta self-service pelo app (exigência da Play). Autenticada pelo
 // token da casa no header, como o sync. Apaga a casa e todos os dados.
 export async function DELETE(req: NextRequest) {
+  const operationId = idempotencyKey(req);
+  if (!operationId) {
+    return NextResponse.json({ error: "INVALID_IDEMPOTENCY_KEY" }, { status: 400 });
+  }
+
   const ip = ipDaRequest(req.headers);
   if (await rateLimited(`casa-del:${ip}`, DEL_MAX_POR_JANELA, DEL_JANELA_SEG)) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
@@ -99,11 +137,17 @@ export async function DELETE(req: NextRequest) {
   ) {
     return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
   }
-  const casaId = await obterCasaPorCodigo(code);
-  if (!casaId) {
-    return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });
+  try {
+    await excluirContaNuvem(code, operationId);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "CASA_NOT_FOUND") {
+      return NextResponse.json({ error: code }, { status: 404 });
+    }
+    if (code === IDEMPOTENCY_CONFLICT) {
+      return NextResponse.json({ error: code }, { status: 409 });
+    }
+    throw error;
   }
-
-  await excluirCasa(casaId);
-  return NextResponse.json({ ok: true });
 }

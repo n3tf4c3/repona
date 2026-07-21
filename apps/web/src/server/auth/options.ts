@@ -11,7 +11,7 @@ const loginSchema = z.object({
   token: z.string().trim().toUpperCase().regex(CASA_CODE_REGEX),
 });
 
-// Throttle do login (auditoria #20): o token de 12 chars é a única credencial da
+// Throttle do login (auditoria #20): o token da casa é a única credencial da
 // casa. Diferente de /api/sync e /api/casa, o fluxo de credentials do NextAuth
 // não passava por rateLimited — tentativas online ficavam sem limite. Limita por
 // IP e por token normalizado.

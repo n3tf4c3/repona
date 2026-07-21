@@ -1,6 +1,7 @@
 // Tela Perfil ("Casa Repona"): conta, token e sincronização com a nuvem
 // (extraída de App.tsx, auditoria 2026-06-09 #12.1).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { CASA_CODE_LENGTH } from '@repona/core';
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
 
@@ -43,7 +44,7 @@ export function FutureScreen({ onSynced }: { onSynced: () => void }) {
 
 const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], string> = {
   NOT_PAIRED: 'Crie uma conta ou conecte com um token primeiro.',
-  INVALID_CODE: 'Token inválido. São 12 caracteres (letras e números).',
+  INVALID_CODE: `Token inválido. Use ${CASA_CODE_LENGTH} caracteres (ou 12 para uma conta anterior).`,
   NETWORK: 'Sem conexão. O backup precisa de internet para ser ativado.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
   BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
@@ -251,11 +252,11 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
                   value={code}
                   onChangeText={(text) => setCode(text.toUpperCase())}
                   style={styles.input}
-                  placeholder="Token (12 caracteres)"
+                  placeholder={`Token (${CASA_CODE_LENGTH} caracteres)`}
                   placeholderTextColor={colors.ink3}
                   autoCapitalize="characters"
                   autoCorrect={false}
-                  maxLength={12}
+                  maxLength={CASA_CODE_LENGTH}
                 />
               </View>
               <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handlePair}>

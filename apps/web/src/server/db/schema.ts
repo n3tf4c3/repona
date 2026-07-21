@@ -34,6 +34,32 @@ export const casas = pgTable("casas", {
 
 export type Casa = typeof casas.$inferSelect;
 
+// Registro durável das mutações de conta disparadas pelo mobile. O cliente
+// persiste o Idempotency-Key antes do request e o servidor grava a operação na
+// mesma transação da criação/exclusão. Assim, timeout ou resposta perdida pode
+// ser repetido sem criar outra casa nem transformar uma exclusão já concluída
+// em 404. Não há FK para casas de propósito: o recibo de DELETE precisa
+// sobreviver à remoção da própria casa. O token de CREATE permanece cifrado.
+// (auditoria #90)
+export const accountOperations = pgTable(
+  "account_operations",
+  {
+    operationId: uuid("operation_id").primaryKey(),
+    operationType: text("operation_type").notNull(),
+    requestHash: text("request_hash").notNull(),
+    resultTokenEnc: text("result_token_enc"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("account_operations_type_check", sql`${table.operationType} in ('create', 'delete')`),
+    check(
+      "account_operations_result_check",
+      sql`(${table.operationType} = 'create' and ${table.resultTokenEnc} is not null)
+          or (${table.operationType} = 'delete' and ${table.resultTokenEnc} is null)`
+    ),
+  ]
+);
+
 // Tabelas de domínio (por casa) — espelham o SQLite do mobile
 // (apps/mobile/src/storage/database.ts), escopadas à casa.
 

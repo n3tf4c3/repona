@@ -1,9 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
-import type { SyncSnapshot } from '@repona/core';
+import { CASA_CODE_REGEX, type SyncSnapshot } from '@repona/core';
 import { API_BASE_URL } from '../config';
 import { getSetting, setSetting, deleteSetting } from './settings';
 import { buildLocalSnapshot, applySnapshot, parseSyncSnapshot } from './sync';
 import { setActiveScope, deleteScopeDatabase } from './database';
+import { resolveCreateOperationId, resolveDeleteOperation } from './accountOperations';
 
 const CASA_CODE_KEY = 'casa_code';
 // casaId da casa pareada (auditoria #68): determina qual arquivo SQLite abrir, por
@@ -11,8 +12,8 @@ const CASA_CODE_KEY = 'casa_code';
 // não pareado (escopo 'local').
 const ACTIVE_CASA_ID_KEY = 'active_casa_id';
 const LAST_SYNC_KEY = 'last_sync_at';
-// 12 chars = ~60 bits (mesmo formato do servidor, casa.ts CASA_CODE_LEN). (#71)
-const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}$/;
+const CREATE_ACCOUNT_OPERATION_KEY = 'pending_create_account_operation_id';
+const DELETE_ACCOUNT_OPERATION_KEY = 'pending_delete_account_operation';
 
 // Snapshot vazio: usado no pareamento para PUXAR os dados da casa sem ENVIAR
 // nada do arquivo local ativo — o que impediria dados de outra conta/scratch de
@@ -52,6 +53,31 @@ async function getCasaCodeSeguro(): Promise<string | null> {
 
 async function setCasaCodeSeguro(code: string): Promise<void> {
   await SecureStore.setItemAsync(CASA_CODE_KEY, code);
+  // A credencial foi recebida e persistida: a operação de CREATE já pode ser
+  // descartada. Chaves residuais de DELETE pertencem a uma conta anterior e não
+  // podem atravessar um novo pareamento. Limpeza best-effort; o token vem sempre
+  // primeiro para nunca trocar recuperabilidade por housekeeping. (#58, #90)
+  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY).catch(() => {});
+  await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY).catch(() => {});
+}
+
+async function getOrCreateCreateOperationId(): Promise<string> {
+  const current = await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
+  const operationId = resolveCreateOperationId(current);
+  if (operationId !== current) {
+    await SecureStore.setItemAsync(CREATE_ACCOUNT_OPERATION_KEY, operationId);
+  }
+  return operationId;
+}
+
+async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
+  const raw = await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
+  const operation = resolveDeleteOperation(raw, casaCode);
+  const serialized = JSON.stringify(operation);
+  if (serialized !== raw) {
+    await SecureStore.setItemAsync(DELETE_ACCOUNT_OPERATION_KEY, serialized);
+  }
+  return operation.operationId;
 }
 
 // casaId ativo no SecureStore (fora dos arquivos por-casa, pois decide qual abrir).
@@ -107,6 +133,8 @@ export async function unpairCasa(): Promise<void> {
   await deleteSetting(CASA_CODE_KEY); // limpa um eventual token legado no arquivo ativo
   await SecureStore.deleteItemAsync(CASA_CODE_KEY);
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
+  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
+  await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
   // Volta para o escopo local (scratch). O arquivo da casa permanece para uma
   // eventual reconexão; last_sync vive dentro dele, não é global. (auditoria #68)
   await setActiveScope('local');
@@ -150,11 +178,20 @@ export async function criarConta(): Promise<SyncResult> {
     return { ok: false, error: 'SERVER' };
   }
 
+  let operationId: string;
+  try {
+    // Persistido ANTES do request. Se o servidor fizer commit e a resposta se
+    // perder, a próxima tentativa reutiliza a chave e recebe a mesma casa/token.
+    operationId = await getOrCreateCreateOperationId();
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
+
   let response: Response;
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationId },
       body: JSON.stringify({ nome: NOME_PADRAO }),
     });
   } catch {
@@ -163,7 +200,23 @@ export async function criarConta(): Promise<SyncResult> {
 
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
-  const { token } = (await response.json()) as { token: string; casaId: number };
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
+  const token = isRecord(data) ? data.token : undefined;
+  const casaId = isRecord(data) ? data.casaId : undefined;
+  if (
+    typeof token !== 'string' ||
+    !CASA_CODE_REGEX.test(token) ||
+    typeof casaId !== 'number' ||
+    !Number.isInteger(casaId)
+  ) {
+    // Mantém a operação pendente: um retry obtém o resultado memoizado correto.
+    return { ok: false, error: 'SERVER' };
+  }
   // Persiste o token ANTES da primeira sincronização (auditoria #58). Ele é a
   // ÚNICA credencial da casa recém-criada e só existe aqui: se a primeira sync
   // falhar (timeout, 413, crash), salvá-lo só no fim perderia a credencial e
@@ -171,8 +224,8 @@ export async function criarConta(): Promise<SyncResult> {
   // vendo-se pareada — não reoferece "criar conta", evitando uma segunda casa.
   // O active_casa_id NÃO é gravado ainda: no arranque restoreActiveScope abre o
   // scratch 'local' (não a casa vazia), preservando os dados a enviar; a próxima
-  // syncNow empurra o scratch e adota a casa. A idempotência completa do POST
-  // (resposta perdida ANTES de recebermos o token) fica para o redesenho (#90).
+  // syncNow empurra o scratch e adota a casa. A Idempotency-Key persistida acima
+  // também cobre a resposta perdida ANTES de recebermos o token. (#90)
   await setCasaCodeSeguro(token);
   // Empurra o scratch para a casa nova e adota o merge no arquivo dela.
   const r = await postSync(token, snapshotLocal);
@@ -207,11 +260,21 @@ export async function excluirConta(): Promise<DeleteResult> {
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   const casaId = await getActiveCasaId();
 
+  let operationId: string;
+  try {
+    // O vínculo com casaCode impede reaproveitar uma operação pendente depois de
+    // trocar de conta. Se a resposta do DELETE sumir após o commit, o retry usa
+    // a mesma chave e o servidor devolve sucesso mesmo sem a casa. (#90)
+    operationId = await getOrCreateDeleteOperationId(code);
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
+
   let response: Response;
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'DELETE',
-      headers: { 'x-casa-code': code },
+      headers: { 'x-casa-code': code, 'Idempotency-Key': operationId },
     });
   } catch {
     return { ok: false, error: 'NETWORK' };

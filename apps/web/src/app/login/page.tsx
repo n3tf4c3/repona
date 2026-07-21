@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { ShoppingBasket, AlertCircle } from "lucide-react";
+import { CASA_CODE_LENGTH } from "@repona/core";
 
 const inputClass =
   "w-full rounded-xl border border-line bg-surface px-4 py-3 text-center text-lg font-black uppercase tracking-[0.3em] text-ink outline-none transition placeholder:text-ink-faint placeholder:tracking-normal placeholder:font-normal placeholder:text-base focus:border-primary";
@@ -52,11 +53,11 @@ export default function LoginPage() {
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            maxLength={12}
+            maxLength={CASA_CODE_LENGTH}
             required
             value={token}
             onChange={(e) => setToken(e.target.value.toUpperCase())}
-            placeholder="12 caracteres"
+            placeholder={`${CASA_CODE_LENGTH} caracteres`}
             className={inputClass}
           />
         </div>

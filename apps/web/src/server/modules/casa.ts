@@ -1,9 +1,18 @@
 import "server-only";
 import { randomInt } from "crypto";
+import { CASA_CODE_ALPHABET, CASA_CODE_LENGTH, CASA_CODE_REGEX } from "@repona/core";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { casas, purchaseHistory } from "@/server/db/schema";
+import { accountOperations, casas, purchaseHistory } from "@/server/db/schema";
 import { cifrarCodigo, decifrarCodigo } from "@/server/inviteToken";
+import { fingerprintToken } from "@/server/rateLimitToken";
+import {
+  assertSameAccountOperation,
+  IDEMPOTENCY_CONFLICT,
+  IDEMPOTENCY_RESULT_GONE,
+} from "./accountOperation";
+
+export { IDEMPOTENCY_CONFLICT, IDEMPOTENCY_RESULT_GONE } from "./accountOperation";
 
 export type CasaDTO = {
   id: number;
@@ -12,15 +21,16 @@ export type CasaDTO = {
 };
 
 // Código de acesso (token): base32 sem caracteres ambíguos (0/O/1/I). É a única
-// credencial — nasce no mobile e é usado para entrar no web. 12 chars = ~60 bits
-// de entropia (antes 8 = 40 bits, fraco para um bearer permanente). (auditoria #71)
-const ALFABETO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-export const CASA_CODE_LEN = 12;
+// credencial — nasce no mobile e é usado para entrar no web. Novos códigos têm
+// 26 chars = 130 bits; o parser compartilhado ainda aceita o legado de 12 para
+// instalações anteriores. (auditoria #71)
+export const CASA_CODE_LEN = CASA_CODE_LENGTH;
+export { CASA_CODE_REGEX };
 
 function gerarCodigo(): string {
   let codigo = "";
   for (let i = 0; i < CASA_CODE_LEN; i++) {
-    codigo += ALFABETO[randomInt(ALFABETO.length)];
+    codigo += CASA_CODE_ALPHABET[randomInt(CASA_CODE_ALPHABET.length)];
   }
   return codigo;
 }
@@ -28,14 +38,14 @@ function gerarCodigo(): string {
 // Formato do token da casa (mesmo alfabeto e comprimento de gerarCodigo).
 // Exportado para as rotas validarem o header x-casa-code antes de usá-lo como
 // chave de rate limit, evitando inflar rate_limits com valores arbitrários.
-// (auditoria #54) Construído a partir das constantes para não divergir. (#71)
-export const CASA_CODE_REGEX = new RegExp(`^[${ALFABETO}]{${CASA_CODE_LEN}}$`);
+// (auditoria #54) O contrato é compartilhado por web/mobile via @repona/core
+// para não voltar a divergir. (#71)
 
-// Postgres unique_violation: só a colisão do código único justifica gerar outro
-// e tentar de novo. Qualquer outro erro (banco indisponível, timeout, outra
-// constraint) deve propagar de imediato, sem mascarar a causa nem gastar os 5
-// retries. (auditoria #64)
-function ehColisaoDeCodigo(error: unknown): boolean {
+// Marcador Postgres de unique_violation. Cada caller ainda confirma a origem:
+// criação consulta o recibo da operação antes de tratar como retry concorrente;
+// se ele não existir, a única colisão restante é o token. Qualquer outro erro
+// propaga de imediato, sem mascarar a causa. (auditoria #64, #90)
+function ehViolacaoUnica(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
@@ -44,33 +54,84 @@ function ehColisaoDeCodigo(error: unknown): boolean {
   );
 }
 
-async function criarCasa(name: string): Promise<{ id: number; code: string }> {
-  // Tenta algumas vezes em caso de colisão do código único.
-  for (let tentativa = 0; tentativa < 5; tentativa++) {
-    const code = gerarCodigo();
-    try {
-      const [casa] = await db
-        .insert(casas)
-        .values({ name, inviteCodeEnc: cifrarCodigo(code) })
-        .returning({ id: casas.id });
-      return { id: casa.id, code };
-    } catch (error) {
-      if (!ehColisaoDeCodigo(error) || tentativa === 4) throw error;
-    }
-  }
-  throw new Error("CASA_CREATE_FAILED");
+async function obterOperacao(operationId: string) {
+  const [operation] = await db
+    .select({
+      operationType: accountOperations.operationType,
+      requestHash: accountOperations.requestHash,
+      resultTokenEnc: accountOperations.resultTokenEnc,
+    })
+    .from(accountOperations)
+    .where(eq(accountOperations.operationId, operationId))
+    .limit(1);
+  return operation ?? null;
+}
+
+async function repetirCriacao(
+  operationId: string,
+  requestHash: string
+): Promise<{ token: string; name: string; casaId: number } | null> {
+  const operation = await obterOperacao(operationId);
+  if (!operation) return null;
+  assertSameAccountOperation(operation, "create", requestHash);
+  if (!operation.resultTokenEnc) throw new Error(IDEMPOTENCY_CONFLICT);
+
+  const [casa] = await db
+    .select({ id: casas.id, name: casas.name })
+    .from(casas)
+    .where(eq(casas.inviteCodeEnc, operation.resultTokenEnc))
+    .limit(1);
+  // Só ocorreria se alguém repetisse uma operação de criação muito antiga após
+  // a casa ter sido excluída. Não criamos outra casa com a mesma chave.
+  if (!casa) throw new Error(IDEMPOTENCY_RESULT_GONE);
+  return { token: decifrarCodigo(operation.resultTokenEnc), name: casa.name, casaId: casa.id };
 }
 
 // Cria a conta (= casa) com o nome escolhido no mobile e devolve o token e o
 // casaId. O mobile guarda o casaId para escopar seus dados por casa (arquivo
 // SQLite por casa) e nunca misturar dados entre contas. (auditoria #68)
 export async function criarContaNuvem(
-  nome: string
+  nome: string,
+  operationId: string
 ): Promise<{ token: string; name: string; casaId: number }> {
-  const name = nome.trim();
+  const name = nome.normalize("NFC").trim();
   if (!name) throw new Error("NOME_INVALIDO");
-  const { id, code } = await criarCasa(name);
-  return { token: code, name, casaId: id };
+  const requestHash = fingerprintToken(name, "account-create");
+
+  const replay = await repetirCriacao(operationId, requestHash);
+  if (replay) return replay;
+
+  // A operação e a casa entram no mesmo batch transacional. Se o HTTP cair
+  // depois do commit, o retry encontra account_operations e devolve exatamente
+  // o mesmo token/casaId. Se duas tentativas concorrerem, a PK da operação faz
+  // uma delas falhar e então ela lê o resultado vencedor. (auditoria #90)
+  for (let tentativa = 0; tentativa < 5; tentativa++) {
+    const token = gerarCodigo();
+    const tokenEnc = cifrarCodigo(token);
+    try {
+      const [, casasCriadas] = await db.batch([
+        db.insert(accountOperations).values({
+          operationId,
+          operationType: "create",
+          requestHash,
+          resultTokenEnc: tokenEnc,
+        }),
+        db.insert(casas).values({ name, inviteCodeEnc: tokenEnc }).returning({ id: casas.id }),
+      ]);
+      const casa = casasCriadas[0];
+      if (!casa) throw new Error("CASA_CREATE_FAILED");
+      return { token, name, casaId: casa.id };
+    } catch (error) {
+      if (!ehViolacaoUnica(error)) throw error;
+
+      // Pode ser a mesma operação concorrente ou uma raríssima colisão do token.
+      // No primeiro caso repetimos o resultado; no segundo geramos outro token.
+      const concurrentReplay = await repetirCriacao(operationId, requestHash);
+      if (concurrentReplay) return concurrentReplay;
+      if (tentativa === 4) throw error;
+    }
+  }
+  throw new Error("CASA_CREATE_FAILED");
 }
 
 // Resolve a casa pelo token. Usado pela sincronização do mobile.
@@ -143,7 +204,7 @@ export async function regenerarCodigo(
       if (!row) throw new Error("CASA_NOT_FOUND");
       return { token: novoCodigo, credentialVersion: row.credentialVersion };
     } catch (error) {
-      if (!ehColisaoDeCodigo(error) || tentativa === 4) throw error;
+      if (!ehViolacaoUnica(error) || tentativa === 4) throw error;
     }
   }
   throw new Error("CASA_CREATE_FAILED");
@@ -167,4 +228,41 @@ export async function excluirCasa(casaId: number): Promise<void> {
     db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId)),
     db.delete(casas).where(eq(casas.id, casaId)),
   ]);
+}
+
+// Variante pública usada pelo mobile: autentica pelo token e grava um recibo
+// durável na mesma transação da exclusão. Um retry com a mesma chave retorna
+// sucesso mesmo que a casa já não exista; uma chave reutilizada com outro token
+// retorna conflito. A operação não referencia casas por FK para sobreviver ao
+// DELETE. (auditoria #90)
+export async function excluirContaNuvem(code: string, operationId: string): Promise<void> {
+  const codigo = code.trim().toUpperCase();
+  if (!CASA_CODE_REGEX.test(codigo)) throw new Error("CASA_NOT_FOUND");
+  const requestHash = fingerprintToken(codigo, "account-delete");
+
+  const replay = await obterOperacao(operationId);
+  if (replay) {
+    assertSameAccountOperation(replay, "delete", requestHash);
+    return;
+  }
+
+  const casaId = await obterCasaPorCodigo(codigo);
+  if (!casaId) throw new Error("CASA_NOT_FOUND");
+
+  try {
+    await db.batch([
+      db.insert(accountOperations).values({
+        operationId,
+        operationType: "delete",
+        requestHash,
+      }),
+      db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId)),
+      db.delete(casas).where(eq(casas.id, casaId)),
+    ]);
+  } catch (error) {
+    if (!ehViolacaoUnica(error)) throw error;
+    const concurrentReplay = await obterOperacao(operationId);
+    if (!concurrentReplay) throw error;
+    assertSameAccountOperation(concurrentReplay, "delete", requestHash);
+  }
 }

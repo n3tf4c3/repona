@@ -28,7 +28,7 @@ export default function PrivacidadePage() {
       </Secao>
 
       <Secao titulo="2. Conta e como você é identificado">
-        Não pedimos e-mail, telefone ou login social. Ao criar uma conta, geramos um <strong>token de 12
+        Não pedimos e-mail, telefone ou login social. Ao criar uma conta, geramos um <strong>token de 26
         caracteres</strong> que é a única credencial — você o usa para acessar a mesma conta no app web e em
         outros aparelhos. A conta recebe um nome padrão (&quot;Minha casa&quot;), que você pode alterar depois.
       </Secao>
