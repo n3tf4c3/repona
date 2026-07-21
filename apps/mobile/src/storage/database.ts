@@ -1,5 +1,6 @@
 import { uuidv4 } from '@repona/core';
 import * as SQLite from 'expo-sqlite';
+import { File } from 'expo-file-system';
 import {
   ensureProductNameKeyUnique,
   migrateProductNameKey,
@@ -48,13 +49,26 @@ export async function setActiveScope(scope: Scope): Promise<void> {
 }
 
 // Apaga o arquivo de um escopo (usado ao excluir a conta). O arquivo não pode
-// estar aberto, então troque para outro escopo antes. Best-effort. (auditoria #68)
+// estar aberto, então troque para outro escopo antes. Erros sobem para que o
+// marcador durável de cleanup permaneça e o boot tente de novo. (#68)
 export async function deleteScopeDatabase(scope: Scope): Promise<void> {
-  try {
-    await SQLite.deleteDatabaseAsync(fileForScope(scope));
-  } catch {
-    // best-effort: o arquivo pode nem existir.
+  const name = fileForScope(scope);
+  const directory = SQLite.defaultDatabaseDirectory;
+  // Android/iOS lançam DatabaseNotFound no replay após crash. A checagem
+  // torna a operação idempotente sem engolir falha real de remoção.
+  if (directory) {
+    const file = new File(directory, name);
+    if (!file.exists) return;
+    try {
+      await SQLite.deleteDatabaseAsync(name);
+    } catch (error) {
+      if (!file.exists) return;
+      throw error;
+    }
+    return;
   }
+  // Web: o adapter do Expo não expõe diretório e deleteDatabaseAsync é no-op.
+  await SQLite.deleteDatabaseAsync(name);
 }
 
 export function getDatabase() {

@@ -1,11 +1,61 @@
 import * as SecureStore from 'expo-secure-store';
-import { CASA_CODE_REGEX, type SyncSnapshot } from '@repona/core';
+import {
+  CASA_CODE_REGEX,
+  SYNC_COLLECTIONS,
+  SYNC_PROTOCOL_VERSION,
+  emptySyncSnapshot,
+  syncCollectionSize,
+  uuidv4,
+  type SyncSnapshot,
+} from '@repona/core';
 import { API_BASE_URL } from '../config';
 import { getSetting, setSetting, deleteSetting } from './settings';
-import { buildLocalSnapshot, applySnapshot, parseSyncSnapshot } from './sync';
-import { setActiveScope, deleteScopeDatabase } from './database';
+import {
+  buildLocalSnapshot,
+  buildLocalSyncPage,
+  getLocalSyncCutoffIso,
+  getLocalSyncHighWaterMarks,
+  applySnapshot,
+  parseSyncSnapshot,
+} from './sync';
+import { getActiveScope, setActiveScope, deleteScopeDatabase } from './database';
 import { resolveCreateOperationId, resolveDeleteOperation } from './accountOperations';
 import { captureUnexpectedResult } from './resultBoundary';
+import {
+  classifySyncV2HttpFailure,
+  parseLegacySyncResponse,
+  parseSyncV2DownloadResponse,
+  parseSyncV2UploadResponse,
+  type SyncV2HttpFailure,
+} from './syncProtocol';
+import {
+  parseAccountBinding,
+  parsePendingCreateBinding,
+  serializeAccountBinding,
+  type AccountBinding,
+} from './accountBinding';
+import {
+  createSyncSession,
+  parseSyncSession,
+  pendingPairFromSession,
+  sessionMatches,
+  startDownload,
+  syncPageFingerprint,
+  type SyncSession,
+  type UploadSyncSession,
+} from './syncSession';
+import {
+  completePendingLocalDelete,
+  parsePendingLocalDelete,
+  serializePendingLocalDelete,
+  verifiedCasaIdForDelete,
+} from './accountDeletion';
+import { createPromiseMutex } from './promiseMutex';
+import {
+  resolveCreateAccountAction,
+  resolvePairAccountAction,
+} from './accountFlowState';
+import { reportMobileUnexpectedFailure } from './mobileTelemetry';
 
 const CASA_CODE_KEY = 'casa_code';
 // casaId da casa pareada (auditoria #68): determina qual arquivo SQLite abrir, por
@@ -15,51 +65,102 @@ const ACTIVE_CASA_ID_KEY = 'active_casa_id';
 const LAST_SYNC_KEY = 'last_sync_at';
 const CREATE_ACCOUNT_OPERATION_KEY = 'pending_create_account_operation_id';
 const DELETE_ACCOUNT_OPERATION_KEY = 'pending_delete_account_operation';
+const SYNC_V2_SESSION_KEY = 'sync_v2_session_v1';
+const ACCOUNT_BINDING_KEY = 'account_binding_v1';
+const PENDING_CREATE_BINDING_KEY = 'pending_create_binding_v1';
+const PENDING_LOCAL_DELETE_KEY = 'pending_local_delete_v1';
+export const SYNC_V2_CLIENT_VERSION = '1.1.0';
+const runAccountOperation = createPromiseMutex();
 
 // Snapshot vazio: usado no pareamento para PUXAR os dados da casa sem ENVIAR
 // nada do arquivo local ativo — o que impediria dados de outra conta/scratch de
 // vazarem para a casa que está sendo pareada. (auditoria #68)
-const SNAPSHOT_VAZIO: SyncSnapshot = {
-  products: [],
-  purchases: [],
-  consumptions: [],
-  prices: [],
-  listItems: [],
-};
-
 // O token da casa é a única credencial (sync, login web, exclusão de conta), por
 // isso mora no armazenamento seguro do SO (Keychain/Keystore), não no SQLite
 // comum — em aparelho comprometido ou backup local, o token não fica legível.
 // (auditoria #53)
-async function getCasaCodeSeguro(): Promise<string | null> {
-  const seguro = await SecureStore.getItemAsync(CASA_CODE_KEY);
-  if (seguro !== null) {
-    // Se uma migração anterior gravou no SecureStore mas caiu/falhou antes de
-    // apagar a cópia legada do SQLite, o early return nunca repetia a limpeza e
-    // o token ficava em claro no SQLite indefinidamente. Tenta apagar de novo,
-    // best-effort, a cada leitura (DELETE de chave ausente é no-op). (auditoria #53)
-    await deleteSetting(CASA_CODE_KEY).catch(() => {});
-    return seguro;
-  }
-  // Migra instalações que guardavam o token no SQLite (versões anteriores):
-  // move para o SecureStore e apaga do SQLite, uma vez só.
-  const legado = await getSetting(CASA_CODE_KEY);
-  if (legado !== null) {
-    await SecureStore.setItemAsync(CASA_CODE_KEY, legado);
-    await deleteSetting(CASA_CODE_KEY);
-    return legado;
-  }
-  return null;
+type CredentialState =
+  | { kind: 'binding'; binding: AccountBinding }
+  | { kind: 'pending-create'; binding: AccountBinding }
+  | { kind: 'pending-pair'; code: string; casaId?: number }
+  | { kind: 'legacy-unverified'; code: string; casaId: number }
+  | { kind: 'legacy-unbound'; code: string }
+  | { kind: 'none' };
+
+async function persistBinding(code: string, casaId: number): Promise<AccountBinding> {
+  const serialized = serializeAccountBinding(code, casaId);
+  // ÚNICA escrita autoritativa: token e arquivo nunca ficam de gerações
+  // diferentes depois de crash. Limpezas abaixo são apenas legado/housekeeping.
+  await SecureStore.setItemAsync(ACCOUNT_BINDING_KEY, serialized);
+  await Promise.all([
+    SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(CASA_CODE_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY).catch(() => {}),
+    SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY).catch(() => {}),
+    deleteSetting(CASA_CODE_KEY).catch(() => {}),
+  ]);
+  return parseAccountBinding(serialized)!;
 }
 
-async function setCasaCodeSeguro(code: string): Promise<void> {
-  await SecureStore.setItemAsync(CASA_CODE_KEY, code);
-  // A credencial foi recebida e persistida: a operação de CREATE já pode ser
-  // descartada. Chaves residuais de DELETE pertencem a uma conta anterior e não
-  // podem atravessar um novo pareamento. Limpeza best-effort; o token vem sempre
-  // primeiro para nunca trocar recuperabilidade por housekeeping. (#58, #90)
-  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY).catch(() => {});
-  await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY).catch(() => {});
+async function persistPendingCreate(code: string, casaId: number): Promise<void> {
+  await SecureStore.setItemAsync(
+    PENDING_CREATE_BINDING_KEY,
+    serializeAccountBinding(code, casaId),
+  );
+}
+
+async function getCredentialState(): Promise<CredentialState> {
+  const bindingRaw = await SecureStore.getItemAsync(ACCOUNT_BINDING_KEY);
+  const binding = parseAccountBinding(bindingRaw);
+  if (binding) return { kind: 'binding', binding };
+  if (bindingRaw !== null) await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
+
+  const pendingRaw = await SecureStore.getItemAsync(PENDING_CREATE_BINDING_KEY);
+  const pending = parsePendingCreateBinding(pendingRaw);
+  if (pending) return { kind: 'pending-create', binding: pending };
+  if (pendingRaw !== null) await SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY);
+
+  // Pair é pull-only e ainda não possui binding antes da 1ª resposta. A
+  // sessão global funciona como intent durável; depois de crash, syncNow retoma
+  // sem pedir o token de novo e sem transformar o scratch em upload.
+  const pairSession = pendingPairFromSession(
+    parseSyncSession(await SecureStore.getItemAsync(SYNC_V2_SESSION_KEY)),
+  );
+  if (pairSession) return { kind: 'pending-pair', ...pairSession };
+
+  let legacyCode = await SecureStore.getItemAsync(CASA_CODE_KEY);
+  if (!legacyCode) {
+    legacyCode = await getSetting(CASA_CODE_KEY);
+    if (legacyCode && CASA_CODE_REGEX.test(legacyCode)) {
+      await SecureStore.setItemAsync(CASA_CODE_KEY, legacyCode);
+      await deleteSetting(CASA_CODE_KEY);
+    }
+  } else {
+    await deleteSetting(CASA_CODE_KEY).catch(() => {});
+  }
+  if (!legacyCode || !CASA_CODE_REGEX.test(legacyCode)) return { kind: 'none' };
+
+  const rawCasaId = await SecureStore.getItemAsync(ACTIVE_CASA_ID_KEY);
+  const casaId = rawCasaId ? Number(rawCasaId) : NaN;
+  if (Number.isSafeInteger(casaId) && casaId > 0) {
+    // Versões antigas faziam duas writes (token, depois casaId). Mesmo ambos
+    // presentes podem pertencer a gerações diferentes após crash; valida via
+    // pull antes de transformar em vínculo autoritativo.
+    return { kind: 'legacy-unverified', code: legacyCode, casaId };
+  }
+  // Sem casaId não há prova de que o SQLite ativo pertence ao token. O primeiro
+  // sync legado será pull-only e só então criará o vínculo; nunca faz upload.
+  return { kind: 'legacy-unbound', code: legacyCode };
+}
+
+async function getCasaCodeSeguro(): Promise<string | null> {
+  const state = await getCredentialState();
+  return state.kind === 'none'
+    ? null
+    : state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified' || state.kind === 'pending-pair'
+      ? state.code
+      : state.binding.code;
 }
 
 async function getOrCreateCreateOperationId(): Promise<string> {
@@ -81,22 +182,75 @@ async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
   return operation.operationId;
 }
 
-// casaId ativo no SecureStore (fora dos arquivos por-casa, pois decide qual abrir).
-async function setActiveCasaId(casaId: number): Promise<void> {
-  await SecureStore.setItemAsync(ACTIVE_CASA_ID_KEY, String(casaId));
-}
 async function getActiveCasaId(): Promise<number | null> {
-  const raw = await SecureStore.getItemAsync(ACTIVE_CASA_ID_KEY);
-  const n = raw ? Number(raw) : NaN;
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
+  const state = await getCredentialState();
+  if (state.kind === 'binding' || state.kind === 'pending-create') {
+    return verifiedCasaIdForDelete({ kind: state.kind, casaId: state.binding.casaId });
+  }
+  if (state.kind === 'pending-pair') {
+    return verifiedCasaIdForDelete({ kind: state.kind, casaId: state.casaId });
+  }
+  return verifiedCasaIdForDelete({
+    kind: state.kind === 'legacy-unverified' ? 'legacy-unverified' : 'other',
+    casaId: state.kind === 'legacy-unverified' ? state.casaId : undefined,
+  });
+}
+
+async function clearCredentialsAfterLocalDelete(): Promise<void> {
+  // ACCOUNT_BINDING é removido por último: se uma limpeza intermediária
+  // falhar, o vínculo autoritativo continua recuperável junto do marcador.
+  await deleteSetting(CASA_CODE_KEY);
+  await SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY);
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  await SecureStore.deleteItemAsync(CASA_CODE_KEY);
+  await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
+  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
+  await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
+  await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
+}
+
+async function resumePendingLocalDelete(): Promise<void> {
+  const raw = await SecureStore.getItemAsync(PENDING_LOCAL_DELETE_KEY);
+  if (raw === null) return;
+  const pending = parsePendingLocalDelete(raw);
+  if (!pending) {
+    await SecureStore.deleteItemAsync(PENDING_LOCAL_DELETE_KEY);
+    return;
+  }
+  await completePendingLocalDelete(pending, {
+    switchToLocal: () => setActiveScope('local'),
+    deleteDatabase: (casaId) => deleteScopeDatabase(casaId),
+    clearCredentials: clearCredentialsAfterLocalDelete,
+    clearPending: () => SecureStore.deleteItemAsync(PENDING_LOCAL_DELETE_KEY),
+  });
+}
+
+function runAccountFlow<T>(operation: () => Promise<T>): Promise<T> {
+  return runAccountOperation(async () => {
+    await resumePendingLocalDelete();
+    return operation();
+  });
 }
 
 // Restaura o arquivo SQLite ativo a partir do casaId pareado. Deve rodar no
 // arranque do app, ANTES de qualquer leitura de dados, para não ler o scratch
 // 'local' quando há uma casa pareada. (auditoria #68)
-export async function restoreActiveScope(): Promise<void> {
-  const casaId = await getActiveCasaId();
-  await setActiveScope(casaId ?? 'local');
+export function restoreActiveScope(): Promise<void> {
+  return runAccountOperation(restoreActiveScopeUnsafe);
+}
+
+async function restoreActiveScopeUnsafe(): Promise<void> {
+  // Se a nuvem já foi apagada, conclui a remoção local antes de sequer ler o
+  // binding. O marcador só some no último passo e torna todos os crashes retomáveis.
+  await resumePendingLocalDelete();
+  const state = await getCredentialState();
+  await setActiveScope(
+    state.kind === 'binding'
+      ? state.binding.casaId
+      : state.kind === 'pending-pair' && state.casaId !== undefined
+        ? state.casaId
+        : 'local',
+  );
 }
 
 // fetch com timeout via AbortController: sem isto uma conexão pendurada (rede
@@ -116,7 +270,18 @@ async function fetchComTimeout(url: string, init: RequestInit): Promise<Response
 
 export type SyncResult =
   | { ok: true; lastSyncAt: string }
-  | { ok: false; error: 'NOT_PAIRED' | 'INVALID_CODE' | 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
+  | {
+      ok: false;
+      error:
+        | 'NOT_PAIRED'
+        | 'INVALID_CODE'
+        | 'NETWORK'
+        | 'CASA_NOT_FOUND'
+        | 'BUSY'
+        | 'SYNC_LIMIT'
+        | 'ACCOUNT_STATE_CONFLICT'
+        | 'SERVER';
+    };
 
 export type DeleteResult =
   | { ok: true }
@@ -130,38 +295,72 @@ export async function getLastSyncAt(): Promise<string | null> {
   return getSetting(LAST_SYNC_KEY);
 }
 
-export async function unpairCasa(): Promise<void> {
-  await deleteSetting(CASA_CODE_KEY); // limpa um eventual token legado no arquivo ativo
+export function unpairCasa(): Promise<void> {
+  return runAccountFlow(unpairCasaUnsafe);
+}
+
+async function unpairCasaUnsafe(): Promise<void> {
+  // Fecha primeiro o arquivo da casa. Se isso falhar, o binding ainda existe e
+  // o boot consegue restaurá-lo; nunca ficamos sem credencial apontando ao DB aberto.
+  await setActiveScope('local');
+  await deleteSetting(CASA_CODE_KEY); // limpa um eventual token legado no scratch
+  await SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY);
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
   await SecureStore.deleteItemAsync(CASA_CODE_KEY);
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
   await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
-  // Volta para o escopo local (scratch). O arquivo da casa permanece para uma
-  // eventual reconexão; last_sync vive dentro dele, não é global. (auditoria #68)
-  await setActiveScope('local');
+  await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
 
 // Envia o snapshot local e aplica o snapshot mesclado que a nuvem devolve.
 // O escopo já é o da casa ativa; build e apply operam no arquivo dela.
 export function syncNow(): Promise<SyncResult> {
-  return captureUnexpectedResult(syncNowUnsafe, () => ({ ok: false, error: 'SERVER' }));
+  return runAccountFlow(() =>
+    captureUnexpectedResult(
+      syncNowUnsafe,
+      () => ({ ok: false, error: 'SERVER' }),
+      () => reportMobileUnexpectedFailure('sync'),
+    ),
+  );
 }
 
 async function syncNowUnsafe(): Promise<SyncResult> {
-  const code = await getCasaCode();
-  if (!code) return { ok: false, error: 'NOT_PAIRED' };
-  let snapshot: SyncSnapshot;
-  try {
-    // Falha ao montar o snapshot local (SQLite) é local, não de rede. (auditoria #57)
-    snapshot = await buildLocalSnapshot();
-  } catch {
+  const state = await getCredentialState();
+  if (state.kind === 'none') return { ok: false, error: 'NOT_PAIRED' };
+
+  const isLegacy = state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified';
+  const code = isLegacy || state.kind === 'pending-pair' ? state.code : state.binding.code;
+  const uploadLocal = !isLegacy && state.kind !== 'pending-pair';
+  // Um vínculo válido escolhe explicitamente o arquivo antes de QUALQUER leitura
+  // de upload. Pending-create usa o scratch; legado sem casaId faz pull-only.
+  await setActiveScope(
+    state.kind === 'binding'
+      ? state.binding.casaId
+      : state.kind === 'pending-pair' && state.casaId !== undefined
+        ? state.casaId
+        : 'local',
+  );
+  const requiredCasaId =
+    state.kind === 'binding' || state.kind === 'pending-create'
+      ? state.binding.casaId
+      : state.kind === 'pending-pair'
+        ? state.casaId
+        : undefined;
+  const r = await runPagedSync(code, uploadLocal, requiredCasaId);
+  if (!r.ok) return { ok: false, error: r.error };
+
+  if (
+    requiredCasaId !== undefined &&
+    requiredCasaId !== r.casaId
+  ) {
     return { ok: false, error: 'SERVER' };
   }
-  const r = await postSync(code, snapshot);
-  if (!r.ok) return { ok: false, error: r.error };
-  const at = await adotarCasa(r.casaId, r.merged);
-  await setActiveCasaId(r.casaId);
-  return { ok: true, lastSyncAt: at };
+  if (state.kind !== 'binding') await persistBinding(code, r.casaId);
+  // A sessão `download complete` só deixa de ser a fonte de recuperação
+  // DEPOIS que o binding atômico code+casaId foi promovido com sucesso.
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  return { ok: true, lastSyncAt: r.lastSyncAt };
 }
 
 // Nome padrão da conta. O nome é só um rótulo (não é credencial nem tem
@@ -173,20 +372,39 @@ const NOME_PADRAO = 'Minha casa';
 // credencial usada para acessar pelo web. Já faz a primeira sincronização.
 // Sem parâmetros: o nome é automático (NOME_PADRAO) para o fluxo ser um toque só.
 export function criarConta(): Promise<SyncResult> {
-  return captureUnexpectedResult(criarContaUnsafe, () => ({ ok: false, error: 'SERVER' }));
+  return runAccountFlow(() =>
+    captureUnexpectedResult(
+      criarContaUnsafe,
+      () => ({ ok: false, error: 'SERVER' }),
+      () => reportMobileUnexpectedFailure('create-account'),
+    ),
+  );
+}
+
+async function resumePendingCreateSync(code: string, casaId: number): Promise<SyncResult> {
+  await setActiveScope('local');
+  const r = await runPagedSync(code, true, casaId);
+  if (!r.ok) return { ok: false, error: r.error };
+  if (r.casaId !== casaId) return { ok: false, error: 'SERVER' };
+  await persistBinding(code, casaId);
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  return { ok: true, lastSyncAt: r.lastSyncAt };
 }
 
 async function criarContaUnsafe(): Promise<SyncResult> {
+  const action = resolveCreateAccountAction(await getCredentialState());
+  if (action.kind === 'reject') {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+  if (action.kind === 'resume') {
+    // O POST ja foi confirmado e token+casaId estao salvos. Um novo POST aqui
+    // poderia criar uma segunda casa; o retry retoma somente a sync pendente.
+    return resumePendingCreateSync(action.code, action.casaId);
+  }
+
   // Cria a conta e MIGRA os dados locais (scratch) para ela: o snapshot local
   // atual vira o conteúdo inicial da casa nova. É dado do próprio usuário indo
   // para a própria conta nova — não é cruzamento entre casas. (auditoria #68)
-  let snapshotLocal: SyncSnapshot;
-  try {
-    snapshotLocal = await buildLocalSnapshot();
-  } catch {
-    return { ok: false, error: 'SERVER' };
-  }
-
   let operationId: string;
   try {
     // Persistido ANTES do request. Se o servidor fizer commit e a resposta se
@@ -236,47 +454,69 @@ async function criarContaUnsafe(): Promise<SyncResult> {
   // scratch 'local' (não a casa vazia), preservando os dados a enviar; a próxima
   // syncNow empurra o scratch e adota a casa. A Idempotency-Key persistida acima
   // também cobre a resposta perdida ANTES de recebermos o token. (#90)
-  await setCasaCodeSeguro(token);
+  await persistPendingCreate(token, casaId);
   // Empurra o scratch para a casa nova e adota o merge no arquivo dela.
-  const r = await postSync(token, snapshotLocal);
-  if (!r.ok) return { ok: false, error: r.error };
-  const at = await adotarCasa(r.casaId, r.merged);
-  await setActiveCasaId(r.casaId);
-  return { ok: true, lastSyncAt: at };
+  return resumePendingCreateSync(token, casaId);
 }
 
 // Conecta a uma casa existente PUXANDO os dados dela, sem enviar o arquivo local
 // ativo (scratch ou outra casa) — envia snapshot vazio, recebe casaId + dados,
-// troca para o arquivo da casa e aplica lá. Nenhum dado cruza de conta. O token
-// e o casaId só são persistidos se o pull der certo, para falha de rede/servidor
-// não deixar o app "pareado" sem nunca ter sincronizado. (auditoria #68)
+// troca para o arquivo da casa e aplica lá. Nenhum dado cruza de conta. O binding
+// definitivo só nasce após o pull; durante falhas, a sessão preserva o token como
+// intenção pendente para que um retry não consiga substituí-lo. (auditoria #68)
 export function pairAndSync(code: string): Promise<SyncResult> {
-  return captureUnexpectedResult(() => pairAndSyncUnsafe(code), () => ({ ok: false, error: 'SERVER' }));
+  return runAccountFlow(() =>
+    captureUnexpectedResult(
+      () => pairAndSyncUnsafe(code),
+      () => ({ ok: false, error: 'SERVER' }),
+      () => reportMobileUnexpectedFailure('pair-account'),
+    ),
+  );
 }
 
 async function pairAndSyncUnsafe(code: string): Promise<SyncResult> {
   const normalized = code.trim().toUpperCase();
   if (!CASA_CODE_REGEX.test(normalized)) return { ok: false, error: 'INVALID_CODE' };
 
-  const r = await postSync(normalized, SNAPSHOT_VAZIO);
+  const action = resolvePairAccountAction(await getCredentialState(), normalized);
+  if (action.kind === 'reject') {
+    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
+  }
+
+  // A sessao pull-only e a intencao duravel do pareamento. Se ela ja existe,
+  // somente o mesmo token pode retoma-la e o casaId observado nao pode mudar.
+  const requiredCasaId = action.kind === 'resume' ? action.casaId : undefined;
+  await setActiveScope(requiredCasaId ?? 'local');
+  const r = await runPagedSync(normalized, false, requiredCasaId);
   if (!r.ok) return { ok: false, error: r.error };
-  const at = await adotarCasa(r.casaId, r.merged);
-  await setCasaCodeSeguro(normalized);
-  await setActiveCasaId(r.casaId);
-  return { ok: true, lastSyncAt: at };
+  if (requiredCasaId !== undefined && r.casaId !== requiredCasaId) {
+    return { ok: false, error: 'SERVER' };
+  }
+  await persistBinding(normalized, r.casaId);
+  await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  return { ok: true, lastSyncAt: r.lastSyncAt };
 }
 
 // Exclui a conta na nuvem (todos os dados, para todos os aparelhos com este
-// token) e desconecta este aparelho. Os dados locais permanecem. (exigência da
-// Play: exclusão de conta self-service)
+// token) e remove também o arquivo local desta casa. (exigência da Play:
+// exclusão de conta self-service)
 export function excluirConta(): Promise<DeleteResult> {
-  return captureUnexpectedResult(excluirContaUnsafe, () => ({ ok: false, error: 'SERVER' }));
+  return runAccountFlow(() =>
+    captureUnexpectedResult(
+      excluirContaUnsafe,
+      () => ({ ok: false, error: 'SERVER' }),
+      () => reportMobileUnexpectedFailure('delete-account'),
+    ),
+  );
 }
 
 async function excluirContaUnsafe(): Promise<DeleteResult> {
   const code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   const casaId = await getActiveCasaId();
+  // Sem identidade validada do arquivo não há como cumprir o contrato de
+  // apagar localmente sem arriscar remover o scratch de outra geração.
+  if (casaId === null) return { ok: false, error: 'SERVER' };
 
   let operationId: string;
   try {
@@ -301,65 +541,368 @@ async function excluirContaUnsafe(): Promise<DeleteResult> {
   if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND' };
   if (!response.ok) return { ok: false, error: 'SERVER' };
 
-  await unpairCasa(); // troca para o escopo 'local', fechando o arquivo da casa
-  // A conta foi apagada na nuvem: remove o arquivo local da casa para não deixar
-  // dados órfãos no aparelho. Feito após unpairCasa (o arquivo já está fechado).
-  // (auditoria #68)
-  if (casaId !== null) await deleteScopeDatabase(casaId);
+  // Commit remoto confirmado: registra o cleanup ANTES de trocar escopo/apagar.
+  // Se o processo morrer em qualquer linha seguinte, restoreActiveScope conclui.
+  await SecureStore.setItemAsync(
+    PENDING_LOCAL_DELETE_KEY,
+    serializePendingLocalDelete(casaId),
+  );
+  await resumePendingLocalDelete();
   return { ok: true };
 }
 
-// POST /api/sync de baixo nível: envia o snapshot dado e devolve casaId + snapshot
-// mesclado, SEM aplicar (o caller decide o escopo e aplica no arquivo certo).
-type PostSyncResult =
-  | { ok: true; casaId: number; merged: SyncSnapshot }
-  | { ok: false; error: 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SERVER' };
+type PagedSyncError = 'NETWORK' | 'CASA_NOT_FOUND' | 'BUSY' | 'SYNC_LIMIT' | 'SERVER';
+type V2PagedSyncError = PagedSyncError | 'UNSUPPORTED_PROTOCOL';
+type PagedSyncResult =
+  | { ok: true; casaId: number; lastSyncAt: string }
+  | { ok: false; error: PagedSyncError };
+type UploadPageResult =
+  | { ok: true; casaId: number }
+  | { ok: false; error: V2PagedSyncError };
+type DownloadPageResult =
+  | {
+      ok: true;
+      casaId: number;
+      page: Awaited<ReturnType<typeof buildLocalSyncPage>>['snapshot'];
+      nextCursor: string | null;
+    }
+  | { ok: false; error: V2PagedSyncError };
 
-async function postSync(code: string, snapshot: SyncSnapshot): Promise<PostSyncResult> {
+function syncV2HttpError(response: Response): SyncV2HttpFailure | null {
+  return classifySyncV2HttpFailure(
+    response.status,
+    response.ok,
+    response.headers.get('x-repona-sync-protocol'),
+  );
+}
+
+async function postV2Upload(
+  code: string,
+  collection: (typeof SYNC_COLLECTIONS)[number],
+  pageId: string,
+  snapshot: Awaited<ReturnType<typeof buildLocalSyncPage>>['snapshot'],
+  expectedCasaId?: number,
+): Promise<UploadPageResult> {
+  let response: Response;
+  try {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/sync/v2`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-casa-code': code,
+        'x-repona-sync-protocol': String(SYNC_PROTOCOL_VERSION),
+        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+      },
+      body: JSON.stringify({
+        protocolVersion: SYNC_PROTOCOL_VERSION,
+        phase: 'upload',
+        collection,
+        pageId,
+        snapshot,
+        expectedCasaId,
+      }),
+    });
+  } catch {
+    return { ok: false, error: 'NETWORK' };
+  }
+  const httpError = syncV2HttpError(response);
+  if (httpError) return { ok: false, error: httpError };
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
+  const parsed = parseSyncV2UploadResponse(raw, pageId);
+  return parsed ? { ok: true, casaId: parsed.casaId } : { ok: false, error: 'SERVER' };
+}
+
+async function postV2Download(
+  code: string,
+  cursor: string | null,
+  expectedCasaId?: number,
+): Promise<DownloadPageResult> {
+  let response: Response;
+  try {
+    response = await fetchComTimeout(`${API_BASE_URL}/api/sync/v2`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-casa-code': code,
+        'x-repona-sync-protocol': String(SYNC_PROTOCOL_VERSION),
+        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+      },
+      body: JSON.stringify({
+        protocolVersion: SYNC_PROTOCOL_VERSION,
+        phase: 'download',
+        cursor,
+        expectedCasaId,
+      }),
+    });
+  } catch {
+    return { ok: false, error: 'NETWORK' };
+  }
+  const httpError = syncV2HttpError(response);
+  if (httpError) return { ok: false, error: httpError };
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    return { ok: false, error: 'SERVER' };
+  }
+  const parsed = parseSyncV2DownloadResponse(raw);
+  return parsed ? { ok: true, ...parsed } : { ok: false, error: 'SERVER' };
+}
+
+async function saveSyncSession(session: SyncSession): Promise<void> {
+  await SecureStore.setItemAsync(SYNC_V2_SESSION_KEY, JSON.stringify(session));
+}
+
+async function loadSyncSession(code: string, uploadLocal: boolean): Promise<SyncSession> {
+  const raw = await SecureStore.getItemAsync(SYNC_V2_SESSION_KEY);
+  const existing = parseSyncSession(raw);
+  if (existing && sessionMatches(existing, code, uploadLocal)) return existing;
+  if (raw !== null) await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
+  const [cutoffIso, highWater] = uploadLocal
+    ? await Promise.all([getLocalSyncCutoffIso(), getLocalSyncHighWaterMarks()])
+    : [null, null] as const;
+  const session = createSyncSession(code, uploadLocal, cutoffIso, highWater);
+  await saveSyncSession(session);
+  return session;
+}
+
+type UploadPagesResult =
+  | { ok: true; session: UploadSyncSession }
+  | { ok: false; error: V2PagedSyncError };
+
+async function uploadLocalPages(
+  code: string,
+  initial: UploadSyncSession,
+  requiredCasaId?: number,
+): Promise<UploadPagesResult> {
+  let progress = initial;
+  while (progress.collectionIndex < SYNC_COLLECTIONS.length) {
+    const collection = SYNC_COLLECTIONS[progress.collectionIndex];
+    const page = await buildLocalSyncPage(
+      collection,
+      progress.afterId,
+      progress.cutoffIso,
+      progress.highWater,
+    );
+    if (syncCollectionSize(page.snapshot, collection) === 0) {
+      progress = {
+        ...progress,
+        collectionIndex: progress.collectionIndex + 1,
+        afterId: 0,
+        pendingPageId: undefined,
+        pendingPageFingerprint: undefined,
+      };
+      await saveSyncSession(progress);
+      continue;
+    }
+
+    const fingerprint = syncPageFingerprint(page.snapshot);
+    const reusePendingPage =
+      progress.pendingPageId !== undefined &&
+      progress.pendingPageFingerprint === fingerprint;
+    const pageId: string = reusePendingPage ? progress.pendingPageId! : uuidv4();
+    if (!reusePendingPage) {
+      progress = {
+        ...progress,
+        pendingPageId: pageId,
+        pendingPageFingerprint: fingerprint,
+      };
+      await saveSyncSession(progress);
+    }
+    const result = await postV2Upload(
+      code,
+      collection,
+      pageId,
+      page.snapshot,
+      requiredCasaId,
+    );
+    if (!result.ok) return result;
+    if (progress.casaId !== undefined && progress.casaId !== result.casaId) {
+      return { ok: false, error: 'SERVER' };
+    }
+
+    progress = {
+      ...progress,
+      casaId: result.casaId,
+      collectionIndex:
+        page.nextAfterId === null ? progress.collectionIndex + 1 : progress.collectionIndex,
+      afterId: page.nextAfterId ?? 0,
+      pendingPageId: undefined,
+      pendingPageFingerprint: undefined,
+    };
+    await saveSyncSession(progress);
+  }
+  return { ok: true, session: progress };
+}
+
+async function runV2PagedSync(
+  code: string,
+  uploadLocal: boolean,
+  requiredCasaId?: number,
+): Promise<PagedSyncResult | { ok: false; error: 'UNSUPPORTED_PROTOCOL' }> {
+  const originalScope = getActiveScope();
+  let expectedCasaId: number | null = null;
+  let switchedScope = false;
+  let completed = false;
+
+  try {
+    let session = await loadSyncSession(code, uploadLocal);
+    if (session.phase === 'upload') {
+      const upload = await uploadLocalPages(code, session, requiredCasaId);
+      if (!upload.ok) return upload;
+      expectedCasaId = upload.session.casaId ?? null;
+      if (expectedCasaId !== null && requiredCasaId !== undefined && expectedCasaId !== requiredCasaId) {
+        return { ok: false, error: 'SERVER' };
+      }
+      session = startDownload(upload.session);
+      await saveSyncSession(session);
+    } else {
+      expectedCasaId = session.casaId ?? null;
+    }
+
+    if (expectedCasaId !== null) {
+      if (requiredCasaId !== undefined && expectedCasaId !== requiredCasaId) {
+        return { ok: false, error: 'SERVER' };
+      }
+      await setActiveScope(expectedCasaId);
+      switchedScope = true;
+    }
+
+    while (!session.complete) {
+      const requestedCursor = session.cursor;
+      const download = await postV2Download(code, requestedCursor, requiredCasaId);
+      if (!download.ok) return download;
+      if (requestedCursor !== null && download.nextCursor === requestedCursor) {
+        return { ok: false, error: 'SERVER' };
+      }
+      if (expectedCasaId !== null && expectedCasaId !== download.casaId) {
+        return { ok: false, error: 'SERVER' };
+      }
+      if (requiredCasaId !== undefined && requiredCasaId !== download.casaId) {
+        return { ok: false, error: 'SERVER' };
+      }
+      expectedCasaId = download.casaId;
+      if (!switchedScope) {
+        await setActiveScope(download.casaId);
+        switchedScope = true;
+      }
+      await applySnapshot(download.page);
+      session = {
+        ...session,
+        casaId: download.casaId,
+        cursor: download.nextCursor,
+        complete: download.nextCursor === null,
+      };
+      // Fase/cursor vivem no SecureStore global, então sobreviverão à troca do
+      // arquivo SQLite e a 429/crash sem repetir upload nem páginas já aplicadas.
+      await saveSyncSession(session);
+    }
+
+    if (expectedCasaId === null) return { ok: false, error: 'SERVER' };
+    const lastSyncAt = new Date().toISOString();
+    await setSetting(LAST_SYNC_KEY, lastSyncAt);
+    completed = true;
+    return { ok: true, casaId: expectedCasaId, lastSyncAt };
+  } finally {
+    if (!completed && switchedScope && getActiveScope() !== originalScope) {
+      await setActiveScope(originalScope);
+    }
+  }
+}
+
+type LegacyPostResult =
+  | { ok: true; casaId: number; snapshot: SyncSnapshot }
+  | { ok: false; error: PagedSyncError };
+
+function legacyHttpError(response: Response): PagedSyncError | null {
+  if (response.status === 404) return 'CASA_NOT_FOUND';
+  if (response.status === 409 || response.status === 429) return 'BUSY';
+  if (response.status === 413) return 'SYNC_LIMIT';
+  return response.ok ? null : 'SERVER';
+}
+
+async function postLegacySync(code: string, snapshot: SyncSnapshot): Promise<LegacyPostResult> {
   let response: Response;
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-casa-code': code },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-casa-code': code,
+        'x-repona-sync-protocol': '1',
+        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
+      },
       body: JSON.stringify(snapshot),
     });
   } catch {
     return { ok: false, error: 'NETWORK' };
   }
-
-  if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND' };
-  // Outro device da casa está no meio de um merge (lock por casa no servidor);
-  // o merge é idempotente — basta tentar de novo. (auditoria 2026-06-09 #1)
-  if (response.status === 409) return { ok: false, error: 'BUSY' };
-  if (!response.ok) return { ok: false, error: 'SERVER' };
-
-  let data: unknown;
+  const httpError = legacyHttpError(response);
+  if (httpError) return { ok: false, error: httpError };
+  let raw: unknown;
   try {
-    data = await response.json();
+    raw = await response.json();
   } catch {
     return { ok: false, error: 'SERVER' };
   }
-  // Valida em runtime antes de aplicar: casaId numérico e snapshot bem-formado.
-  // Resposta corrompida/inesperada não deve tocar o SQLite. (auditoria #83)
-  const merged = parseSyncSnapshot(data);
-  const casaId = isRecord(data) ? data.casaId : undefined;
-  if (!merged || typeof casaId !== 'number' || !Number.isSafeInteger(casaId) || casaId <= 0) {
-    return { ok: false, error: 'SERVER' };
+  const parsed = parseLegacySyncResponse(raw);
+  return parsed ? { ok: true, ...parsed } : { ok: false, error: 'SERVER' };
+}
+
+async function runLegacySync(
+  code: string,
+  uploadLocal: boolean,
+  requiredCasaId?: number,
+): Promise<PagedSyncResult> {
+  const originalScope = getActiveScope();
+  let switchedScope = false;
+  let completed = false;
+  try {
+    // Servidores v1 não conhecem expectedCasaId. Fazemos primeiro um pull
+    // vazio: ele autentica e revela casaId sem enviar nenhum dado do SQLite. Só
+    // depois da igualdade comprovada montamos/enviamos o snapshot completo.
+    if (uploadLocal && requiredCasaId !== undefined) {
+      const preflight = await postLegacySync(code, emptySyncSnapshot());
+      if (!preflight.ok) return preflight;
+      if (preflight.casaId !== requiredCasaId) return { ok: false, error: 'SERVER' };
+    }
+
+    const outgoing = uploadLocal ? await buildLocalSnapshot() : emptySyncSnapshot();
+    const merged = await postLegacySync(code, outgoing);
+    if (!merged.ok) return merged;
+    if (requiredCasaId !== undefined && merged.casaId !== requiredCasaId) {
+      return { ok: false, error: 'SERVER' };
+    }
+
+    await setActiveScope(merged.casaId);
+    switchedScope = true;
+    await applySnapshot(merged.snapshot);
+    const lastSyncAt = new Date().toISOString();
+    await setSetting(LAST_SYNC_KEY, lastSyncAt);
+    completed = true;
+    return { ok: true, casaId: merged.casaId, lastSyncAt };
+  } finally {
+    if (!completed && switchedScope && getActiveScope() !== originalScope) {
+      await setActiveScope(originalScope);
+    }
   }
-  return { ok: true, casaId, merged };
+}
+
+async function runPagedSync(
+  code: string,
+  uploadLocal: boolean,
+  requiredCasaId?: number,
+): Promise<PagedSyncResult> {
+  const v2 = await runV2PagedSync(code, uploadLocal, requiredCasaId);
+  if (v2.ok || v2.error !== 'UNSUPPORTED_PROTOCOL') return v2;
+  return runLegacySync(code, uploadLocal, requiredCasaId);
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null;
-}
-
-// Troca para o arquivo da casa e aplica o snapshot mesclado nele, marcando o
-// last_sync (que vive dentro do arquivo da casa). A troca de escopo vem ANTES do
-// apply para os dados caírem no arquivo certo. (auditoria #68)
-async function adotarCasa(casaId: number, merged: SyncSnapshot): Promise<string> {
-  await setActiveScope(casaId);
-  await applySnapshot(merged);
-  const at = new Date().toISOString();
-  await setSetting(LAST_SYNC_KEY, at);
-  return at;
 }

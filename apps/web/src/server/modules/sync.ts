@@ -1,5 +1,19 @@
 import "server-only";
-import { and, desc, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   products,
@@ -9,6 +23,7 @@ import {
   priceHistory,
   productSyncAliases,
   shoppingListItems,
+  syncLocks,
 } from "@/server/db/schema";
 import {
   deriveInventoryQuantity,
@@ -20,10 +35,40 @@ import {
   sameSyncEvent,
   uuidv4,
   normalizeQuantity,
+  SYNC_PAGE_LIMITS,
+  emptySyncSnapshot,
+  type SyncCollection,
+  type SyncHighWaterMarks,
   type SyncSnapshot,
 } from "@repona/core";
 import { garantirListaAtiva } from "@/server/modules/listas";
-import { indexProductSyncAliases } from "@/server/modules/syncAliases";
+import {
+  aliasForFallbackProductMatch,
+  indexProductSyncAliases,
+} from "@/server/modules/syncAliases";
+import {
+  buildSyncConcurrencyGuard,
+  isSyncConcurrentUniqueViolation,
+  isSyncConcurrencyGuardViolation,
+  SyncConcurrentMutationError,
+  type SyncConcurrencyExpectation,
+} from "@/server/modules/syncConcurrencyGuard";
+import { renewLock } from "@/server/rateLimit";
+import { encodeSyncCursor, nextSyncCollection, type SyncCursor } from "@/server/syncCursor";
+import { buildCasaMutationLock } from "@/server/modules/casaMutationLock";
+import {
+  assertSyncProductReferencesResolved,
+  resolveSyncProductReference,
+} from "@/server/modules/syncProductResolution";
+import { isListItemWithinDownloadScope } from "@/server/syncDownloadScope";
+import {
+  buildSyncDownloadHighWaterQuery,
+  syncDownloadHighWaterFromRow,
+  type SyncDownloadHighWaterRow,
+} from "@/server/modules/syncDownloadHighWater";
+
+export { SyncConcurrentMutationError } from "@/server/modules/syncConcurrencyGuard";
+export { SyncUnknownProductError } from "@/server/modules/syncProductResolution";
 
 // Tombstones de item de lista mais antigos que isto são podados (já propagaram a
 // deleção). Um device offline por mais que isso pode reviver um item. (auditoria #9)
@@ -90,11 +135,95 @@ function findEvent<T extends IndexedEvent>(
   );
 }
 
+function productIdForSyncEntry(
+  entry: { productSyncId?: string; productName: string },
+  idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>
+): number | undefined {
+  return resolveSyncProductReference(entry, idPorNome, idPorSyncId);
+}
+
+function productReferencesForSnapshot(incoming: SyncSnapshot): {
+  syncIds: string[];
+  nameKeys: string[];
+  barcodes: string[];
+} {
+  const children = [
+    ...incoming.purchases,
+    ...incoming.consumptions,
+    ...incoming.prices,
+    ...(incoming.listItems ?? []),
+  ];
+  return {
+    syncIds: [
+      ...new Set(
+        [
+          ...incoming.products.map((product) => product.syncId),
+          ...children.map((entry) => entry.productSyncId),
+        ].filter((value): value is string => Boolean(value))
+      ),
+    ],
+    nameKeys: [
+      ...new Set([
+        ...incoming.products.map((product) => productNameKey(product.name)),
+        ...children.map((entry) => productNameKey(entry.productName)),
+      ]),
+    ],
+    barcodes: [
+      ...new Set(
+        incoming.products
+          .map((product) => product.barcode?.trim())
+          .filter((value): value is string => Boolean(value))
+      ),
+    ],
+  };
+}
+
 // Uma escrita acumulada para o db.batch (que o neon-http executa como UMA
 // transação). O merge calcula tudo primeiro e aplica de uma vez — antes eram
 // dezenas de round-trips soltos e uma falha no meio deixava o snapshot
 // meio-aplicado. (auditoria 2026-06-09 #12.3)
 type Escrita = Parameters<typeof db.batch>[0][number];
+
+export type SyncLockFence = {
+  key: string;
+  token: string;
+  ttlSeconds: number;
+};
+
+export class SyncLockLostError extends Error {
+  constructor() {
+    super("SYNC_LOCK_LOST");
+    this.name = "SyncLockLostError";
+  }
+}
+
+async function renewOrThrow(fence: SyncLockFence | undefined): Promise<void> {
+  if (fence && !(await renewLock(fence.key, fence.token, fence.ttlSeconds))) {
+    throw new SyncLockLostError();
+  }
+}
+
+function fenceWrite(fence: SyncLockFence): Escrita {
+  // A linha fica FOR UPDATE até o fim do db.batch. Token/lease inválidos fazem
+  // count=0 e abortam o batch por divisão por zero, antes de qualquer efeito.
+  return db.execute(sql`
+    with owned as materialized (
+      select 1
+      from ${syncLocks}
+      where ${syncLocks.chave} = ${fence.key}
+        and ${syncLocks.token} = ${fence.token}
+        and ${syncLocks.expiraEm} > now()
+      for update
+    )
+    select 1 / count(*)::int as fence from owned
+  `) as unknown as Escrita;
+}
+
+type MergeCasaOptions = {
+  returnSnapshot?: boolean;
+  fence?: SyncLockFence;
+};
 
 // Merge do snapshot do mobile na casa, devolvendo o snapshot mesclado.
 // Regras: produto casa por nome (o celular vence nos campos); compras e consumos
@@ -106,29 +235,109 @@ type Escrita = Parameters<typeof db.batch>[0][number];
 // produto parcial persiste. (auditoria #26)
 export async function mergeCasaSnapshot(
   casaId: number,
-  incoming: SyncSnapshot
-): Promise<SyncSnapshot> {
-  const [existentes, aliases] = await Promise.all([
-    db
-      .select({
-        id: products.id,
-        name: products.name,
-        syncId: products.syncId,
-        barcode: products.barcode,
-        metadataUpdatedAt: products.updatedAt,
-        inventoryUpdatedAt: inventoryItems.updatedAt,
-      })
-      .from(products)
-      .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
-      .where(eq(products.casaId, casaId)),
-    db
+  incoming: SyncSnapshot,
+  options?: MergeCasaOptions & { returnSnapshot?: true }
+): Promise<SyncSnapshot>;
+export async function mergeCasaSnapshot(
+  casaId: number,
+  incoming: SyncSnapshot,
+  options: MergeCasaOptions & { returnSnapshot: false }
+): Promise<void>;
+export async function mergeCasaSnapshot(
+  casaId: number,
+  incoming: SyncSnapshot,
+  options: MergeCasaOptions = {}
+): Promise<SyncSnapshot | void> {
+  await renewOrThrow(options.fence);
+  const references = productReferencesForSnapshot(incoming);
+  const aliases =
+    references.syncIds.length === 0
+      ? []
+      : await db
       .select({
         oldSyncId: productSyncAliases.oldSyncId,
         canonicalProductId: productSyncAliases.canonicalProductId,
       })
       .from(productSyncAliases)
-      .where(eq(productSyncAliases.casaId, casaId)),
-  ]);
+      .where(
+        and(
+          eq(productSyncAliases.casaId, casaId),
+          inArray(productSyncAliases.oldSyncId, references.syncIds)
+        )
+      );
+  const identityFilters: SQL[] = [];
+  if (references.syncIds.length > 0) {
+    identityFilters.push(inArray(products.syncId, references.syncIds));
+  }
+  if (references.nameKeys.length > 0) {
+    identityFilters.push(
+      inArray(
+        sql<string>`lower(normalize(btrim(${products.name}), NFC))`,
+        references.nameKeys
+      )
+    );
+  }
+  if (references.barcodes.length > 0) {
+    identityFilters.push(inArray(products.barcode, references.barcodes));
+  }
+  const canonicalAliasIds = [...new Set(aliases.map((alias) => alias.canonicalProductId))];
+  if (canonicalAliasIds.length > 0) {
+    identityFilters.push(inArray(products.id, canonicalAliasIds));
+  }
+  const existentes =
+    identityFilters.length === 0
+      ? []
+      : await db
+          .select({
+            id: products.id,
+            name: products.name,
+            syncId: products.syncId,
+            category: products.category,
+            brand: products.brand,
+            barcode: products.barcode,
+            photoUri: products.photoUri,
+            purchaseCount: products.purchaseCount,
+            status: products.status,
+            alertThreshold: products.alertThreshold,
+            archived: products.archived,
+            occasional: products.occasional,
+            metadataUpdatedAt: products.updatedAt,
+            inventoryQuantity: inventoryItems.quantity,
+            inventoryStatus: inventoryItems.status,
+            inventoryUpdatedAt: inventoryItems.updatedAt,
+          })
+          .from(products)
+          .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
+          .where(and(eq(products.casaId, casaId), or(...identityFilters)));
+  const concurrencyExpectation: SyncConcurrencyExpectation = {
+    products: existentes.map((product) => ({
+      id: product.id,
+      syncId: product.syncId,
+      name: product.name,
+      category: product.category,
+      brand: product.brand,
+      barcode: product.barcode,
+      photoUri: product.photoUri,
+      purchaseCount: product.purchaseCount,
+      status: product.status,
+      alertThreshold: product.alertThreshold,
+      archived: product.archived,
+      occasional: product.occasional,
+      updatedAt: product.metadataUpdatedAt.toISOString(),
+    })),
+    inventories: existentes.flatMap((product) =>
+      product.inventoryUpdatedAt && product.inventoryQuantity && product.inventoryStatus
+        ? [
+            {
+              productId: product.id,
+              quantity: product.inventoryQuantity,
+              status: product.inventoryStatus,
+              updatedAt: product.inventoryUpdatedAt.toISOString(),
+            },
+          ]
+        : []
+    ),
+  };
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
   const syncIdsAposentados = indexProductSyncAliases(idPorSyncId, aliases);
@@ -146,6 +355,7 @@ export async function mergeCasaSnapshot(
       p.id,
       {
         name: p.name,
+        syncId: p.syncId,
         metadataUpdatedAt: p.metadataUpdatedAt,
         inventoryUpdatedAt: p.inventoryUpdatedAt,
         barcode: p.barcode,
@@ -184,6 +394,31 @@ export async function mergeCasaSnapshot(
       productId = match.id;
       idPorNomeRecebido.set(productNameKey(prod.name), productId);
       const info = infoPorId.get(productId)!;
+
+      const alias = aliasForFallbackProductMatch({
+        incomingSyncId: prod.syncId,
+        canonicalSyncId: info.syncId,
+        canonicalProductId: productId,
+        matchedBy: match.matchedBy,
+      });
+      if (alias) {
+        escritas.push(
+          db
+            .insert(productSyncAliases)
+            .values({
+              casaId,
+              oldSyncId: alias.oldSyncId,
+              canonicalProductId: alias.canonicalProductId,
+            })
+            .onConflictDoNothing({
+              target: [productSyncAliases.casaId, productSyncAliases.oldSyncId],
+            })
+        );
+        // Eventos da mesma pagina e das paginas seguintes resolvem a identidade
+        // recebida para o produto canonico, mesmo que o nome mude depois.
+        idPorSyncId.set(alias.oldSyncId, productId);
+        syncIdsAposentados.add(alias.oldSyncId);
+      }
 
       // Metadados e estoque têm relógios independentes. Uma edição de nome no
       // device A não pode fazer o saldo mais recente do device B perder. (#2)
@@ -259,6 +494,7 @@ export async function mergeCasaSnapshot(
       if (prod.barcode?.trim()) idPorBarcode.set(prod.barcode.trim(), productId);
       infoPorId.set(productId, {
         name: prod.name.trim(),
+        syncId,
         metadataUpdatedAt,
         inventoryUpdatedAt,
         barcode: prod.barcode,
@@ -298,41 +534,117 @@ export async function mergeCasaSnapshot(
   // Resolução dos eventos: o mapeamento dos nomes recebidos (via matchProduct)
   // tem precedência sobre os nomes atuais do banco. (auditoria 2026-06-09 #2)
   const idParaEventos = new Map([...idPorNome, ...idPorNomeRecebido]);
+  assertSyncProductReferencesResolved(
+    [
+      ...incoming.purchases,
+      ...incoming.consumptions,
+      ...incoming.prices,
+      ...(incoming.listItems ?? []),
+    ],
+    idParaEventos,
+    idPorSyncId
+  );
 
-  escritas.push(...(await mesclarCompras(casaId, idParaEventos, incoming.purchases)));
-  escritas.push(...(await mesclarConsumos(casaId, idParaEventos, incoming.consumptions)));
-  escritas.push(...(await mesclarPrecos(casaId, idParaEventos, incoming.prices)));
-  escritas.push(...(await mesclarItensLista(casaId, idParaEventos, incoming.listItems ?? [])));
+  escritas.push(...(await mesclarCompras(casaId, idParaEventos, idPorSyncId, incoming.purchases)));
+  escritas.push(...(await mesclarConsumos(casaId, idParaEventos, idPorSyncId, incoming.consumptions)));
+  escritas.push(...(await mesclarPrecos(casaId, idParaEventos, idPorSyncId, incoming.prices)));
+  const listMerge = await mesclarItensLista(
+    casaId,
+    idParaEventos,
+    idPorSyncId,
+    incoming.listItems ?? []
+  );
+  escritas.push(...listMerge.writes);
+  if (listMerge.expectation) concurrencyExpectation.activeList = listMerge.expectation;
 
   // purchase_count é derivado do histórico (auditoria #3): recalcula após o
   // merge das compras, em vez de confiar no valor do snapshot (que não soma
   // entre dispositivos). Dentro do batch (transação), o subselect já enxerga as
   // compras inseridas acima. O snapshot devolvido leva o valor recalculado.
-  escritas.push(
-    db
-      .update(products)
-      .set({
-        purchaseCount: sql<number>`(
+  const purchaseProductIds = [
+    ...new Set(
+      incoming.purchases
+        .map((entry) => productIdForSyncEntry(entry, idParaEventos, idPorSyncId))
+        .filter((id): id is number => id !== undefined)
+    ),
+  ];
+  if (purchaseProductIds.length > 0) {
+    escritas.push(
+      db
+        .update(products)
+        .set({
+          purchaseCount: sql<number>`(
           SELECT COUNT(*)::int FROM purchase_history
           WHERE purchase_history.product_id = ${products.id}
             AND purchase_history.deleted = false
-        )`,
-      })
-      .where(eq(products.casaId, casaId))
-  );
+          )`,
+        })
+        .where(and(eq(products.casaId, casaId), inArray(products.id, purchaseProductIds)))
+    );
+  }
 
-  // db.batch exige tupla não-vazia; o update de purchase_count acima garante
-  // pelo menos um item.
-  await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
+  // Snapshot vazio é válido no endpoint legado; o batch só abre quando há
+  // efeitos. No v2 isso também evita uma transação neutra por página.
+  await renewOrThrow(options.fence);
+  if (escritas.length > 0) {
+    escritas.unshift(
+      db.execute(buildSyncConcurrencyGuard(casaId, concurrencyExpectation)) as unknown as Escrita
+    );
+    if (options.fence) escritas.unshift(fenceWrite(options.fence));
+    // Ordem critica: o mutex da casa vem antes do fence. Se esperarmos o mutex
+    // segurando sync_locks, uma lease vencida nao poderia ser tomada e o worker
+    // antigo acabaria escrevendo depois da expiracao. (#74)
+    escritas.unshift(
+      db.execute(buildCasaMutationLock(casaId)) as unknown as Escrita
+    );
+    try {
+      await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
+    } catch (error) {
+      if (
+        isSyncConcurrencyGuardViolation(error) ||
+        isSyncConcurrentUniqueViolation(error)
+      ) {
+        throw new SyncConcurrentMutationError();
+      }
+      if (
+        options.fence &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "22012"
+      ) {
+        throw new SyncLockLostError();
+      }
+      throw error;
+    }
+  }
 
+  if (options.returnSnapshot === false) return;
   return construirSnapshot(casaId);
 }
 
 async function mesclarPrecos(
   casaId: number,
   idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
   incoming: SyncSnapshot["prices"]
 ): Promise<Escrita[]> {
+  if (incoming.length === 0) return [];
+  const productIds = [
+    ...new Set(
+      incoming
+        .map((entry) => productIdForSyncEntry(entry, idPorNome, idPorSyncId))
+        .filter((id): id is number => id !== undefined)
+    ),
+  ];
+  if (productIds.length === 0) return [];
+  const incomingSyncIds = incoming.flatMap((entry) => (entry.syncId ? [entry.syncId] : []));
+  const identityFilter = incoming.some((entry) => !entry.syncId)
+    ? inArray(priceHistory.productId, productIds)
+    : or(
+        inArray(priceHistory.syncId, incomingSyncIds),
+        and(isNull(priceHistory.syncId), inArray(priceHistory.productId, productIds))
+      );
   const existentes = await db
     .select({
       id: priceHistory.id,
@@ -343,7 +655,7 @@ async function mesclarPrecos(
     })
     .from(priceHistory)
     .innerJoin(products, eq(products.id, priceHistory.productId))
-    .where(eq(products.casaId, casaId));
+    .where(and(eq(products.casaId, casaId), identityFilter));
   const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
   const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
   for (const event of existentes) {
@@ -360,7 +672,7 @@ async function mesclarPrecos(
   const escritas: Escrita[] = [];
   const tocados = new Set<number>();
   for (const preco of incoming) {
-    const productId = idPorNome.get(productNameKey(preco.productName));
+    const productId = productIdForSyncEntry(preco, idPorNome, idPorSyncId);
     if (!productId) continue;
     const at = new Date(preco.recordedAt);
     if (Number.isNaN(at.getTime())) continue;
@@ -418,8 +730,25 @@ async function mesclarPrecos(
 async function mesclarCompras(
   casaId: number,
   idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
   incoming: SyncSnapshot["purchases"]
 ): Promise<Escrita[]> {
+  if (incoming.length === 0) return [];
+  const productIds = [
+    ...new Set(
+      incoming
+        .map((entry) => productIdForSyncEntry(entry, idPorNome, idPorSyncId))
+        .filter((id): id is number => id !== undefined)
+    ),
+  ];
+  if (productIds.length === 0) return [];
+  const incomingSyncIds = incoming.flatMap((entry) => (entry.syncId ? [entry.syncId] : []));
+  const identityFilter = incoming.some((entry) => !entry.syncId)
+    ? inArray(purchaseHistory.productId, productIds)
+    : or(
+        inArray(purchaseHistory.syncId, incomingSyncIds),
+        and(isNull(purchaseHistory.syncId), inArray(purchaseHistory.productId, productIds))
+      );
   const existentes = await db
     .select({
       id: purchaseHistory.id,
@@ -432,7 +761,7 @@ async function mesclarCompras(
     })
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
-    .where(eq(products.casaId, casaId));
+    .where(and(eq(products.casaId, casaId), identityFilter));
   const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
   const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
   for (const event of existentes) {
@@ -448,7 +777,7 @@ async function mesclarCompras(
 
   const escritas: Escrita[] = [];
   for (const compra of incoming) {
-    const productId = idPorNome.get(productNameKey(compra.productName));
+    const productId = productIdForSyncEntry(compra, idPorNome, idPorSyncId);
     if (!productId) continue;
     const at = new Date(compra.purchasedAt);
     if (Number.isNaN(at.getTime())) continue;
@@ -521,8 +850,18 @@ async function mesclarCompras(
 async function mesclarConsumos(
   casaId: number,
   idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
   incoming: SyncSnapshot["consumptions"]
 ): Promise<Escrita[]> {
+  if (incoming.length === 0) return [];
+  const productIds = [
+    ...new Set(
+      incoming
+        .map((entry) => productIdForSyncEntry(entry, idPorNome, idPorSyncId))
+        .filter((id): id is number => id !== undefined)
+    ),
+  ];
+  if (productIds.length === 0) return [];
   const existentes = await db
     .select({
       id: inventoryEvents.id,
@@ -534,7 +873,9 @@ async function mesclarConsumos(
     })
     .from(inventoryEvents)
     .innerJoin(products, eq(products.id, inventoryEvents.productId))
-    .where(eq(products.casaId, casaId));
+    // O saldo derivado precisa do baseline `set` e de todos os deltas dos
+    // produtos tocados; ainda assim deixa de varrer eventos da casa inteira.
+    .where(and(eq(products.casaId, casaId), inArray(inventoryEvents.productId, productIds)));
   const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
   const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
   const eventosPorProduto = new Map<number, Array<(typeof existentes)[number]>>();
@@ -555,7 +896,7 @@ async function mesclarConsumos(
   const escritas: Escrita[] = [];
   const tocados = new Set<number>();
   for (const consumo of incoming) {
-    const productId = idPorNome.get(productNameKey(consumo.productName));
+    const productId = productIdForSyncEntry(consumo, idPorNome, idPorSyncId);
     if (!productId) continue;
     const at = new Date(consumo.occurredAt);
     if (Number.isNaN(at.getTime())) continue;
@@ -652,22 +993,43 @@ async function mesclarConsumos(
 async function mesclarItensLista(
   casaId: number,
   idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
   incoming: NonNullable<SyncSnapshot["listItems"]>
-): Promise<Escrita[]> {
+): Promise<{
+  writes: Escrita[];
+  expectation?: NonNullable<SyncConcurrencyExpectation["activeList"]>;
+}> {
+  if (incoming.length === 0) return { writes: [] };
+  const relevantProductIds = [
+    ...new Set(
+      incoming
+        .map((item) => productIdForSyncEntry(item, idPorNome, idPorSyncId))
+        .filter((id): id is number => id !== undefined)
+    ),
+  ];
+  if (relevantProductIds.length === 0) return { writes: [] };
   const lista = await garantirListaAtiva(casaId);
 
   const existentes = await db
     .select({
       productId: shoppingListItems.productId,
+      quantity: shoppingListItems.quantity,
+      checked: shoppingListItems.checked,
+      deleted: shoppingListItems.deleted,
       updatedAt: shoppingListItems.updatedAt,
     })
     .from(shoppingListItems)
-    .where(eq(shoppingListItems.shoppingListId, lista.id));
+    .where(
+      and(
+        eq(shoppingListItems.shoppingListId, lista.id),
+        inArray(shoppingListItems.productId, relevantProductIds)
+      )
+    );
   const porProduto = new Map(existentes.map((e) => [e.productId, e.updatedAt]));
 
   const escritas: Escrita[] = [];
   for (const item of incoming) {
-    const productId = idPorNome.get(productNameKey(item.productName));
+    const productId = productIdForSyncEntry(item, idPorNome, idPorSyncId);
     if (!productId) continue;
     const atualUpdatedAt = porProduto.get(productId);
     const novoUpdatedAt = item.updatedAt ? new Date(item.updatedAt) : new Date();
@@ -715,13 +1077,30 @@ async function mesclarItensLista(
       .where(
         and(
           eq(shoppingListItems.shoppingListId, lista.id),
+          inArray(shoppingListItems.productId, relevantProductIds),
           eq(shoppingListItems.deleted, true),
           lt(shoppingListItems.updatedAt, new Date(Date.now() - TOMBSTONE_TTL_MS))
         )
       )
   );
 
-  return escritas;
+  return {
+    writes: escritas,
+    expectation: {
+      id: lista.id,
+      name: lista.name,
+      status: lista.status,
+      updatedAt: lista.updatedAt,
+      relevantProductIds,
+      items: existentes.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        checked: item.checked,
+        deleted: item.deleted,
+        updatedAt: item.updatedAt.toISOString(),
+      })),
+    },
+  };
 }
 
 async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
@@ -751,6 +1130,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasCompras = await db
     .select({
       syncId: purchaseHistory.syncId,
+      productSyncId: products.syncId,
       productName: products.name,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
@@ -765,6 +1145,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasConsumos = await db
     .select({
       syncId: inventoryEvents.syncId,
+      productSyncId: products.syncId,
       productName: products.name,
       eventType: inventoryEvents.eventType,
       quantity: inventoryEvents.quantity,
@@ -777,6 +1158,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasPrecos = await db
     .select({
       syncId: priceHistory.syncId,
+      productSyncId: products.syncId,
       productName: products.name,
       priceCents: priceHistory.priceCents,
       recordedAt: priceHistory.recordedAt,
@@ -791,6 +1173,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const listaAtiva = await garantirListaAtiva(casaId);
   const linhasItens = await db
     .select({
+      productSyncId: products.syncId,
       productName: products.name,
       quantity: shoppingListItems.quantity,
       checked: shoppingListItems.checked,
@@ -808,6 +1191,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     if (lista.length < MAX_PRICES_PER_PRODUCT) {
       lista.push({
         syncId: p.syncId ?? undefined,
+        productSyncId: p.productSyncId,
         productName: p.productName,
         priceCents: p.priceCents,
         recordedAt: p.recordedAt.toISOString(),
@@ -839,6 +1223,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     })),
     purchases: linhasCompras.map((c) => ({
       syncId: c.syncId ?? undefined,
+      productSyncId: c.productSyncId,
       productName: c.productName,
       quantity: c.quantity,
       purchasedAt: c.purchasedAt.toISOString(),
@@ -848,6 +1233,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     })),
     consumptions: linhasConsumos.map((c) => ({
       syncId: c.syncId ?? undefined,
+      productSyncId: c.productSyncId,
       eventType: c.eventType as "consumed" | "set",
       productName: c.productName,
       quantity: c.quantity,
@@ -855,6 +1241,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     })),
     prices: [...precosPorProduto.values()].flat(),
     listItems: linhasItens.map((i) => ({
+      productSyncId: i.productSyncId,
       productName: i.productName,
       quantity: i.quantity,
       checked: i.checked,
@@ -862,4 +1249,280 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       updatedAt: i.updatedAt.toISOString(),
     })),
   };
+}
+
+export type SyncDownloadPage = {
+  snapshot: SyncSnapshot;
+  nextCursor: string | null;
+  collection: SyncCollection | null;
+};
+
+function cursorAfterRows(
+  collection: SyncCollection,
+  selectedIds: number[],
+  hasMoreInCollection: boolean,
+  highWater: SyncHighWaterMarks
+): string | null {
+  if (hasMoreInCollection) {
+    return encodeSyncCursor({
+      collection,
+      afterId: selectedIds[selectedIds.length - 1] ?? 0,
+      highWater,
+    });
+  }
+  const next = nextSyncCollection(collection);
+  return next ? encodeSyncCursor({ collection: next, afterId: 0, highWater }) : null;
+}
+
+async function captureDownloadHighWater(casaId: number): Promise<SyncHighWaterMarks> {
+  // Primeiro statement adquire o mutex; o SELECT seguinte recebe um snapshot
+  // READ COMMITTED novo, depois de qualquer writer anterior ter commitado.
+  const [, result] = await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db.execute<SyncDownloadHighWaterRow>(buildSyncDownloadHighWaterQuery(casaId)),
+  ]);
+  return syncDownloadHighWaterFromRow(result.rows[0]);
+}
+
+// Download keyset: nunca consulta nem serializa o snapshot integral. Produtos
+// vêm primeiro para que eventos das páginas seguintes sempre encontrem a
+// identidade local; cada resposta contém no máximo o custo definido no core.
+export async function construirSnapshotPage(
+  casaId: number,
+  initialCursor: SyncCursor
+): Promise<SyncDownloadPage> {
+  let collection: SyncCollection | null = initialCursor.collection;
+  let afterId = initialCursor.afterId;
+  // Capturado uma única vez e carregado em todo cursor seguinte: inserts
+  // concorrentes ficam para a próxima sessão e não estendem este download.
+  const highWater = initialCursor.highWater ?? (await captureDownloadHighWater(casaId));
+
+  while (collection) {
+    const limit = SYNC_PAGE_LIMITS[collection];
+    const snapshot = emptySyncSnapshot();
+
+    if (collection === "products") {
+      const rows = await db
+        .select({
+          id: products.id,
+          syncId: products.syncId,
+          metadataUpdatedAt: products.updatedAt,
+          name: products.name,
+          category: products.category,
+          brand: products.brand,
+          barcode: products.barcode,
+          purchaseCount: products.purchaseCount,
+          status: products.status,
+          alertThreshold: products.alertThreshold,
+          archived: products.archived,
+          occasional: products.occasional,
+          inventoryQuantity: inventoryItems.quantity,
+          inventoryStatus: inventoryItems.status,
+          inventoryUpdatedAt: inventoryItems.updatedAt,
+        })
+        .from(products)
+        .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
+        .where(
+          and(
+            eq(products.casaId, casaId),
+            gt(products.id, afterId),
+            lte(products.id, highWater.products)
+          )
+        )
+        .orderBy(asc(products.id))
+        .limit(limit + 1);
+      const selected = rows.slice(0, limit);
+      if (selected.length > 0) {
+        snapshot.products = selected.map((product) => ({
+          syncId: product.syncId,
+          updatedAt: product.metadataUpdatedAt.toISOString(),
+          metadataUpdatedAt: product.metadataUpdatedAt.toISOString(),
+          inventoryUpdatedAt: product.inventoryUpdatedAt?.toISOString(),
+          name: product.name,
+          category: product.category,
+          brand: product.brand,
+          barcode: product.barcode,
+          purchaseCount: product.purchaseCount,
+          status: product.status as SyncSnapshot["products"][number]["status"],
+          alertThreshold: product.alertThreshold,
+          inventoryQuantity: product.inventoryQuantity ?? "0 un",
+          inventoryStatus: (product.inventoryStatus ??
+            "missing") as SyncSnapshot["products"][number]["inventoryStatus"],
+          archived: product.archived,
+          occasional: product.occasional,
+        }));
+        return {
+          snapshot,
+          collection,
+          nextCursor: cursorAfterRows(collection, selected.map((row) => row.id), rows.length > limit, highWater),
+        };
+      }
+    } else if (collection === "purchases") {
+      const rows = await db
+        .select({
+          id: purchaseHistory.id,
+          syncId: purchaseHistory.syncId,
+          productSyncId: products.syncId,
+          productName: products.name,
+          quantity: purchaseHistory.quantity,
+          purchasedAt: purchaseHistory.purchasedAt,
+          sourceListName: purchaseHistory.sourceListName,
+          deleted: purchaseHistory.deleted,
+          updatedAt: purchaseHistory.updatedAt,
+        })
+        .from(purchaseHistory)
+        .innerJoin(products, eq(products.id, purchaseHistory.productId))
+        .where(
+          and(
+            eq(products.casaId, casaId),
+            gt(purchaseHistory.id, afterId),
+            lte(purchaseHistory.id, highWater.purchases)
+          )
+        )
+        .orderBy(asc(purchaseHistory.id))
+        .limit(limit + 1);
+      const selected = rows.slice(0, limit);
+      if (selected.length > 0) {
+        snapshot.purchases = selected.map((purchase) => ({
+          syncId: purchase.syncId ?? undefined,
+          productSyncId: purchase.productSyncId,
+          productName: purchase.productName,
+          quantity: purchase.quantity,
+          purchasedAt: purchase.purchasedAt.toISOString(),
+          sourceListName: purchase.sourceListName,
+          deleted: purchase.deleted,
+          updatedAt: purchase.updatedAt?.toISOString() ?? null,
+        }));
+        return {
+          snapshot,
+          collection,
+          nextCursor: cursorAfterRows(collection, selected.map((row) => row.id), rows.length > limit, highWater),
+        };
+      }
+    } else if (collection === "consumptions") {
+      const rows = await db
+        .select({
+          id: inventoryEvents.id,
+          syncId: inventoryEvents.syncId,
+          productSyncId: products.syncId,
+          productName: products.name,
+          eventType: inventoryEvents.eventType,
+          quantity: inventoryEvents.quantity,
+          occurredAt: inventoryEvents.occurredAt,
+        })
+        .from(inventoryEvents)
+        .innerJoin(products, eq(products.id, inventoryEvents.productId))
+        .where(
+          and(
+            eq(products.casaId, casaId),
+            gt(inventoryEvents.id, afterId),
+            lte(inventoryEvents.id, highWater.consumptions)
+          )
+        )
+        .orderBy(asc(inventoryEvents.id))
+        .limit(limit + 1);
+      const selected = rows.slice(0, limit);
+      if (selected.length > 0) {
+        snapshot.consumptions = selected.map((event) => ({
+          syncId: event.syncId ?? undefined,
+          productSyncId: event.productSyncId,
+          productName: event.productName,
+          eventType: event.eventType as "consumed" | "set",
+          quantity: event.quantity,
+          occurredAt: event.occurredAt.toISOString(),
+        }));
+        return {
+          snapshot,
+          collection,
+          nextCursor: cursorAfterRows(collection, selected.map((row) => row.id), rows.length > limit, highWater),
+        };
+      }
+    } else if (collection === "prices") {
+      const rows = await db
+        .select({
+          id: priceHistory.id,
+          syncId: priceHistory.syncId,
+          productSyncId: products.syncId,
+          productName: products.name,
+          priceCents: priceHistory.priceCents,
+          recordedAt: priceHistory.recordedAt,
+        })
+        .from(priceHistory)
+        .innerJoin(products, eq(products.id, priceHistory.productId))
+        .where(
+          and(
+            eq(products.casaId, casaId),
+            gt(priceHistory.id, afterId),
+            lte(priceHistory.id, highWater.prices)
+          )
+        )
+        .orderBy(asc(priceHistory.id))
+        .limit(limit + 1);
+      const selected = rows.slice(0, limit);
+      if (selected.length > 0) {
+        snapshot.prices = selected.map((price) => ({
+          syncId: price.syncId ?? undefined,
+          productSyncId: price.productSyncId,
+          productName: price.productName,
+          priceCents: price.priceCents,
+          recordedAt: price.recordedAt.toISOString(),
+        }));
+        return {
+          snapshot,
+          collection,
+          nextCursor: cursorAfterRows(collection, selected.map((row) => row.id), rows.length > limit, highWater),
+        };
+      }
+    } else {
+      const rows = await db
+        .select({
+          id: shoppingListItems.id,
+          itemCasaId: shoppingListItems.casaId,
+          productCasaId: products.casaId,
+          shoppingListId: shoppingListItems.shoppingListId,
+          productSyncId: products.syncId,
+          productName: products.name,
+          quantity: shoppingListItems.quantity,
+          checked: shoppingListItems.checked,
+          deleted: shoppingListItems.deleted,
+          updatedAt: shoppingListItems.updatedAt,
+        })
+        .from(shoppingListItems)
+        .innerJoin(products, eq(products.id, shoppingListItems.productId))
+        .where(
+          and(
+            eq(shoppingListItems.casaId, casaId),
+            eq(products.casaId, casaId),
+            eq(shoppingListItems.shoppingListId, highWater.activeListId),
+            gt(shoppingListItems.id, afterId),
+            lte(shoppingListItems.id, highWater.listItems)
+          )
+        )
+        .orderBy(asc(shoppingListItems.id))
+        .limit(limit + 1);
+      const selected = rows
+        .filter((row) => isListItemWithinDownloadScope(row, casaId, highWater))
+        .slice(0, limit);
+      if (selected.length > 0) {
+        snapshot.listItems = selected.map((item) => ({
+          productSyncId: item.productSyncId,
+          productName: item.productName,
+          quantity: item.quantity,
+          checked: item.checked,
+          deleted: item.deleted,
+          updatedAt: item.updatedAt.toISOString(),
+        }));
+        return {
+          snapshot,
+          collection,
+          nextCursor: cursorAfterRows(collection, selected.map((row) => row.id), rows.length > limit, highWater),
+        };
+      }
+    }
+
+    collection = nextSyncCollection(collection);
+    afterId = 0;
+  }
+
+  return { snapshot: emptySyncSnapshot(), nextCursor: null, collection: null };
 }

@@ -6,6 +6,66 @@ import {
   planejarItensLista,
   resumirEventos,
 } from "./mergeProdutosPlan.mjs";
+import {
+  CASA_MUTATION_LOCK_NAMESPACE,
+  casaMutationLockStatement,
+} from "../casa-mutation-lock.mjs";
+import {
+  construirExpectativaMerge,
+  mergeConcurrencyGuardStatement,
+} from "./mergeProdutosConcurrency.mjs";
+
+test("merge CLI usa o mesmo mutex advisory transacional do runtime", () => {
+  const fakeSql = (strings, ...values) => ({ strings: [...strings], values });
+  const statement = casaMutationLockStatement(fakeSql, 42);
+  assert.deepEqual(statement.values, [CASA_MUTATION_LOCK_NAMESPACE, 42]);
+  assert.match(statement.strings.join("?"), /pg_advisory_xact_lock/);
+});
+
+test("merge CLI leva expectativa otimista para a transacao de apply", () => {
+  const expectation = construirExpectativaMerge({
+    products: [
+      {
+        id: 1,
+        sync_id: "00000000-0000-4000-8000-000000000001",
+        name: "Arroz",
+        category: "Mercearia",
+        brand: null,
+        barcode: null,
+        photo_uri: null,
+        purchase_count: 3,
+        status: "active",
+        alert_threshold: null,
+        archived: false,
+        occasional: true,
+        updated_at: "2026-01-01T00:00:00.123Z",
+      },
+    ],
+    inventoryItems: [
+      {
+        product_id: 1,
+        quantity: "2 un",
+        status: "in_stock",
+        updated_at: "2026-01-01T00:00:00.456Z",
+      },
+    ],
+    listItems: [
+      {
+        id: 3,
+        product_id: 1,
+        quantity: "1 un",
+        checked: false,
+        deleted: false,
+        updated_at: "2026-01-01T00:00:00.789Z",
+      },
+    ],
+  });
+  const fakeSql = (strings, ...values) => ({ strings: [...strings], values });
+  const statement = mergeConcurrencyGuardStatement(fakeSql, 9, expectation);
+  assert.match(statement.strings.join("?"), /merge_concurrency_guard/);
+  assert.ok(statement.values.some((value) => String(value).includes('"quantity":"2 un"')));
+  assert.ok(statement.values.some((value) => String(value).includes('"occasional":true')));
+});
 
 test("lista escolhe o estado mais novo e preserva tombstone no empate", () => {
   const rows = [

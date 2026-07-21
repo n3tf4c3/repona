@@ -39,6 +39,9 @@ export type SyncPurchase = {
   // Identidade do evento. Opcional apenas para eventos criados por clientes v1;
   // eventos novos sempre carregam UUID e nunca são colapsados por timestamp. (#73)
   syncId?: string;
+  // Identidade do produto no protocolo paginado. O nome continua presente para
+  // clientes v1 e exibição, mas o UUID sobrevive a renomes/aliases entre páginas.
+  productSyncId?: string;
   productName: string;
   quantity: string;
   purchasedAt: string; // ISO
@@ -60,6 +63,7 @@ export type SyncPurchase = {
 
 export type SyncConsumption = {
   syncId?: string;
+  productSyncId?: string;
   // `consumed` (ou ausente em clientes v1) é delta; `set` redefine a base
   // absoluta. O saldo é derivado do último set + deltas posteriores. (#72)
   eventType?: "consumed" | "set";
@@ -70,6 +74,7 @@ export type SyncConsumption = {
 
 export type SyncPrice = {
   syncId?: string;
+  productSyncId?: string;
   productName: string;
   priceCents: number;
   recordedAt: string; // ISO
@@ -81,6 +86,7 @@ export type SyncPrice = {
 // seja "ressuscitado" por um device que ainda tinha o item. Merge por `updatedAt`
 // (LWW), igual aos produtos.
 export type SyncListItem = {
+  productSyncId?: string;
   productName: string;
   quantity: string;
   checked: boolean;

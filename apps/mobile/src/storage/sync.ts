@@ -8,19 +8,24 @@ import {
   shouldApplyIncomingDeleted,
   uuidv4,
   MAX_PRICE_CENTS,
+  SYNC_PAGE_LIMITS,
+  emptySyncSnapshot,
+  isSyncHighWaterMarks,
+  type SyncCollection,
+  type SyncHighWaterMarks,
   type SyncSnapshot,
 } from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
+import { withExclusiveTransaction } from './exclusiveTransaction';
+import { Platform } from 'react-native';
+import {
+  assertLocalSyncProductReferencesResolved,
+  localProductIdForSyncEntry,
+} from './syncProductResolution';
+import { shouldUploadPurchaseAfterCutoff, syncEventCutoffIso } from './syncCutoff';
 
 export { parseSyncSnapshot } from './syncSnapshot';
-
-// Compras/consumos mais antigos que isto ficam fora do snapshot enviado. O
-// histórico local e o da nuvem permanecem completos (o merge nunca apaga e o
-// dedupe ignora o que não viaja); a janela só impede que o acúmulo append-only
-// estoure o limite de itens do endpoint (10k) e quebre o sync inteiro.
-// (auditoria 2026-06-09 #7)
-const EVENT_WINDOW_MS = 24 * 30 * 24 * 60 * 60 * 1000; // ~24 meses
 
 function dentroDaJanela(isoDate: string, cutoffMs: number): boolean {
   const ms = new Date(isoDate).getTime();
@@ -31,21 +36,21 @@ function dentroDaJanela(isoDate: string, cutoffMs: number): boolean {
 // compras é transitória e fica de fora — só dados duráveis vão pra nuvem.
 export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const database = await initializeDatabase();
-  // Na primeira sincronização (nunca sincronizou) manda o histórico inteiro, sem
-  // a janela: senão, um aparelho usado offline por muito tempo antes de parear
-  // teria eventos antigos que nunca chegaram à nuvem descartados de vez. Depois
-  // do primeiro sync a janela vale de novo — o que ficou de fora já subiu antes.
-  // (auditoria #56)
-  const jaSincronizou = await database.getFirstAsync<{ value: string }>(
+  // O cutoff nunca pode ser posterior ao último ACK. Assim a janela limita o
+  // histórico já sincronizado sem descartar eventos criados durante um período
+  // offline maior que 24 meses. Na primeira sync, envia tudo. (#56)
+  const ultimaSincronizacao = await database.getFirstAsync<{ value: string }>(
     `SELECT value FROM settings WHERE key = 'last_sync_at' LIMIT 1`,
   );
-  const cutoffMs = jaSincronizou ? Date.now() - EVENT_WINDOW_MS : 0;
+  const cutoffIso = syncEventCutoffIso(ultimaSincronizacao?.value);
+  const cutoffMs = cutoffIso ? Date.parse(cutoffIso) : 0;
 
   const produtos = await listAllProductsForSync();
   // Consulta direta (não listPurchaseHistoryRecords, que filtra deleted): os
   // tombstones de compra viajam no snapshot para a exclusão propagar.
   const comprasTodas = await database.getAllAsync<{
     sync_id: string | null;
+    product_sync_id: string;
     product_name: string;
     quantity: string;
     purchased_at: string;
@@ -53,7 +58,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     deleted: number;
     updated_at: string | null;
   }>(`
-    SELECT ph.sync_id, p.name as product_name, ph.quantity, ph.purchased_at,
+    SELECT ph.sync_id, p.sync_id as product_sync_id, p.name as product_name, ph.quantity, ph.purchased_at,
            COALESCE(ph.source_list_name, sl.name) as source_list_name,
            ph.deleted, ph.updated_at
     FROM purchase_history ph
@@ -64,17 +69,25 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   // exclusão de uma compra antiga precisa propagar mesmo assim. São raros
   // (só a edição manual do histórico os cria), então não pesam no cap do
   // endpoint. (auditoria #66)
-  const compras = comprasTodas.filter(
-    (c) => c.deleted === 1 || dentroDaJanela(c.purchased_at, cutoffMs),
+  const compras = comprasTodas.filter((compra) =>
+    shouldUploadPurchaseAfterCutoff(
+      {
+        purchasedAt: compra.purchased_at,
+        updatedAt: compra.updated_at,
+        deleted: compra.deleted === 1,
+      },
+      cutoffIso,
+    ),
   );
   const consumosTodos = await database.getAllAsync<{
     sync_id: string | null;
+    product_sync_id: string;
     event_type: 'consumed' | 'set';
     product_name: string;
     quantity: string;
     occurred_at: string;
   }>(`
-    SELECT ie.sync_id, ie.event_type, p.name as product_name, ie.quantity, ie.occurred_at
+    SELECT ie.sync_id, p.sync_id as product_sync_id, ie.event_type, p.name as product_name, ie.quantity, ie.occurred_at
     FROM inventory_events ie
     INNER JOIN products p ON p.id = ie.product_id
   `);
@@ -89,12 +102,13 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   // estourar o limite do snapshot. (auditoria #41)
   const precos = await database.getAllAsync<{
     sync_id: string | null;
+    product_sync_id: string;
     product_name: string;
     price_cents: number;
     recorded_at: string;
   }>(
-    `SELECT sync_id, product_name, price_cents, recorded_at FROM (
-       SELECT ph.sync_id, p.name as product_name, ph.price_cents, ph.recorded_at,
+    `SELECT sync_id, product_sync_id, product_name, price_cents, recorded_at FROM (
+       SELECT ph.sync_id, p.sync_id as product_sync_id, p.name as product_name, ph.price_cents, ph.recorded_at,
               ROW_NUMBER() OVER (PARTITION BY ph.product_id ORDER BY ph.recorded_at DESC, ph.id DESC) AS rn
        FROM price_history ph INNER JOIN products p ON p.id = ph.product_id
        WHERE ph.price_cents BETWEEN 1 AND ?
@@ -110,12 +124,13 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   const itensLista = lista
     ? await database.getAllAsync<{
         product_name: string;
+        product_sync_id: string;
         quantity: string;
         checked: number;
         deleted: number;
         updated_at: string;
       }>(
-        `SELECT p.name as product_name, sli.quantity, sli.checked, sli.deleted, sli.updated_at
+        `SELECT p.sync_id as product_sync_id, p.name as product_name, sli.quantity, sli.checked, sli.deleted, sli.updated_at
          FROM shopping_list_items sli INNER JOIN products p ON p.id = sli.product_id
          WHERE sli.shopping_list_id = ?`,
         lista.id,
@@ -142,6 +157,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     })),
     purchases: compras.map((c) => ({
       syncId: c.sync_id ?? undefined,
+      productSyncId: c.product_sync_id,
       productName: c.product_name,
       quantity: c.quantity,
       purchasedAt: c.purchased_at,
@@ -151,6 +167,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     })),
     consumptions: consumos.map((c) => ({
       syncId: c.sync_id ?? undefined,
+      productSyncId: c.product_sync_id,
       eventType: c.event_type,
       productName: c.product_name,
       quantity: c.quantity,
@@ -158,11 +175,13 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     })),
     prices: precos.map((p) => ({
       syncId: p.sync_id ?? undefined,
+      productSyncId: p.product_sync_id,
       productName: p.product_name,
       priceCents: p.price_cents,
       recordedAt: p.recorded_at,
     })),
     listItems: itensLista.map((i) => ({
+      productSyncId: i.product_sync_id,
       productName: i.product_name,
       quantity: i.quantity,
       checked: i.checked === 1,
@@ -170,6 +189,288 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       updatedAt: i.updated_at,
     })),
   };
+}
+
+export type LocalSyncPage = {
+  snapshot: SyncSnapshot;
+  nextAfterId: number | null;
+};
+
+export async function getLocalSyncCutoffIso(): Promise<string | null> {
+  const database = await initializeDatabase();
+  const previous = await database.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = 'last_sync_at' LIMIT 1`,
+  );
+  return syncEventCutoffIso(previous?.value);
+}
+
+export async function getLocalSyncHighWaterMarks(): Promise<SyncHighWaterMarks> {
+  const database = await initializeDatabase();
+  const row = await database.getFirstAsync<{
+    products: number;
+    purchases: number;
+    consumptions: number;
+    prices: number;
+    list_items: number;
+    active_list_id: number;
+  }>(`
+    WITH active_list AS (
+      SELECT id FROM shopping_lists
+      WHERE status = 'active'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    )
+    SELECT
+      COALESCE((SELECT MAX(id) FROM products), 0) AS products,
+      COALESCE((SELECT MAX(id) FROM purchase_history), 0) AS purchases,
+      COALESCE((SELECT MAX(id) FROM inventory_events), 0) AS consumptions,
+      COALESCE((SELECT MAX(id) FROM price_history), 0) AS prices,
+      COALESCE((SELECT MAX(id) FROM shopping_list_items
+                WHERE shopping_list_id = (SELECT id FROM active_list)), 0) AS list_items,
+      COALESCE((SELECT id FROM active_list), 0) AS active_list_id
+  `);
+  const marks = {
+    products: Number(row?.products ?? 0),
+    purchases: Number(row?.purchases ?? 0),
+    consumptions: Number(row?.consumptions ?? 0),
+    prices: Number(row?.prices ?? 0),
+    listItems: Number(row?.list_items ?? 0),
+    activeListId: Number(row?.active_list_id ?? 0),
+  };
+  if (!isSyncHighWaterMarks(marks)) throw new Error('INVALID_LOCAL_SYNC_HIGH_WATER');
+  return marks;
+}
+
+function splitPage<T extends { id: number }>(rows: T[], limit: number): {
+  selected: T[];
+  nextAfterId: number | null;
+} {
+  const selected = rows.slice(0, limit);
+  return {
+    selected,
+    nextAfterId: rows.length > limit ? (selected[selected.length - 1]?.id ?? null) : null,
+  };
+}
+
+// Lê uma coleção por keyset diretamente do SQLite. O cliente chama na ordem
+// SYNC_COLLECTIONS e só avança `afterId` após o ACK remoto; portanto nunca monta
+// o snapshot integral em memória e uma página repetida é segura. (#55)
+export async function buildLocalSyncPage(
+  collection: SyncCollection,
+  afterId: number,
+  cutoffIso: string | null,
+  highWater: SyncHighWaterMarks,
+): Promise<LocalSyncPage> {
+  const database = await initializeDatabase();
+  const limit = SYNC_PAGE_LIMITS[collection];
+  const snapshot = emptySyncSnapshot();
+
+  if (collection === 'products') {
+    const rows = await database.getAllAsync<{
+      id: number;
+      sync_id: string;
+      name: string;
+      category: string;
+      brand: string | null;
+      barcode: string | null;
+      purchase_count: number;
+      status: 'active' | 'missing';
+      alert_threshold: string | null;
+      inventory_quantity: string;
+      inventory_status: 'in_stock' | 'missing';
+      inventory_updated_at: string | null;
+      archived: number;
+      occasional: number;
+      updated_at: string;
+    }>(
+      `SELECT p.id, p.sync_id, p.name, p.category, p.brand, p.barcode,
+              p.purchase_count, p.status, p.alert_threshold,
+              COALESCE(ii.quantity, '0 un') AS inventory_quantity,
+              COALESCE(ii.status, 'missing') AS inventory_status,
+              ii.updated_at AS inventory_updated_at,
+              p.archived, p.occasional, p.updated_at
+       FROM products p
+       LEFT JOIN inventory_items ii ON ii.product_id = p.id
+       WHERE p.id > ? AND p.id <= ?
+       ORDER BY p.id ASC
+       LIMIT ?`,
+      afterId,
+      highWater.products,
+      limit + 1,
+    );
+    const page = splitPage(rows, limit);
+    snapshot.products = page.selected.map((product) => ({
+      syncId: product.sync_id,
+      updatedAt: product.updated_at,
+      metadataUpdatedAt: product.updated_at,
+      inventoryUpdatedAt: product.inventory_updated_at ?? undefined,
+      name: product.name,
+      category: product.category,
+      brand: product.brand,
+      barcode: product.barcode,
+      purchaseCount: product.purchase_count,
+      status: product.status,
+      alertThreshold: product.alert_threshold,
+      inventoryQuantity: product.inventory_quantity,
+      inventoryStatus: product.inventory_status,
+      archived: product.archived === 1,
+      occasional: product.occasional === 1,
+    }));
+    return { snapshot, nextAfterId: page.nextAfterId };
+  }
+
+  if (collection === 'purchases') {
+    const rows = await database.getAllAsync<{
+      id: number;
+      sync_id: string | null;
+      product_sync_id: string;
+      product_name: string;
+      quantity: string;
+      purchased_at: string;
+      source_list_name: string | null;
+      deleted: number;
+      updated_at: string | null;
+    }>(
+      `SELECT ph.id, ph.sync_id, p.sync_id AS product_sync_id, p.name AS product_name,
+              ph.quantity, ph.purchased_at, COALESCE(ph.source_list_name, sl.name) AS source_list_name,
+              ph.deleted, ph.updated_at
+       FROM purchase_history ph
+       INNER JOIN products p ON p.id = ph.product_id
+       LEFT JOIN shopping_lists sl ON sl.id = ph.source_list_id
+       WHERE ph.id > ? AND ph.id <= ?
+         AND (
+           ph.deleted = 1 OR ? IS NULL OR ph.purchased_at >= ? OR ph.updated_at >= ?
+         )
+       ORDER BY ph.id ASC
+       LIMIT ?`,
+      afterId,
+      highWater.purchases,
+      cutoffIso,
+      cutoffIso,
+      cutoffIso,
+      limit + 1,
+    );
+    const page = splitPage(rows, limit);
+    snapshot.purchases = page.selected.map((purchase) => ({
+      syncId: purchase.sync_id ?? undefined,
+      productSyncId: purchase.product_sync_id,
+      productName: purchase.product_name,
+      quantity: purchase.quantity,
+      purchasedAt: purchase.purchased_at,
+      sourceListName: purchase.source_list_name,
+      deleted: purchase.deleted === 1,
+      updatedAt: purchase.updated_at,
+    }));
+    return { snapshot, nextAfterId: page.nextAfterId };
+  }
+
+  if (collection === 'consumptions') {
+    const rows = await database.getAllAsync<{
+      id: number;
+      sync_id: string | null;
+      product_sync_id: string;
+      product_name: string;
+      event_type: 'consumed' | 'set';
+      quantity: string;
+      occurred_at: string;
+    }>(
+      `SELECT ie.id, ie.sync_id, p.sync_id AS product_sync_id, p.name AS product_name,
+              ie.event_type, ie.quantity, ie.occurred_at
+       FROM inventory_events ie
+       INNER JOIN products p ON p.id = ie.product_id
+       WHERE ie.id > ? AND ie.id <= ?
+         AND (ie.event_type = 'set' OR ? IS NULL OR ie.occurred_at >= ?)
+       ORDER BY ie.id ASC
+       LIMIT ?`,
+      afterId,
+      highWater.consumptions,
+      cutoffIso,
+      cutoffIso,
+      limit + 1,
+    );
+    const page = splitPage(rows, limit);
+    snapshot.consumptions = page.selected.map((event) => ({
+      syncId: event.sync_id ?? undefined,
+      productSyncId: event.product_sync_id,
+      productName: event.product_name,
+      eventType: event.event_type,
+      quantity: event.quantity,
+      occurredAt: event.occurred_at,
+    }));
+    return { snapshot, nextAfterId: page.nextAfterId };
+  }
+
+  if (collection === 'prices') {
+    const rows = await database.getAllAsync<{
+      id: number;
+      sync_id: string | null;
+      product_sync_id: string;
+      product_name: string;
+      price_cents: number;
+      recorded_at: string;
+    }>(
+      `SELECT id, sync_id, product_sync_id, product_name, price_cents, recorded_at
+       FROM (
+         SELECT ph.id, ph.sync_id, p.sync_id AS product_sync_id, p.name AS product_name,
+                ph.price_cents, ph.recorded_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY ph.product_id ORDER BY ph.recorded_at DESC, ph.id DESC
+                ) AS rn
+         FROM price_history ph
+         INNER JOIN products p ON p.id = ph.product_id
+          WHERE ph.price_cents BETWEEN 1 AND ? AND ph.id <= ?
+       )
+       WHERE rn <= 10 AND id > ?
+       ORDER BY id ASC
+       LIMIT ?`,
+      MAX_PRICE_CENTS,
+      highWater.prices,
+      afterId,
+      limit + 1,
+    );
+    const page = splitPage(rows, limit);
+    snapshot.prices = page.selected.map((price) => ({
+      syncId: price.sync_id ?? undefined,
+      productSyncId: price.product_sync_id,
+      productName: price.product_name,
+      priceCents: price.price_cents,
+      recordedAt: price.recorded_at,
+    }));
+    return { snapshot, nextAfterId: page.nextAfterId };
+  }
+
+  const rows = await database.getAllAsync<{
+    id: number;
+    product_sync_id: string;
+    product_name: string;
+    quantity: string;
+    checked: number;
+    deleted: number;
+    updated_at: string;
+  }>(
+    `SELECT sli.id, p.sync_id AS product_sync_id, p.name AS product_name,
+            sli.quantity, sli.checked, sli.deleted, sli.updated_at
+     FROM shopping_list_items sli
+     INNER JOIN shopping_lists sl ON sl.id = sli.shopping_list_id
+     INNER JOIN products p ON p.id = sli.product_id
+     WHERE sli.shopping_list_id = ? AND sli.id > ? AND sli.id <= ?
+     ORDER BY sli.id ASC
+     LIMIT ?`,
+    highWater.activeListId,
+    afterId,
+    highWater.listItems,
+    limit + 1,
+  );
+  const page = splitPage(rows, limit);
+  snapshot.listItems = page.selected.map((item) => ({
+    productSyncId: item.product_sync_id,
+    productName: item.product_name,
+    quantity: item.quantity,
+    checked: item.checked === 1,
+    deleted: item.deleted === 1,
+    updatedAt: item.updated_at,
+  }));
+  return { snapshot, nextAfterId: page.nextAfterId };
 }
 
 // Aplica o snapshot mesclado vindo da nuvem no SQLite local. Nunca apaga:
@@ -191,7 +492,10 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
     FROM products p
     LEFT JOIN inventory_items ii ON ii.product_id = p.id`;
 
-  await database.withTransactionAsync(async () => {
+  // A variante exclusiva impede queries disparadas pela UI de entrarem no meio
+  // do callback e serem acidentalmente incluídas no COMMIT/ROLLBACK do sync.
+  // Todas as operações abaixo usam o handle `transaction`, como exige o Expo.
+  await withExclusiveTransaction(database, Platform.OS === 'web', async (transaction) => {
     // Nome RECEBIDO → produto local resolvido (syncId/barcode/nome). Os eventos
     // do snapshot viajam com o nome do servidor, que pode não existir localmente
     // quando o LWW pula o produto ou um renomeio colide — resolver só pelo nome
@@ -205,7 +509,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       // Resolve identidade: syncId primeiro; senão por nome, adotando o syncId
       // do servidor; senão insere. (auditoria #1)
       let row = prod.syncId
-        ? await database.getFirstAsync<LocalProduct>(
+        ? await transaction.getFirstAsync<LocalProduct>(
             `${localProductSelect} WHERE p.sync_id = ? LIMIT 1`,
             prod.syncId,
           )
@@ -216,23 +520,23 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         // do nome; adota o syncId do servidor. Sem código não entra aqui, então
         // hortifrúti segue só pelo nome. Comparação com trim dos dois lados —
         // código legado com espaço nunca casaria. (auditoria #19, 2026-06-09 #9)
-        const porBarcode = await database.getFirstAsync<LocalProduct>(
+        const porBarcode = await transaction.getFirstAsync<LocalProduct>(
           `${localProductSelect} WHERE trim(p.barcode) = ? LIMIT 1`,
           prod.barcode.trim(),
         );
         if (porBarcode && prod.syncId) {
-          await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porBarcode.id);
+          await transaction.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porBarcode.id);
         }
         row = porBarcode;
       }
 
       if (!row) {
-        const porNome = await database.getFirstAsync<LocalProduct>(
+        const porNome = await transaction.getFirstAsync<LocalProduct>(
           `${localProductSelect} WHERE p.name_key = ? LIMIT 1`,
           productNameKey(nome), // Unicode-aware, alinhado ao web (auditoria #76)
         );
         if (porNome && prod.syncId) {
-          await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porNome.id);
+          await transaction.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porNome.id);
         }
         row = porNome;
       }
@@ -254,7 +558,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         if (shouldApplyIncoming(metadataIncoming, row.updated_at)) {
           let nomeFinal = nome;
           if (productNameKey(prod.name) !== productNameKey(row.name)) {
-            const colide = await database.getFirstAsync<{ id: number }>(
+            const colide = await transaction.getFirstAsync<{ id: number }>(
               'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
               productNameKey(nome),
               row.id,
@@ -264,20 +568,20 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
           let barcodeFinal = prod.barcode;
           if (prod.barcode?.trim()) {
-            const colideBarcode = await database.getFirstAsync<{ barcode: string | null }>(
+            const colideBarcode = await transaction.getFirstAsync<{ barcode: string | null }>(
               'SELECT barcode FROM products WHERE trim(barcode) = ? AND id <> ? LIMIT 1',
               prod.barcode.trim(),
               row.id,
             );
             if (colideBarcode) {
-              const atual = await database.getFirstAsync<{ barcode: string | null }>(
+              const atual = await transaction.getFirstAsync<{ barcode: string | null }>(
                 'SELECT barcode FROM products WHERE id = ? LIMIT 1',
                 row.id,
               );
               barcodeFinal = atual?.barcode ?? null;
             }
           }
-          await database.runAsync(
+          await transaction.runAsync(
             `UPDATE products SET
                name = ?, name_key = ?, category = ?, brand = ?, barcode = ?,
                alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
@@ -299,7 +603,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           shouldApplyIncoming(inventoryIncoming, row.inventory_updated_at);
         productId = row.id;
       } else {
-        const inserido = await database.runAsync(
+        const inserido = await transaction.runAsync(
           `INSERT INTO products
              (sync_id, name, name_key, category, brand, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -321,7 +625,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       }
 
       if (aplicarEstoque) {
-        await database.runAsync(
+        await transaction.runAsync(
           `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(product_id) DO UPDATE SET
@@ -334,7 +638,7 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           now,
           inventoryAt,
         );
-        await database.runAsync(
+        await transaction.runAsync(
           'UPDATE products SET status = ? WHERE id = ?',
           prod.inventoryStatus === 'missing' ? 'missing' : 'active',
           productId,
@@ -342,33 +646,99 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       }
     }
 
+    const eventEntries = [
+      ...snapshot.purchases,
+      ...snapshot.consumptions,
+      ...snapshot.prices,
+      ...(snapshot.listItems ?? []),
+    ];
+    if (eventEntries.length === 0) return;
+    const relevantSyncIds = [
+      ...new Set(eventEntries.flatMap((entry) => (entry.productSyncId ? [entry.productSyncId] : []))),
+    ];
+    const relevantNameKeys = [...new Set(eventEntries.map((entry) => productNameKey(entry.productName)))];
+    const predicates: string[] = [];
+    const args: Array<string> = [];
+    if (relevantSyncIds.length > 0) {
+      predicates.push(`sync_id IN (${placeholders(relevantSyncIds.length)})`);
+      args.push(...relevantSyncIds);
+    }
+    if (relevantNameKeys.length > 0) {
+      predicates.push(`name_key IN (${placeholders(relevantNameKeys.length)})`);
+      args.push(...relevantNameKeys);
+    }
+
     const idPorNome = new Map<string, number>();
-    const todos = await database.getAllAsync<{ id: number; name: string }>('SELECT id, name FROM products');
-    for (const p of todos) idPorNome.set(productNameKey(p.name), p.id);
+    const idPorSyncId = new Map<string, number>();
+    const todos = await transaction.getAllAsync<{ id: number; name: string; sync_id: string | null }>(
+      `SELECT id, name, sync_id FROM products WHERE ${predicates.join(' OR ')}`,
+      ...args,
+    );
+    for (const product of todos) {
+      idPorNome.set(productNameKey(product.name), product.id);
+      if (product.sync_id) idPorSyncId.set(product.sync_id, product.id);
+    }
 
     // O mapeamento dos nomes recebidos (resolvido produto a produto acima) tem
     // precedência sobre os nomes locais atuais. (auditoria 2026-06-09 #2)
     const idParaEventos = new Map([...idPorNome, ...idPorNomeRecebido]);
+    // Fail-closed: runPagedSync só persiste o cursor DEPOIS deste callback. Se
+    // qualquer produto estiver ausente, toda a transação reverte e a página
+    // permanece pendente para retry, em vez de ACK/cursor com perda silenciosa.
+    assertLocalSyncProductReferencesResolved(
+      eventEntries,
+      idParaEventos,
+      idPorSyncId,
+    );
+    const purchaseProductIds = [
+      ...new Set(
+        snapshot.purchases
+          .map((entry) => localProductIdForSyncEntry(entry, idParaEventos, idPorSyncId))
+          .filter((id): id is number => id !== undefined),
+      ),
+    ];
 
-    await aplicarCompras(database, idParaEventos, snapshot.purchases);
-    await aplicarConsumos(database, idParaEventos, snapshot.consumptions);
-    await aplicarPrecos(database, idParaEventos, snapshot.prices);
-    await aplicarItensLista(database, idParaEventos, snapshot.listItems ?? []);
+    await aplicarCompras(transaction, idParaEventos, idPorSyncId, snapshot.purchases);
+    await aplicarConsumos(transaction, idParaEventos, idPorSyncId, snapshot.consumptions);
+    await aplicarPrecos(transaction, idParaEventos, idPorSyncId, snapshot.prices);
+    await aplicarItensLista(transaction, idParaEventos, idPorSyncId, snapshot.listItems ?? []);
 
     // purchase_count é derivado do histórico (auditoria #3): recalcula após o
     // merge, em vez de confiar no valor do snapshot (que não soma entre
     // dispositivos).
-    await database.runAsync(
-      `UPDATE products
-       SET purchase_count = (
-         SELECT COUNT(*) FROM purchase_history
-         WHERE purchase_history.product_id = products.id AND purchase_history.deleted = 0
-       )`,
-    );
+    if (purchaseProductIds.length > 0) {
+      await transaction.runAsync(
+        `UPDATE products
+         SET purchase_count = (
+           SELECT COUNT(*) FROM purchase_history
+           WHERE purchase_history.product_id = products.id AND purchase_history.deleted = 0
+         )
+         WHERE id IN (${purchaseProductIds.map(() => '?').join(', ')})`,
+        ...purchaseProductIds,
+      );
+    }
   });
 }
 
 type Db = Awaited<ReturnType<typeof initializeDatabase>>;
+
+function productIdsForSyncEntries(
+  entries: Array<{ productSyncId?: string; productName: string }>,
+  idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
+): number[] {
+  return [
+    ...new Set(
+      entries
+        .map((entry) => localProductIdForSyncEntry(entry, idPorNome, idPorSyncId))
+        .filter((id): id is number => id !== undefined),
+    ),
+  ];
+}
+
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => '?').join(', ');
+}
 
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -413,9 +783,12 @@ function findLocalEvent<T extends IndexedLocalEvent>(
 async function aplicarItensLista(
   database: Db,
   idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
   itens: NonNullable<SyncSnapshot['listItems']>,
 ) {
   if (itens.length === 0) return;
+  const productIds = productIdsForSyncEntries(itens, idPorNome, idPorSyncId);
+  if (productIds.length === 0) return;
 
   let lista = await database.getFirstAsync<{ id: number }>(
     `SELECT id FROM shopping_lists WHERE status = 'active' ORDER BY created_at DESC LIMIT 1`,
@@ -432,8 +805,10 @@ async function aplicarItensLista(
   }
 
   const existentes = await database.getAllAsync<{ product_id: number; updated_at: string }>(
-    `SELECT product_id, updated_at FROM shopping_list_items WHERE shopping_list_id = ?`,
+    `SELECT product_id, updated_at FROM shopping_list_items
+     WHERE shopping_list_id = ? AND product_id IN (${placeholders(productIds.length)})`,
     lista.id,
+    ...productIds,
   );
   const porProduto = new Map(existentes.map((e) => [e.product_id, e.updated_at]));
 
@@ -441,7 +816,7 @@ async function aplicarItensLista(
     // productNameKey (NFC + trim + lower pt-BR): mesma chave com que idPorNome é
     // construído. Sem o NFC, um nome com acento combinante não casava e o item
     // era descartado no apply. (auditoria #76)
-    const productId = idPorNome.get(productNameKey(item.productName));
+    const productId = localProductIdForSyncEntry(item, idPorNome, idPorSyncId);
     if (!productId) continue;
     const atual = porProduto.get(productId);
     const updatedAt = item.updatedAt ?? new Date().toISOString();
@@ -485,7 +860,17 @@ async function aplicarItensLista(
   );
 }
 
-async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
+async function aplicarCompras(
+  database: Db,
+  idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
+  compras: SyncSnapshot['purchases'],
+) {
+  if (compras.length === 0) return;
+  const productIds = productIdsForSyncEntries(compras, idPorNome, idPorSyncId);
+  if (productIds.length === 0) return;
+  const incomingSyncIds = compras.flatMap((entry) => (entry.syncId ? [entry.syncId] : []));
+  const hasLegacy = compras.some((entry) => !entry.syncId);
   type PurchaseRow = {
     id: number;
     sync_id: string | null;
@@ -496,10 +881,17 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
     updated_at: string | null;
     legacyKey: string;
   };
-  const rows = await database.getAllAsync<Omit<PurchaseRow, 'legacyKey'>>(`
-    SELECT id, sync_id, product_id, quantity, purchased_at, deleted, updated_at
-    FROM purchase_history
-  `);
+  const rows = await database.getAllAsync<Omit<PurchaseRow, 'legacyKey'>>(
+    `SELECT id, sync_id, product_id, quantity, purchased_at, deleted, updated_at
+     FROM purchase_history
+     WHERE ${
+       hasLegacy
+         ? `product_id IN (${placeholders(productIds.length)})`
+         : `(sync_id IN (${placeholders(incomingSyncIds.length)})
+             OR (sync_id IS NULL AND product_id IN (${placeholders(productIds.length)})))`
+     }`,
+    ...(hasLegacy ? productIds : [...incomingSyncIds, ...productIds]),
+  );
   const porSyncId = new Map<string, PurchaseRow>();
   const porChave = new Map<string, PurchaseRow[]>();
   for (const row of rows) {
@@ -511,7 +903,7 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
   }
 
   for (const compra of compras) {
-    const productId = idPorNome.get(productNameKey(compra.productName)); // NFC (auditoria #76)
+    const productId = localProductIdForSyncEntry(compra, idPorNome, idPorSyncId);
     if (!productId) continue;
     const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
     const local = findLocalEvent(compra.syncId, chave, porSyncId, porChave);
@@ -572,7 +964,17 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
   }
 }
 
-async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, precos: SyncSnapshot['prices']) {
+async function aplicarPrecos(
+  database: Db,
+  idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
+  precos: SyncSnapshot['prices'],
+) {
+  if (precos.length === 0) return;
+  const productIds = productIdsForSyncEntries(precos, idPorNome, idPorSyncId);
+  if (productIds.length === 0) return;
+  const incomingSyncIds = precos.flatMap((entry) => (entry.syncId ? [entry.syncId] : []));
+  const hasLegacy = precos.some((entry) => !entry.syncId);
   type PriceRow = {
     id: number;
     sync_id: string | null;
@@ -581,9 +983,17 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
     recorded_at: string;
     legacyKey: string;
   };
-  const rows = await database.getAllAsync<Omit<PriceRow, 'legacyKey'>>(`
-    SELECT id, sync_id, product_id, price_cents, recorded_at FROM price_history
-  `);
+  const rows = await database.getAllAsync<Omit<PriceRow, 'legacyKey'>>(
+    `SELECT id, sync_id, product_id, price_cents, recorded_at
+     FROM price_history
+     WHERE ${
+       hasLegacy
+         ? `product_id IN (${placeholders(productIds.length)})`
+         : `(sync_id IN (${placeholders(incomingSyncIds.length)})
+             OR (sync_id IS NULL AND product_id IN (${placeholders(productIds.length)})))`
+     }`,
+    ...(hasLegacy ? productIds : [...incomingSyncIds, ...productIds]),
+  );
   const porSyncId = new Map<string, PriceRow>();
   const porChave = new Map<string, PriceRow[]>();
   for (const row of rows) {
@@ -596,7 +1006,7 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
   const tocados = new Set<number>();
 
   for (const preco of precos) {
-    const productId = idPorNome.get(productNameKey(preco.productName)); // NFC (auditoria #76)
+    const productId = localProductIdForSyncEntry(preco, idPorNome, idPorSyncId);
     if (!productId) continue;
     const chave = eventKey(String(productId), preco.recordedAt, String(preco.priceCents));
     const local = findLocalEvent(preco.syncId, chave, porSyncId, porChave);
@@ -652,7 +1062,15 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
   }
 }
 
-async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, consumos: SyncSnapshot['consumptions']) {
+async function aplicarConsumos(
+  database: Db,
+  idPorNome: Map<string, number>,
+  idPorSyncId: Map<string, number>,
+  consumos: SyncSnapshot['consumptions'],
+) {
+  if (consumos.length === 0) return;
+  const productIds = productIdsForSyncEntries(consumos, idPorNome, idPorSyncId);
+  if (productIds.length === 0) return;
   type InventoryEventRow = {
     id: number;
     sync_id: string | null;
@@ -662,10 +1080,12 @@ async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, con
     occurred_at: string;
     legacyKey: string;
   };
-  const rows = await database.getAllAsync<Omit<InventoryEventRow, 'legacyKey'>>(`
-    SELECT id, sync_id, product_id, event_type, quantity, occurred_at
-    FROM inventory_events
-  `);
+  const rows = await database.getAllAsync<Omit<InventoryEventRow, 'legacyKey'>>(
+    `SELECT id, sync_id, product_id, event_type, quantity, occurred_at
+     FROM inventory_events
+     WHERE product_id IN (${placeholders(productIds.length)})`,
+    ...productIds,
+  );
   const porSyncId = new Map<string, InventoryEventRow>();
   const porChave = new Map<string, InventoryEventRow[]>();
   for (const row of rows) {
@@ -681,7 +1101,7 @@ async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, con
   const tocados = new Set<number>();
 
   for (const consumo of consumos) {
-    const productId = idPorNome.get(productNameKey(consumo.productName)); // NFC (auditoria #76)
+    const productId = localProductIdForSyncEntry(consumo, idPorNome, idPorSyncId);
     if (!productId) continue;
     const eventType = consumo.eventType ?? 'consumed';
     const chave = `${eventType}|${eventKey(String(productId), consumo.occurredAt, consumo.quantity)}`;

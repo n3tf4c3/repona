@@ -40,3 +40,11 @@ export async function queryRaw<Row extends Record<string, unknown>>(
 ): Promise<Row[]> {
   return (await getClient().query(query, params)) as Row[];
 }
+
+export async function transactionRaw(
+  queries: ReadonlyArray<{ query: string; params: unknown[] }>
+): Promise<Array<Array<Record<string, unknown>>>> {
+  return (await getClient().transaction((transaction) =>
+    queries.map(({ query, params }) => transaction.query(query, params))
+  )) as Array<Array<Record<string, unknown>>>;
+}

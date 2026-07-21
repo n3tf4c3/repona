@@ -79,6 +79,24 @@ export async function tryLock(chave: string, ttlSeg: number): Promise<string | n
   return r ? token : null;
 }
 
+export async function renewLock(chave: string, token: string, ttlSeg: number): Promise<boolean> {
+  const [renewed] = await db
+    .update(syncLocks)
+    .set({ expiraEm: new Date(Date.now() + ttlSeg * 1000) })
+    .where(
+      and(
+        eq(syncLocks.chave, chave),
+        eq(syncLocks.token, token),
+        // Uma lease já expirada não pode ser ressuscitada: outro worker pode ter
+        // observado a expiração e estar prestes a assumir. O token também evita
+        // renovar a lease do sucessor. (#74)
+        sql`${syncLocks.expiraEm} > now()`
+      )
+    )
+    .returning({ token: syncLocks.token });
+  return renewed?.token === token;
+}
+
 export async function unlock(chave: string, token: string): Promise<void> {
   // Compare-and-delete: só libera se ainda somos o dono (auditoria #21).
   await db.delete(syncLocks).where(and(eq(syncLocks.chave, chave), eq(syncLocks.token, token)));

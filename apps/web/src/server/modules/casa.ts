@@ -11,6 +11,7 @@ import {
   IDEMPOTENCY_CONFLICT,
   IDEMPOTENCY_RESULT_GONE,
 } from "./accountOperation";
+import { buildCasaMutationLock } from "./casaMutationLock";
 
 export { IDEMPOTENCY_CONFLICT, IDEMPOTENCY_RESULT_GONE } from "./accountOperation";
 
@@ -225,6 +226,7 @@ export async function renomearCasa(casaId: number, name: string): Promise<void> 
 // exigida pela Play)
 export async function excluirCasa(casaId: number): Promise<void> {
   await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
     db.delete(purchaseHistory).where(eq(purchaseHistory.casaId, casaId)),
     db.delete(casas).where(eq(casas.id, casaId)),
   ]);
@@ -251,6 +253,7 @@ export async function excluirContaNuvem(code: string, operationId: string): Prom
 
   try {
     await db.batch([
+      db.execute(buildCasaMutationLock(casaId)),
       db.insert(accountOperations).values({
         operationId,
         operationType: "delete",

@@ -1,9 +1,13 @@
 // Instruções parametrizadas compartilhadas pelo runtime Neon e pelos testes de
 // integração em PostgreSQL. Cada mutação inteira é um único statement: o recibo
 // idempotente e todos os efeitos commitam ou fazem rollback juntos. (#22/#88)
+import { CASA_MUTATION_LOCK_NAMESPACE } from "./casaMutationLock";
 
 export const CONSUME_DOMAIN_OPERATION_SQL = `
-  with locked_inventory as materialized (
+  with house_mutex as materialized (
+    select pg_advisory_xact_lock(${CASA_MUTATION_LOCK_NAMESPACE}, $2::int)
+  ),
+  locked_inventory as materialized (
     select
       ii.product_id,
       replace(parsed.parts[1], ',', '.')::numeric as current_value,
@@ -16,6 +20,7 @@ export const CONSUME_DOMAIN_OPERATION_SQL = `
     ) as parsed(parts)
     where p.casa_id = $2
       and ii.product_id = $3
+      and (select count(*) from house_mutex) = 1
       and not exists (
         select 1 from domain_operations where operation_id = $1::uuid
       )
@@ -85,7 +90,23 @@ export const CONSUME_DOMAIN_OPERATION_SQL = `
 `;
 
 export const FINALIZE_PURCHASE_OPERATION_SQL = `
-  with locked_items as materialized (
+  with house_mutex as materialized (
+    select pg_advisory_xact_lock(${CASA_MUTATION_LOCK_NAMESPACE}, $2::int)
+  ),
+  request_shape as materialized (
+    select $3::int as requested_list_id, $4::text as requested_list_name
+  ),
+  active_list as materialized (
+    select sl.id, sl.name
+    from shopping_lists sl
+    cross join request_shape
+    where sl.casa_id = $2
+      and sl.status = 'active'
+      and (select count(*) from house_mutex) = 1
+    order by sl.created_at desc
+    limit 1
+  ),
+  locked_items as materialized (
     select
       sli.id as item_id,
       sli.product_id,
@@ -93,15 +114,16 @@ export const FINALIZE_PURCHASE_OPERATION_SQL = `
       parsed.parts
     from shopping_list_items sli
     inner join products p on p.id = sli.product_id
+    inner join active_list al on al.id = sli.shopping_list_id
     left join lateral regexp_match(
       sli.quantity,
       '^([0-9]+(?:[.,][0-9]+)?)[[:space:]]*([A-Za-zÀ-ÿ]+)$'
     ) as parsed(parts) on true
-    where sli.shopping_list_id = $3
-      and sli.checked = true
+    where sli.checked = true
       and sli.deleted = false
       and p.casa_id = $2
       and p.archived = false
+      and (select count(*) from house_mutex) = 1
       and not exists (
         select 1 from domain_operations where operation_id = $1::uuid
       )
@@ -125,7 +147,14 @@ export const FINALIZE_PURCHASE_OPERATION_SQL = `
   inserted_purchases as (
     insert into purchase_history
       (sync_id, casa_id, product_id, quantity, purchased_at, source_list_id, source_list_name)
-    select gen_random_uuid(), $2, product_id, quantity, now(), $3, $4
+    select
+      gen_random_uuid(),
+      $2,
+      product_id,
+      quantity,
+      now(),
+      (select id from active_list),
+      (select name from active_list)
     from claimed_items
     returning product_id
   ),
@@ -169,7 +198,7 @@ export const FINALIZE_PURCHASE_OPERATION_SQL = `
       $1::uuid,
       $2,
       'finalize-purchase',
-      $3,
+      (select id from active_list),
       case
         when (select invalid from validation) then -1
         else (select count(*)::int from inserted_purchases)

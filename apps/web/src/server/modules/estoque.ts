@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { isEmptyQuantity, uuidv4 } from "@repona/core";
-import { db, queryRaw } from "@/server/db";
+import { db, queryRaw, transactionRaw } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
 import {
   assertSameDomainOperation,
@@ -12,6 +12,10 @@ import {
   CONSUME_DOMAIN_OPERATION_SQL,
   READ_DOMAIN_OPERATION_SQL,
 } from "@/server/modules/domainMutationSql";
+import {
+  buildCasaMutationLock,
+  casaMutationLockRawQuery,
+} from "@/server/modules/casaMutationLock";
 
 // Garante que o produto pertence ao usuário e devolve a quantidade atual de estoque.
 async function obterEstoqueAtual(casaId: number, produtoId: number): Promise<string> {
@@ -40,6 +44,7 @@ export async function definirQuantidade(
 
   // Atômico (db.batch = uma transação): upsert do estoque + status do produto.
   await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
     db.insert(inventoryEvents).values({
       syncId: uuidv4(),
       productId: produtoId,
@@ -97,11 +102,14 @@ export async function consumir(
   let rows: OperationRow[] = [];
   let queryError: unknown;
   try {
-    rows = await queryRaw<OperationRow>(CONSUME_DOMAIN_OPERATION_SQL, [
-      operationId,
-      casaId,
-      produtoId,
+    const [, operationRows] = await transactionRaw([
+      casaMutationLockRawQuery(casaId),
+      {
+        query: CONSUME_DOMAIN_OPERATION_SQL,
+        params: [operationId, casaId, produtoId],
+      },
     ]);
+    rows = operationRows as OperationRow[];
   } catch (error) {
     // Duas requisições simultâneas com a mesma chave podem disputar o UNIQUE
     // do evento/recibo. A perdedora lê o recibo que a vencedora acabou de

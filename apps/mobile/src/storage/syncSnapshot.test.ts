@@ -210,19 +210,37 @@ test('parseSyncSnapshot rejeita resposta sem as coleções obrigatórias', () =>
 
 test('captureUnexpectedResult converte rejeição inesperada em resultado tipado', async () => {
   const fallback = { ok: false as const, error: 'SERVER' as const };
+  let observed = 0;
   const result = await captureUnexpectedResult(
     async () => {
       throw new Error('SecureStore/SQLite indisponível');
     },
     () => fallback,
+    () => {
+      observed += 1;
+    },
   );
 
   assert.deepEqual(result, fallback);
+  assert.equal(observed, 1);
   assert.deepEqual(
     await captureUnexpectedResult<{ ok: true } | typeof fallback>(
       async () => ({ ok: true }),
       () => fallback,
     ),
     { ok: true },
+  );
+
+  assert.deepEqual(
+    await captureUnexpectedResult(
+      async () => {
+        throw new Error('falha local');
+      },
+      () => fallback,
+      () => {
+        throw new Error('sink indisponível');
+      },
+    ),
+    fallback,
   );
 });

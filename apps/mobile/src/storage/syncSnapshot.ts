@@ -113,6 +113,7 @@ function validPurchase(purchase: unknown): boolean {
   if (!isRecord(purchase)) return false;
   return (
     isOptionalUuid(purchase.syncId) &&
+    isOptionalUuid(purchase.productSyncId) &&
     isBoundedString(purchase.productName, FIELD_LIMITS.name, true) &&
     isQuantity(purchase.quantity) &&
     isIsoDate(purchase.purchasedAt) &&
@@ -128,6 +129,7 @@ function validConsumption(consumption: unknown): boolean {
   if (!isRecord(consumption)) return false;
   return (
     isOptionalUuid(consumption.syncId) &&
+    isOptionalUuid(consumption.productSyncId) &&
     (consumption.eventType === undefined ||
       consumption.eventType === 'consumed' ||
       consumption.eventType === 'set') &&
@@ -141,6 +143,7 @@ function validPrice(price: unknown): boolean {
   if (!isRecord(price)) return false;
   return (
     isOptionalUuid(price.syncId) &&
+    isOptionalUuid(price.productSyncId) &&
     isBoundedString(price.productName, FIELD_LIMITS.name, true) &&
     Number.isSafeInteger(price.priceCents) &&
     (price.priceCents as number) >= 1 &&
@@ -152,6 +155,7 @@ function validPrice(price: unknown): boolean {
 function validListItem(item: unknown): boolean {
   if (!isRecord(item)) return false;
   return (
+    isOptionalUuid(item.productSyncId) &&
     isBoundedString(item.productName, FIELD_LIMITS.name, true) &&
     isQuantity(item.quantity) &&
     isBoolean(item.checked) &&

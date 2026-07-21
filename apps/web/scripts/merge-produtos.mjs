@@ -16,6 +16,11 @@ import { fileURLToPath } from "node:url";
 import { parseDatabaseUrl } from "../env-schema.mjs";
 import { cifrarCodigo, decifrarCodigo } from "./inviteToken.mjs";
 import { construirPlanoMerge } from "./mergeProdutosPlan.mjs";
+import { casaMutationLockStatement } from "../casa-mutation-lock.mjs";
+import {
+  construirExpectativaMerge,
+  mergeConcurrencyGuardStatement,
+} from "./mergeProdutosConcurrency.mjs";
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const sql = neon(parseDatabaseUrl(process.env.DATABASE_URL));
@@ -224,11 +229,17 @@ function salvarBackup(casa, plan, state) {
   console.log("  Guarde fora de compartilhamentos/backups e apague quando nao precisar mais.");
 }
 
-async function aplicarMerge(casaId, plan) {
+async function aplicarMerge(casaId, plan, expectation) {
   const canonicalId = plan.canonical.id;
   const duplicateId = plan.duplicate.id;
   const productIds = [canonicalId, duplicateId];
   const statements = [
+    // Mesmo mutex transacional dos mutators web e do sync paginado. Precisa ser
+    // o primeiro statement para nenhum read/write do merge correr em paralelo.
+    casaMutationLockStatement(sql, casaId),
+    // O plano foi calculado antes da transacao para permitir dry-run/confirmacao.
+    // Revalida sob o mutex; qualquer edicao desde o backup aborta tudo.
+    mergeConcurrencyGuardStatement(sql, casaId, expectation),
     // Trava ambos os produtos durante a transação, além do lock distribuído do sync.
     sql`SELECT id FROM products
         WHERE casa_id = ${casaId} AND id = ANY(${productIds})
@@ -407,6 +418,7 @@ async function main() {
 
     const state = await carregarEstado(casa.id, canonical.id, duplicate.id);
     const plan = criarPlano(canonical, duplicate, state);
+    const mergeExpectation = construirExpectativaMerge(state);
     imprimirPlano(casa, plan, revelarToken);
 
     if (!confirmado) {
@@ -419,7 +431,7 @@ async function main() {
 
     salvarBackup(casa, plan, state);
     await renovarLock(lock);
-    await aplicarMerge(casa.id, plan);
+    await aplicarMerge(casa.id, plan, mergeExpectation);
     const final = await contarFinal(canonical.id);
     console.log(`\nMerge concluído. #${canonical.id} "${limpar(canonical.name)}":`);
     console.log(`  ${JSON.stringify(final)}`);

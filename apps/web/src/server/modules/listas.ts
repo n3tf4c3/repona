@@ -5,7 +5,7 @@ import {
   type ShoppingListItemDTO,
   type ProductStatus,
 } from "@repona/core";
-import { db, queryRaw } from "@/server/db";
+import { db, queryRaw, transactionRaw } from "@/server/db";
 import { products, shoppingLists, shoppingListItems } from "@/server/db/schema";
 import {
   assertSameDomainOperation,
@@ -16,6 +16,10 @@ import {
   FINALIZE_PURCHASE_OPERATION_SQL,
   READ_DOMAIN_OPERATION_SQL,
 } from "@/server/modules/domainMutationSql";
+import {
+  buildCasaMutationLock,
+  casaMutationLockRawQuery,
+} from "@/server/modules/casaMutationLock";
 
 export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDTO> {
   const [existente] = await db
@@ -37,10 +41,14 @@ export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDT
 
   let criada: typeof shoppingLists.$inferSelect | undefined;
   try {
-    [criada] = await db
-      .insert(shoppingLists)
-      .values({ casaId: casaId, name: "Lista de Compras", status: "active" })
-      .returning();
+    const [, criadas] = await db.batch([
+      db.execute(buildCasaMutationLock(casaId)),
+      db
+        .insert(shoppingLists)
+        .values({ casaId: casaId, name: "Lista de Compras", status: "active" })
+        .returning(),
+    ]);
+    [criada] = criadas;
   } catch {
     [criada] = await db
       .select()
@@ -120,37 +128,52 @@ export async function adicionarProduto(casaId: number, produtoId: number): Promi
     .limit(1);
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
-  const lista = await garantirListaAtiva(casaId);
+  await garantirListaAtiva(casaId);
   const now = new Date();
-  await db
-    .insert(shoppingListItems)
-    .values({ casaId, shoppingListId: lista.id, productId: produtoId, quantity: "1 un", updatedAt: now })
-    .onConflictDoUpdate({
-      target: [shoppingListItems.shoppingListId, shoppingListItems.productId],
-      // Re-adicionar reativa um tombstone (volta a '1 un', desmarcado); um item já
-      // ativo só tem o updatedAt tocado, sem perder quantidade/marca. (auditoria #9)
-      set: {
-        quantity: sql`case when ${shoppingListItems.deleted} then '1 un' else ${shoppingListItems.quantity} end`,
-        checked: sql`case when ${shoppingListItems.deleted} then false else ${shoppingListItems.checked} end`,
-        deleted: false,
-        updatedAt: now,
-      },
-    });
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    // A lista ativa e escolhida DEPOIS do mutex, dentro da mesma transacao. Se
+    // ela mudou enquanto a validacao de produto rodava, nunca inserimos na
+    // lista antiga. (#74)
+    db.execute(sql`
+      insert into shopping_list_items
+        (casa_id, shopping_list_id, product_id, quantity, checked, deleted, updated_at)
+      select ${casaId}, active.id, ${produtoId}, '1 un', false, false, ${now}
+      from shopping_lists active
+      where active.casa_id = ${casaId} and active.status = 'active'
+      order by active.created_at desc
+      limit 1
+      on conflict (shopping_list_id, product_id) do update set
+        quantity = case
+          when shopping_list_items.deleted then '1 un'
+          else shopping_list_items.quantity
+        end,
+        checked = case
+          when shopping_list_items.deleted then false
+          else shopping_list_items.checked
+        end,
+        deleted = false,
+        updated_at = ${now}
+    `),
+  ]);
 }
 
 export async function alternarItem(casaId: number, itemId: number): Promise<void> {
-  await db
-    .update(shoppingListItems)
-    .set({
-      checked: sql`not ${shoppingListItems.checked}`,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
-      )
-    );
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(shoppingListItems)
+      .set({
+        checked: sql`not ${shoppingListItems.checked}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(shoppingListItems.id, itemId),
+          inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
+        )
+      ),
+  ]);
 }
 
 export async function atualizarQuantidade(
@@ -158,28 +181,34 @@ export async function atualizarQuantidade(
   itemId: number,
   quantity: string
 ): Promise<void> {
-  await db
-    .update(shoppingListItems)
-    .set({ quantity, updatedAt: new Date() })
-    .where(
-      and(
-        eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
-      )
-    );
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(shoppingListItems)
+      .set({ quantity, updatedAt: new Date() })
+      .where(
+        and(
+          eq(shoppingListItems.id, itemId),
+          inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
+        )
+      ),
+  ]);
 }
 
 export async function removerItem(casaId: number, itemId: number): Promise<void> {
   // Soft-delete: vira tombstone para a remoção propagar no sync. (auditoria #9)
-  await db
-    .update(shoppingListItems)
-    .set({ deleted: true, updatedAt: new Date() })
-    .where(
-      and(
-        eq(shoppingListItems.id, itemId),
-        inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
-      )
-    );
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(shoppingListItems)
+      .set({ deleted: true, updatedAt: new Date() })
+      .where(
+        and(
+          eq(shoppingListItems.id, itemId),
+          inArray(shoppingListItems.shoppingListId, listasDaCasa(casaId))
+        )
+      ),
+  ]);
 }
 
 export async function finalizarCompra(
@@ -207,12 +236,14 @@ export async function finalizarCompra(
   let rows: OperationRow[] = [];
   let queryError: unknown;
   try {
-    rows = await queryRaw<OperationRow>(FINALIZE_PURCHASE_OPERATION_SQL, [
-      operationId,
-      casaId,
-      lista.id,
-      lista.name,
+    const [, operationRows] = await transactionRaw([
+      casaMutationLockRawQuery(casaId),
+      {
+        query: FINALIZE_PURCHASE_OPERATION_SQL,
+        params: [operationId, casaId, lista.id, lista.name],
+      },
     ]);
+    rows = operationRows as OperationRow[];
   } catch (error) {
     queryError = error;
   }
@@ -229,7 +260,9 @@ export async function finalizarCompra(
   assertSameDomainOperation(receipt, {
     operationType: "finalize-purchase",
     casaId,
-    resourceId: lista.id,
+    // A lista efetiva e escolhida dentro do statement, depois do mutex. Em retry,
+    // o recibo preserva a lista original mesmo que outra esteja ativa agora.
+    resourceId: receipt.resourceId ?? lista.id,
   });
   if (receipt.resultCount < 0) throw new Error("QUANTITY_INVALID");
   return receipt.resultCount;

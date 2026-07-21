@@ -36,6 +36,18 @@ export type {
 } from "./sync";
 export type { ProductMatch, ProductMatchMaps } from "./sync";
 export {
+  SYNC_PROTOCOL_VERSION,
+  SYNC_COLLECTIONS,
+  SYNC_PAGE_LIMITS,
+  emptySyncHighWaterMarks,
+  emptySyncSnapshot,
+  isSyncHighWaterMarks,
+  syncCollectionSize,
+  syncSnapshotSize,
+  isBoundedSyncPage,
+} from "./sync-pagination";
+export type { SyncCollection, SyncHighWaterMarks } from "./sync-pagination";
+export {
   productNameKey,
   eventKey,
   uuidv4,

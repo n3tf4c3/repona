@@ -18,7 +18,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Fixa a geração do runner; a imagem hospedada recebe patches do GitHub,
+    # mas não muda silenciosamente para a próxima versão do Ubuntu.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       NEXT_TELEMETRY_DISABLED: "1"
@@ -38,7 +40,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: "22.23.1"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -70,11 +72,12 @@ jobs:
   # sincronia com o schema.ts (sem drift). O fluxo canônico é db:push (schema.ts é
   # a fonte de verdade); este job prova que o baseline reflete o schema atual.
   db-schema:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        # Tag legível + digest imutável do manifest multiarch.
+        image: postgres:16.14@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -91,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "22"
+          node-version: "22.23.1"
           cache: npm
           cache-dependency-path: package-lock.json
 

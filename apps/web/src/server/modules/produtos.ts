@@ -3,6 +3,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
+import { buildCasaMutationLock } from "@/server/modules/casaMutationLock";
 
 // Subconsulta de consumo agregado (eventos 'consumed') por produto, escopada à
 // casa. inventory_events não tem casa_id, então junta com products e filtra por
@@ -166,20 +167,24 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
   // por coalesce('0 un'/'missing') no DTO e nas consultas de estoque; a primeira
   // operação de estoque faz o upsert da linha (definirQuantidade). O status
   // 'missing' do produto acompanha o estoque vazio. (auditoria #7, #78)
-  const [criado] = await db
-    .insert(products)
-    .values({
-      casaId: casaId,
-      name,
-      category: category || "Mercearia",
-      brand: input.brand?.trim() || null,
-      barcode,
-      photoUri: input.photoUri ?? null,
-      status: "missing",
-      alertThreshold: input.alertThreshold?.trim() || null,
-      occasional: input.occasional ?? false,
-    })
-    .returning({ id: products.id });
+  const [, criados] = await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .insert(products)
+      .values({
+        casaId: casaId,
+        name,
+        category: category || "Mercearia",
+        brand: input.brand?.trim() || null,
+        barcode,
+        photoUri: input.photoUri ?? null,
+        status: "missing",
+        alertThreshold: input.alertThreshold?.trim() || null,
+        occasional: input.occasional ?? false,
+      })
+      .returning({ id: products.id }),
+  ]);
+  const [criado] = criados;
 
   const dto = await getProdutoDTO(casaId, criado.id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND_AFTER_INSERT");
@@ -199,19 +204,22 @@ export async function updateProduto(
   const barcode = input.barcode?.trim() || null;
   if (barcode && (await barcodeJaExiste(casaId, barcode, id))) throw new Error("PRODUCT_BARCODE_EXISTS");
 
-  await db
-    .update(products)
-    .set({
-      name,
-      category: category || "Mercearia",
-      brand: input.brand?.trim() || null,
-      barcode,
-      photoUri: input.photoUri ?? null,
-      alertThreshold: input.alertThreshold?.trim() || null,
-      occasional: input.occasional ?? false,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(products)
+      .set({
+        name,
+        category: category || "Mercearia",
+        brand: input.brand?.trim() || null,
+        barcode,
+        photoUri: input.photoUri ?? null,
+        alertThreshold: input.alertThreshold?.trim() || null,
+        occasional: input.occasional ?? false,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(products.casaId, casaId), eq(products.id, id))),
+  ]);
 
   const dto = await getProdutoDTO(casaId, id);
   if (!dto) throw new Error("PRODUCT_NOT_FOUND");
@@ -234,17 +242,23 @@ export async function excluirOuArquivarProduto(
     .limit(1);
   if (!produto) throw new Error("PRODUCT_NOT_FOUND");
 
-  await db
-    .update(products)
-    .set({ archived: true, updatedAt: new Date() })
-    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(products)
+      .set({ archived: true, updatedAt: new Date() })
+      .where(and(eq(products.casaId, casaId), eq(products.id, id))),
+  ]);
   return { arquivado: true };
 }
 
 export async function desarquivarProduto(casaId: number, id: number): Promise<void> {
-  await db
-    .update(products)
-    .set({ archived: false, updatedAt: new Date() })
-    .where(and(eq(products.casaId, casaId), eq(products.id, id)));
+  await db.batch([
+    db.execute(buildCasaMutationLock(casaId)),
+    db
+      .update(products)
+      .set({ archived: false, updatedAt: new Date() })
+      .where(and(eq(products.casaId, casaId), eq(products.id, id))),
+  ]);
 }
 

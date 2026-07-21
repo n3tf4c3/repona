@@ -48,6 +48,9 @@ const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], st
   NETWORK: 'Sem conexão. O backup precisa de internet para ser ativado.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
   BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
+  SYNC_LIMIT: 'Uma página de backup excedeu o limite seguro. Atualize o app e tente novamente.',
+  ACCOUNT_STATE_CONFLICT:
+    'Já existe uma conta ou conexão pendente neste aparelho. Continue com o token salvo ou desconecte antes de tentar outra.',
   SERVER: 'O servidor recusou a operação. Tente de novo.',
 };
 
@@ -95,12 +98,15 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
     // (ex.: getCasaCode no SQLite) falhar. (auditoria #57)
     try {
       const result = await criarConta();
-      if (result.ok) {
-        setPairedCode(await getCasaCode());
-      }
       handleResult(result);
     } finally {
-      setBusy(false);
+      try {
+        // O POST pode ter sido confirmado antes de uma falha de rede/sync. A
+        // releitura expõe o token pendente e tira da tela ações conflitantes.
+        setPairedCode(await getCasaCode());
+      } finally {
+        setBusy(false);
+      }
     }
   }
 
@@ -110,12 +116,17 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
     try {
       const result = await pairAndSync(code);
       if (result.ok) {
-        setPairedCode(code.trim().toUpperCase());
         setCode('');
       }
       handleResult(result);
     } finally {
-      setBusy(false);
+      try {
+        // Mesmo com falha, a sessão pull-only preserva a credencial tentada;
+        // refletimos esse estado para impedir que outro token a substitua.
+        setPairedCode(await getCasaCode());
+      } finally {
+        setBusy(false);
+      }
     }
   }
 
@@ -131,8 +142,8 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
 
   function handleDeleteAccount() {
     Alert.alert(
-      'Excluir conta da nuvem',
-      'Isso apaga a conta e todos os dados na nuvem (produtos, estoque e histórico), para todos os aparelhos com este token. Não há como desfazer. Os dados deste aparelho permanecem.',
+      'Excluir conta e dados',
+      'Isso apaga a conta e todos os dados na nuvem (produtos, estoque e histórico), para todos os aparelhos com este token, e também remove deste aparelho o arquivo local desta casa. Não há como desfazer.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -147,7 +158,7 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
                 if (result.ok) {
                   setPairedCode(null);
                   setLastSyncAt(null);
-                  setMessage({ kind: 'ok', text: 'Conta excluída da nuvem.' });
+                  setMessage({ kind: 'ok', text: 'Conta e dados locais desta casa excluídos.' });
                   // Voltou ao escopo local: recarrega a UI do arquivo local em vez
                   // de manter os dados da casa excluída na tela. (auditoria #68)
                   onSynced();
@@ -220,7 +231,7 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
             <Text style={styles.syncUnpairText}>Desconectar</Text>
           </Pressable>
           <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handleDeleteAccount}>
-            <Text style={styles.syncUnpairText}>Excluir conta da nuvem</Text>
+            <Text style={styles.syncUnpairText}>Excluir conta e dados</Text>
           </Pressable>
         </>
       ) : (

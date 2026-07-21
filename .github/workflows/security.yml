@@ -19,7 +19,7 @@ concurrency:
 jobs:
   secret-scan:
     name: Secret scan (Gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +47,7 @@ jobs:
   codeql:
     name: CodeQL (JavaScript/TypeScript)
     if: ${{ github.event.repository.private == false || vars.GITHUB_CODE_SECURITY_ENABLED == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read
@@ -71,7 +71,7 @@ jobs:
   dependency-review:
     name: Dependency review
     if: ${{ github.event_name == 'pull_request' && (github.event.repository.private == false || vars.GITHUB_CODE_SECURITY_ENABLED == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

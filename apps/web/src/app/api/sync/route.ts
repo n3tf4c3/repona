@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { CATEGORIAS, FIELD_LIMITS, MAX_PRICE_CENTS, canonicalQuantity } from "@repona/core";
 import { obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
-import { mergeCasaSnapshot } from "@/server/modules/sync";
+import {
+  mergeCasaSnapshot,
+  SyncConcurrentMutationError,
+  SyncLockLostError,
+  SyncUnknownProductError,
+} from "@/server/modules/sync";
 import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
+import { readBoundedJson, RequestBodyTooLargeError } from "@/server/boundedJson";
+import { parseSyncClientVersion } from "@/server/syncSchemas";
+import { logSyncTelemetry } from "@/server/syncTelemetry";
 
 // Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
 // criação de produto — assim a criação nunca gera um valor que o sync rejeita.
@@ -128,12 +136,26 @@ const MAX_POR_TOKEN = 60;
 // Teto de bytes do corpo, checado antes do req.json(): um snapshot cheio (2k
 // produtos + 30k eventos) fica bem abaixo disto. Rejeita cedo, sem gastar
 // memória/CPU no parse de um payload gigante. (auditoria #55)
-const MAX_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+function jsonV1(body: unknown, init?: ResponseInit): NextResponse {
+  const response = NextResponse.json(body, init);
+  response.headers.set("x-repona-sync-protocol", "1");
+  return response;
+}
 
 export async function POST(req: NextRequest) {
+  const rawClientVersion = req.headers.get("x-repona-client-version");
+  const clientVersion = parseSyncClientVersion(rawClientVersion) ??
+    (rawClientVersion === null ? "legacy" : "invalid");
+  const reply = (body: unknown, init: ResponseInit | undefined, outcome: string) => {
+    logSyncTelemetry({ protocolVersion: 1, clientVersion, phase: "snapshot", outcome });
+    return jsonV1(body, init);
+  };
+
   const ip = ipDaRequest(req.headers);
   if (await rateLimited(`sync:${ip}`, MAX_POR_JANELA, JANELA_SEG)) {
-    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+    return reply({ error: "RATE_LIMITED" }, { status: 429 }, "rate_limited_ip");
   }
 
   const code = req.headers.get("x-casa-code")?.trim().toUpperCase() ?? "";
@@ -142,23 +164,21 @@ export async function POST(req: NextRequest) {
   const tokenKey = CASA_CODE_REGEX.test(code) ? code : "invalido";
   // Fingerprint do token, não o token em claro, na chave persistida. (#43)
   if (await rateLimited(`sync:token:${fingerprintToken(tokenKey, "sync")}`, MAX_POR_TOKEN, JANELA_SEG)) {
-    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
+    return reply({ error: "RATE_LIMITED" }, { status: 429 }, "rate_limited_token");
   }
   const casaId = await obterCasaPorCodigo(code);
   if (!casaId) {
-    return NextResponse.json({ error: "CASA_NOT_FOUND" }, { status: 404 });
-  }
-
-  const tamanho = Number(req.headers.get("content-length"));
-  if (Number.isFinite(tamanho) && tamanho > MAX_BODY_BYTES) {
-    return NextResponse.json({ error: "PAYLOAD_TOO_LARGE" }, { status: 413 });
+    return reply({ error: "CASA_NOT_FOUND" }, { status: 404 }, "casa_not_found");
   }
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "INVALID_JSON" }, { status: 400 });
+    body = await readBoundedJson(req, MAX_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return reply({ error: "PAYLOAD_TOO_LARGE" }, { status: 413 }, "payload_too_large");
+    }
+    return reply({ error: "INVALID_JSON" }, { status: 400 }, "invalid_json");
   }
 
   const parsed = snapshotSchema.safeParse(body);
@@ -169,9 +189,10 @@ export async function POST(req: NextRequest) {
     const estourouLimite = parsed.error.issues.some(
       (issue) => issue.code === "too_big" && issue.origin === "array"
     );
-    return NextResponse.json(
+    return reply(
       { error: estourouLimite ? "SNAPSHOT_TOO_LARGE" : "INVALID_BODY" },
-      { status: estourouLimite ? 413 : 400 }
+      { status: estourouLimite ? 413 : 400 },
+      estourouLimite ? "snapshot_too_large" : "invalid_body"
     );
   }
 
@@ -182,14 +203,41 @@ export async function POST(req: NextRequest) {
   const lockKey = `sync:lock:${casaId}`;
   const lockToken = await tryLock(lockKey, 60);
   if (!lockToken) {
-    return NextResponse.json({ error: "SYNC_IN_PROGRESS" }, { status: 409 });
+    return reply({ error: "SYNC_IN_PROGRESS" }, { status: 409 }, "busy");
   }
   try {
-    const merged = await mergeCasaSnapshot(casaId, parsed.data);
+    const merged = await mergeCasaSnapshot(casaId, parsed.data, {
+      fence: { key: lockKey, token: lockToken, ttlSeconds: 60 },
+    });
     // casaId acompanha o snapshot mesclado: o mobile o usa para escopar os dados
     // por casa (arquivo SQLite por casa) e comparar com o local_casa_id, nunca
     // enviando dados de uma conta para outra. (auditoria #68)
-    return NextResponse.json({ ...merged, casaId });
+    return reply({ ...merged, casaId }, undefined, "ok");
+  } catch (error) {
+    if (error instanceof SyncLockLostError) {
+      return reply({ error: "SYNC_LOCK_LOST" }, { status: 409 }, "lock_lost");
+    }
+    if (error instanceof SyncConcurrentMutationError) {
+      return reply(
+        { error: "SYNC_CONCURRENT_MUTATION" },
+        { status: 409 },
+        "concurrent_mutation"
+      );
+    }
+    if (error instanceof SyncUnknownProductError) {
+      return reply(
+        { error: "SYNC_UNKNOWN_PRODUCT" },
+        { status: 409 },
+        "unknown_product"
+      );
+    }
+    logSyncTelemetry({
+      protocolVersion: 1,
+      clientVersion,
+      phase: "snapshot",
+      outcome: "server_error",
+    });
+    throw error;
   } finally {
     await unlock(lockKey, lockToken);
   }
