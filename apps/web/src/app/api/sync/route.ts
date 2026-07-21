@@ -14,6 +14,8 @@ const snapshotSchema = z.object({
       z.object({
         syncId: z.string().uuid().optional(),
         updatedAt: z.string().datetime({ offset: true }).optional(),
+        metadataUpdatedAt: z.string().datetime({ offset: true }).optional(),
+        inventoryUpdatedAt: z.string().datetime({ offset: true }).optional(),
         name: z.string().trim().min(1).max(FIELD_LIMITS.name),
         // Mesmo enum validado na criação/edição do web. Um cliente antigo ou
         // corrompido pode mandar categoria fora do enum; normaliza para o padrão
@@ -48,6 +50,7 @@ const snapshotSchema = z.object({
   purchases: z
     .array(
       z.object({
+        syncId: z.string().uuid().optional(),
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
         quantity: z
           .string()
@@ -65,18 +68,28 @@ const snapshotSchema = z.object({
   consumptions: z
     .array(
       z.object({
+        syncId: z.string().uuid().optional(),
+        eventType: z.enum(["consumed", "set"]).optional().default("consumed"),
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
-        quantity: z
-          .string()
-          .max(FIELD_LIMITS.quantity)
-          .transform((v) => canonicalQuantity(v, "1 un")),
+        quantity: z.string().max(FIELD_LIMITS.quantity),
         occurredAt: z.string().datetime({ offset: true }),
       })
     )
-    .max(10000),
+    .max(10000)
+    .transform((events) =>
+      events.map((event) => ({
+        ...event,
+        quantity: canonicalQuantity(
+          event.quantity,
+          event.eventType === "set" ? "0 un" : "1 un",
+          { allowZero: event.eventType === "set" }
+        ),
+      }))
+    ),
   prices: z
     .array(
       z.object({
+        syncId: z.string().uuid().optional(),
         productName: z.string().trim().min(1).max(FIELD_LIMITS.name),
         priceCents: z.number().int().min(1).max(MAX_PRICE_CENTS),
         recordedAt: z.string().datetime({ offset: true }),

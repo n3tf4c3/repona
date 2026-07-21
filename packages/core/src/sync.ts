@@ -15,6 +15,10 @@ export type SyncProduct = {
   // do LWW: só sobrescreve quando o recebido é mais novo. Opcional p/ cliente
   // legado (sem ele, aplica como antes). (auditoria #2)
   updatedAt?: string;
+  // Protocolo v2 separa o relógio dos metadados do relógio do estoque. O campo
+  // updatedAt acima permanece só para clientes v1 durante a transição. (#2)
+  metadataUpdatedAt?: string;
+  inventoryUpdatedAt?: string;
   name: string;
   category: string;
   // Marca do produto. Opcional para tolerar clientes/servidores antigos.
@@ -32,6 +36,9 @@ export type SyncProduct = {
 };
 
 export type SyncPurchase = {
+  // Identidade do evento. Opcional apenas para eventos criados por clientes v1;
+  // eventos novos sempre carregam UUID e nunca são colapsados por timestamp. (#73)
+  syncId?: string;
   productName: string;
   quantity: string;
   purchasedAt: string; // ISO
@@ -52,12 +59,17 @@ export type SyncPurchase = {
 };
 
 export type SyncConsumption = {
+  syncId?: string;
+  // `consumed` (ou ausente em clientes v1) é delta; `set` redefine a base
+  // absoluta. O saldo é derivado do último set + deltas posteriores. (#72)
+  eventType?: "consumed" | "set";
   productName: string;
   quantity: string;
   occurredAt: string; // ISO
 };
 
 export type SyncPrice = {
+  syncId?: string;
   productName: string;
   priceCents: number;
   recordedAt: string; // ISO
@@ -146,14 +158,21 @@ export function matchProduct(
 // aplicam, para não travar o merge. Empate não sobrescreve (idempotente).
 export function shouldApplyIncoming(
   incomingUpdatedAt: string | undefined | null,
-  storedUpdatedAt: string
+  storedUpdatedAt: string,
+  nowMs: number = Date.now()
 ): boolean {
   if (!incomingUpdatedAt) return true;
   const recebido = new Date(incomingUpdatedAt).getTime();
   const atual = new Date(storedUpdatedAt).getTime();
   if (Number.isNaN(recebido) || Number.isNaN(atual)) return true;
+  // Um relógio de device muito no futuro não pode "ganhar para sempre" e
+  // bloquear edições legítimas dos demais aparelhos. Cinco minutos acomodam
+  // drift normal; acima disso o carimbo é rejeitado. (#2)
+  if (recebido > nowMs + MAX_CLOCK_SKEW_MS) return false;
   return recebido > atual;
 }
+
+export const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 // LWW do tombstone de compra (auditoria #65): decide se o estado deleted
 // recebido substitui o local. Difere de shouldApplyIncoming num ponto crucial:
@@ -182,6 +201,18 @@ export function shouldApplyIncomingDeleted(
 // (ex.: o mesmo instante salvo local e relido do Postgres não bate byte a byte).
 export function eventKey(productName: string, isoDate: string, quantity: string): string {
   return `${productNameKey(productName)}|${instantKey(isoDate)}|${normalizeQuantity(quantity)}`;
+}
+
+// Regra de transição do evento v2: dois UUIDs presentes só representam o mesmo
+// evento quando são iguais. A chave antiga por conteúdo entra apenas se ao menos
+// um lado ainda não possui UUID; assim eventos legítimos iguais no mesmo segundo
+// sobrevivem, sem duplicar o legado durante a migração nullable. (#73)
+export function sameSyncEvent(
+  incoming: { syncId?: string | null; legacyKey: string },
+  stored: { syncId?: string | null; legacyKey: string }
+): boolean {
+  if (incoming.syncId && stored.syncId) return incoming.syncId === stored.syncId;
+  return incoming.legacyKey === stored.legacyKey;
 }
 
 function instantKey(isoDate: string): string {

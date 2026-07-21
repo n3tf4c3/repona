@@ -42,6 +42,7 @@ function validSnapshot() {
     consumptions: [
       {
         syncId: UUID,
+        eventType: 'consumed' as const,
         productName: 'Arroz',
         quantity: '1 un',
         occurredAt: ISO,
@@ -88,6 +89,19 @@ test('parseSyncSnapshot aceita todos os campos válidos do applySnapshot', () =>
     prices: [{ ...legacyBase.prices[0], syncId: undefined }],
   };
   assert.equal(parseSyncSnapshot(legacy), legacy);
+
+  const baselineSource = validSnapshot();
+  const zeroBaseline = {
+    ...baselineSource,
+    consumptions: [
+      {
+        ...baselineSource.consumptions[0],
+        eventType: 'set' as const,
+        quantity: '0 un',
+      },
+    ],
+  };
+  assert.equal(parseSyncSnapshot(zeroBaseline), zeroBaseline);
 });
 
 test('parseSyncSnapshot rejeita barcode objeto e campos escalares com tipos errados', () => {
@@ -177,6 +191,7 @@ test('parseSyncSnapshot rejeita enums, UUIDs, quantidades e limites fora do cont
     { ...snapshot, products: [{ ...snapshot.products[0], name: 'x'.repeat(FIELD_LIMITS.name + 1) }] },
     { ...snapshot, products: [{ ...snapshot.products[0], inventoryQuantity: 'abc' }] },
     { ...snapshot, purchases: [{ ...snapshot.purchases[0], quantity: '0 un' }] },
+    { ...snapshot, consumptions: [{ ...snapshot.consumptions[0], eventType: 'reset' }] },
     { ...snapshot, prices: [{ ...snapshot.prices[0], priceCents: MAX_PRICE_CENTS + 1 }] },
     { ...snapshot, products: tooManyProducts },
   ];

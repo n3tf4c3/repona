@@ -1,4 +1,4 @@
-import { MAX_PRICE_CENTS, type PricePoint } from '@repona/core';
+import { MAX_PRICE_CENTS, uuidv4, type PricePoint } from '@repona/core';
 import { initializeDatabase } from './database';
 
 const MAX_PRICES_PER_PRODUCT = 10;
@@ -17,7 +17,8 @@ export async function addProductPrice(productId: number, priceCents: number) {
 
   await database.withTransactionAsync(async () => {
     await database.runAsync(
-      `INSERT INTO price_history (product_id, price_cents, recorded_at) VALUES (?, ?, ?)`,
+      `INSERT INTO price_history (sync_id, product_id, price_cents, recorded_at) VALUES (?, ?, ?, ?)`,
+      uuidv4(),
       productId,
       Math.round(priceCents),
       now,

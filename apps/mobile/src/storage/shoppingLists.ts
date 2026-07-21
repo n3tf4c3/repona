@@ -1,4 +1,4 @@
-import { isEmptyQuantity } from '@repona/core';
+import { isEmptyQuantity, uuidv4 } from '@repona/core';
 import { initializeDatabase } from './database';
 
 // Janela de tombstone (igual à poda do sync): tombstones mais novos que isto
@@ -294,8 +294,9 @@ export async function finalizeActiveShoppingList() {
 
     for (const item of comprados) {
       await database.runAsync(
-        `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO purchase_history (sync_id, product_id, quantity, purchased_at, source_list_id, source_list_name)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        uuidv4(),
         item.product_id,
         item.quantity,
         now,
@@ -306,10 +307,8 @@ export async function finalizeActiveShoppingList() {
       await database.runAsync(
         `UPDATE products
          SET purchase_count = purchase_count + 1,
-             status = 'active',
-             updated_at = ?
+             status = 'active'
          WHERE id = ?`,
-        now,
         item.product_id,
       );
 
@@ -323,6 +322,15 @@ export async function finalizeActiveShoppingList() {
         item.product_id,
         item.quantity,
         now,
+        now,
+      );
+
+      await database.runAsync(
+        `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+         VALUES (?, ?, 'set', ?, ?)`,
+        uuidv4(),
+        item.product_id,
+        item.quantity,
         now,
       );
     }

@@ -1,3 +1,4 @@
+import { uuidv4 } from '@repona/core';
 import { initializeDatabase } from './database';
 
 export type PurchaseHistoryRecord = {
@@ -75,8 +76,9 @@ export async function addPurchaseHistoryRecord(
     // O insert manual também carimba: se outro device tiver um tombstone desta
     // chave que este device nunca viu, a inclusão carimbada vence no merge.
     await database.runAsync(
-      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name, updated_at)
-       VALUES (?, ?, ?, NULL, ?, ?)`,
+      `INSERT INTO purchase_history (sync_id, product_id, quantity, purchased_at, source_list_id, source_list_name, updated_at)
+       VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+      uuidv4(),
       productId,
       quantity,
       purchasedAt,

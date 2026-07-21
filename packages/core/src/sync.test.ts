@@ -2,10 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   uuidv4,
+  eventKey,
   productNameKey,
   matchProduct,
   shouldApplyIncoming,
   shouldApplyIncomingDeleted,
+  sameSyncEvent,
+  MAX_CLOCK_SKEW_MS,
   type ProductMatchMaps,
 } from "./sync";
 
@@ -112,6 +115,30 @@ test("shouldApplyIncoming: sem updatedAt (cliente legado) aplica", () => {
 
 test("shouldApplyIncoming: data inválida aplica (não trava merge)", () => {
   assert.equal(shouldApplyIncoming("nao-e-data", t0), true);
+});
+
+test("shouldApplyIncoming: relógio muito no futuro é rejeitado", () => {
+  const now = new Date("2026-06-08T12:00:00.000Z").getTime();
+  const futuro = new Date(now + MAX_CLOCK_SKEW_MS + 1).toISOString();
+  assert.equal(shouldApplyIncoming(futuro, t0, now), false);
+});
+
+test("sameSyncEvent: UUID distingue eventos idênticos e fallback preserva legado", () => {
+  const legacyKey = eventKey("Arroz", t0, "1 un");
+  assert.equal(
+    sameSyncEvent(
+      { syncId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", legacyKey },
+      { syncId: "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", legacyKey },
+    ),
+    false,
+  );
+  assert.equal(
+    sameSyncEvent(
+      { syncId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", legacyKey },
+      { syncId: null, legacyKey },
+    ),
+    true,
+  );
 });
 
 test("shouldApplyIncomingDeleted: estados iguais não aplicam (idempotente)", () => {

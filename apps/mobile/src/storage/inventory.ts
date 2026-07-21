@@ -1,4 +1,4 @@
-import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity } from '@repona/core';
+import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity, uuidv4 } from '@repona/core';
 import { initializeDatabase } from './database';
 
 export type InventoryStatus = 'in_stock' | 'missing';
@@ -11,6 +11,15 @@ export async function setProductInventoryQuantity(productId: number, quantity: s
   const now = new Date().toISOString();
 
   await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+       VALUES (?, ?, 'set', ?, ?)`,
+      uuidv4(),
+      productId,
+      normalizedQuantity,
+      now,
+    );
+
     await database.runAsync(
       `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)
@@ -27,11 +36,9 @@ export async function setProductInventoryQuantity(productId: number, quantity: s
 
     await database.runAsync(
       `UPDATE products
-       SET status = ?,
-           updated_at = ?
+       SET status = ?
        WHERE id = ?`,
       productStatus,
-      now,
       productId,
     );
   });
@@ -56,8 +63,9 @@ export async function consumeProductInventory(productId: number, currentQuantity
 
   await database.withTransactionAsync(async () => {
     await database.runAsync(
-      `INSERT INTO inventory_events (product_id, event_type, quantity, occurred_at)
-       VALUES (?, 'consumed', ?, ?)`,
+      `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+       VALUES (?, ?, 'consumed', ?, ?)`,
+      uuidv4(),
       productId,
       consumedQuantity,
       now,
@@ -79,13 +87,10 @@ export async function consumeProductInventory(productId: number, currentQuantity
 
     await database.runAsync(
       `UPDATE products
-       SET status = ?,
-           updated_at = ?
+       SET status = ?
        WHERE id = ?`,
       productStatus,
-      now,
       productId,
     );
   });
 }
-

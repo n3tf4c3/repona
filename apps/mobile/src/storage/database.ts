@@ -370,6 +370,80 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       );
     }
   },
+
+  // v10: identidade estável para eventos do sync v2. Linhas legadas ficam NULL
+  // de propósito: backfill independente no servidor e em cada device criaria
+  // UUIDs diferentes para o mesmo evento. Ao cruzar o sync, o lado que já tem ID
+  // o propaga; eventos novos sempre nascem com UUID. (auditoria #73)
+  async (db) => {
+    await db.withTransactionAsync(async () => {
+      for (const table of ['purchase_history', 'price_history']) {
+        const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+        if (!cols.some((c) => c.name === 'sync_id')) {
+          await db.execAsync(`ALTER TABLE ${table} ADD COLUMN sync_id TEXT;`);
+        }
+        await db.execAsync(
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_sync_id_unique ON ${table}(sync_id) WHERE sync_id IS NOT NULL;`,
+        );
+      }
+
+      // A tabela v0 restringia event_type a 'consumed'. Recria dentro da mesma
+      // transação para aceitar também o baseline absoluto 'set', preservando ids
+      // e eventos existentes. Falha/crash reverte tudo e a migration pode repetir.
+      await db.execAsync(`
+        DROP TABLE IF EXISTS inventory_events_v10;
+        CREATE TABLE inventory_events_v10 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sync_id TEXT,
+          product_id INTEGER NOT NULL,
+          event_type TEXT NOT NULL CHECK (event_type IN ('consumed', 'set')),
+          quantity TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        );
+        INSERT INTO inventory_events_v10 (id, product_id, event_type, quantity, occurred_at)
+          SELECT id, product_id, event_type, quantity, occurred_at FROM inventory_events;
+        DROP TABLE inventory_events;
+        ALTER TABLE inventory_events_v10 RENAME TO inventory_events;
+        CREATE INDEX inventory_events_product_idx ON inventory_events(product_id, event_type);
+        CREATE UNIQUE INDEX inventory_events_sync_id_unique
+          ON inventory_events(sync_id) WHERE sync_id IS NOT NULL;
+      `);
+
+      // O saldo atual já incorpora todos os consumos legados. Cria um baseline
+      // depois do último evento conhecido (ao menos +1 ms), para nenhum consumo
+      // já materializado ser descontado de novo. O UUID nasce em JS.
+      const baselines = await db.getAllAsync<{
+        product_id: number;
+        quantity: string;
+        updated_at: string;
+        last_event_at: string | null;
+      }>(`
+        SELECT ii.product_id, ii.quantity, ii.updated_at,
+               MAX(ie.occurred_at) AS last_event_at
+        FROM inventory_items ii
+        LEFT JOIN inventory_events ie ON ie.product_id = ii.product_id
+        GROUP BY ii.product_id, ii.quantity, ii.updated_at
+      `);
+      for (const row of baselines) {
+        const inventoryMs = new Date(row.updated_at).getTime();
+        const lastEventMs = row.last_event_at ? new Date(row.last_event_at).getTime() : Number.NaN;
+        const baselineMs = Math.max(
+          Number.isNaN(inventoryMs) ? 0 : inventoryMs,
+          Number.isNaN(lastEventMs) ? 0 : lastEventMs + 1,
+        );
+        const occurredAt = baselineMs > 0 ? new Date(baselineMs).toISOString() : new Date().toISOString();
+        await db.runAsync(
+          `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+           VALUES (?, ?, 'set', ?, ?)`,
+          uuidv4(),
+          row.product_id,
+          row.quantity,
+          occurredAt,
+        );
+      }
+    });
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {

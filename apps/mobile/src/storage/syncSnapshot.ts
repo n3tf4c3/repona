@@ -128,8 +128,11 @@ function validConsumption(consumption: unknown): boolean {
   if (!isRecord(consumption)) return false;
   return (
     isOptionalUuid(consumption.syncId) &&
+    (consumption.eventType === undefined ||
+      consumption.eventType === 'consumed' ||
+      consumption.eventType === 'set') &&
     isBoundedString(consumption.productName, FIELD_LIMITS.name, true) &&
-    isQuantity(consumption.quantity) &&
+    isQuantity(consumption.quantity, consumption.eventType === 'set') &&
     isIsoDate(consumption.occurredAt)
   );
 }

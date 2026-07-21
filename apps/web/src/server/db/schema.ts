@@ -166,6 +166,10 @@ export const purchaseHistory = pgTable(
   "purchase_history",
   {
     id: serial("id").primaryKey(),
+    // Nullable só para linhas legadas. Eventos novos recebem UUID na origem;
+    // índice parcial permite a transição sem inventar ids diferentes no servidor
+    // e em devices já existentes. (auditoria #73)
+    syncId: uuid("sync_id"),
     casaId: integer("casa_id").notNull(),
     productId: integer("product_id")
       .notNull()
@@ -187,6 +191,9 @@ export const purchaseHistory = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex("purchase_history_sync_id_unique")
+      .on(table.syncId)
+      .where(sql`${table.syncId} is not null`),
     index("purchase_history_product_idx").on(table.productId),
     index("purchase_history_source_list_idx").on(table.sourceListId),
     // Histórico é sempre filtrado por casa e vivo (deleted=false) e ordenado por
@@ -194,7 +201,8 @@ export const purchaseHistory = pgTable(
     index("purchase_history_casa_deleted_data_idx").on(
       table.casaId,
       table.deleted,
-      table.purchasedAt
+      table.purchasedAt.desc(),
+      table.id.asc()
     ),
     // Histórico preso à mesma casa do produto; a lista de origem (quando há)
     // também tem de ser da mesma casa. (auditoria #14)
@@ -238,6 +246,7 @@ export const inventoryEvents = pgTable(
   "inventory_events",
   {
     id: serial("id").primaryKey(),
+    syncId: uuid("sync_id"),
     productId: integer("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "cascade" }),
@@ -246,8 +255,11 @@ export const inventoryEvents = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex("inventory_events_sync_id_unique")
+      .on(table.syncId)
+      .where(sql`${table.syncId} is not null`),
     index("inventory_events_product_idx").on(table.productId, table.eventType),
-    check("inventory_events_event_type_check", sql`${table.eventType} in ('consumed')`),
+    check("inventory_events_event_type_check", sql`${table.eventType} in ('consumed', 'set')`),
   ]
 );
 
@@ -255,13 +267,23 @@ export const priceHistory = pgTable(
   "price_history",
   {
     id: serial("id").primaryKey(),
+    syncId: uuid("sync_id"),
     productId: integer("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "cascade" }),
     priceCents: integer("price_cents").notNull(),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("price_history_product_idx").on(table.productId, table.recordedAt)]
+  (table) => [
+    uniqueIndex("price_history_sync_id_unique")
+      .on(table.syncId)
+      .where(sql`${table.syncId} is not null`),
+    index("price_history_product_idx").on(
+      table.productId,
+      table.recordedAt.desc(),
+      table.id.desc()
+    ),
+  ]
 );
 
 // Rate limit e lock de sync sobre o próprio Postgres (auditoria #44). Antes

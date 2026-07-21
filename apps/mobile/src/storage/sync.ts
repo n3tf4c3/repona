@@ -1,4 +1,15 @@
-import { eventKey, uuidv4, productNameKey, shouldApplyIncoming, shouldApplyIncomingDeleted, MAX_PRICE_CENTS, type SyncSnapshot } from '@repona/core';
+import {
+  deriveInventoryQuantity,
+  eventKey,
+  isEmptyQuantity,
+  productNameKey,
+  sameSyncEvent,
+  shouldApplyIncoming,
+  shouldApplyIncomingDeleted,
+  uuidv4,
+  MAX_PRICE_CENTS,
+  type SyncSnapshot,
+} from '@repona/core';
 import { initializeDatabase } from './database';
 import { listAllProductsForSync } from './products';
 
@@ -34,6 +45,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
   // Consulta direta (não listPurchaseHistoryRecords, que filtra deleted): os
   // tombstones de compra viajam no snapshot para a exclusão propagar.
   const comprasTodas = await database.getAllAsync<{
+    sync_id: string | null;
     product_name: string;
     quantity: string;
     purchased_at: string;
@@ -41,7 +53,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     deleted: number;
     updated_at: string | null;
   }>(`
-    SELECT p.name as product_name, ph.quantity, ph.purchased_at,
+    SELECT ph.sync_id, p.name as product_name, ph.quantity, ph.purchased_at,
            COALESCE(ph.source_list_name, sl.name) as source_list_name,
            ph.deleted, ph.updated_at
     FROM purchase_history ph
@@ -56,27 +68,33 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     (c) => c.deleted === 1 || dentroDaJanela(c.purchased_at, cutoffMs),
   );
   const consumosTodos = await database.getAllAsync<{
+    sync_id: string | null;
+    event_type: 'consumed' | 'set';
     product_name: string;
     quantity: string;
     occurred_at: string;
   }>(`
-    SELECT p.name as product_name, ie.quantity, ie.occurred_at
+    SELECT ie.sync_id, ie.event_type, p.name as product_name, ie.quantity, ie.occurred_at
     FROM inventory_events ie
     INNER JOIN products p ON p.id = ie.product_id
-    WHERE ie.event_type = 'consumed'
   `);
-  const consumos = consumosTodos.filter((c) => dentroDaJanela(c.occurred_at, cutoffMs));
+  // Eventos `set` sÃ£o baselines do saldo derivado e nunca podem cair pela
+  // janela; os deltas continuam limitados depois da primeira sync. (#55/#72)
+  const consumos = consumosTodos.filter(
+    (c) => c.event_type === 'set' || dentroDaJanela(c.occurred_at, cutoffMs),
+  );
   // Só preços dentro da faixa válida (1..MAX_PRICE_CENTS) e os 10 mais recentes
   // por produto. Dados legados/corrompidos (preço fora do teto, criados antes da
   // correção #29) travavam o sync inteiro com INVALID_BODY; e o histórico podia
   // estourar o limite do snapshot. (auditoria #41)
   const precos = await database.getAllAsync<{
+    sync_id: string | null;
     product_name: string;
     price_cents: number;
     recorded_at: string;
   }>(
-    `SELECT product_name, price_cents, recorded_at FROM (
-       SELECT p.name as product_name, ph.price_cents, ph.recorded_at,
+    `SELECT sync_id, product_name, price_cents, recorded_at FROM (
+       SELECT ph.sync_id, p.name as product_name, ph.price_cents, ph.recorded_at,
               ROW_NUMBER() OVER (PARTITION BY ph.product_id ORDER BY ph.recorded_at DESC, ph.id DESC) AS rn
        FROM price_history ph INNER JOIN products p ON p.id = ph.product_id
        WHERE ph.price_cents BETWEEN 1 AND ?
@@ -108,6 +126,8 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
     products: produtos.map((p) => ({
       syncId: p.syncId,
       updatedAt: p.updatedAt,
+      metadataUpdatedAt: p.updatedAt,
+      inventoryUpdatedAt: p.inventoryUpdatedAt ?? undefined,
       name: p.name,
       category: p.category,
       brand: p.brand,
@@ -121,6 +141,7 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       occasional: p.occasional,
     })),
     purchases: compras.map((c) => ({
+      syncId: c.sync_id ?? undefined,
       productName: c.product_name,
       quantity: c.quantity,
       purchasedAt: c.purchased_at,
@@ -129,11 +150,14 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
       updatedAt: c.updated_at,
     })),
     consumptions: consumos.map((c) => ({
+      syncId: c.sync_id ?? undefined,
+      eventType: c.event_type,
       productName: c.product_name,
       quantity: c.quantity,
       occurredAt: c.occurred_at,
     })),
     prices: precos.map((p) => ({
+      syncId: p.sync_id ?? undefined,
       productName: p.product_name,
       priceCents: p.price_cents,
       recordedAt: p.recorded_at,
@@ -156,6 +180,17 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
   const database = await initializeDatabase();
   const now = new Date().toISOString();
 
+  type LocalProduct = {
+    id: number;
+    name: string;
+    updated_at: string;
+    inventory_updated_at: string | null;
+  };
+  const localProductSelect = `
+    SELECT p.id, p.name, p.updated_at, ii.updated_at AS inventory_updated_at
+    FROM products p
+    LEFT JOIN inventory_items ii ON ii.product_id = p.id`;
+
   await database.withTransactionAsync(async () => {
     // Nome RECEBIDO → produto local resolvido (syncId/barcode/nome). Os eventos
     // do snapshot viajam com o nome do servidor, que pode não existir localmente
@@ -170,8 +205,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       // Resolve identidade: syncId primeiro; senão por nome, adotando o syncId
       // do servidor; senão insere. (auditoria #1)
       let row = prod.syncId
-        ? await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
-            'SELECT id, name, updated_at FROM products WHERE sync_id = ? LIMIT 1',
+        ? await database.getFirstAsync<LocalProduct>(
+            `${localProductSelect} WHERE p.sync_id = ? LIMIT 1`,
             prod.syncId,
           )
         : null;
@@ -181,8 +216,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         // do nome; adota o syncId do servidor. Sem código não entra aqui, então
         // hortifrúti segue só pelo nome. Comparação com trim dos dois lados —
         // código legado com espaço nunca casaria. (auditoria #19, 2026-06-09 #9)
-        const porBarcode = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
-          'SELECT id, name, updated_at FROM products WHERE trim(barcode) = ? LIMIT 1',
+        const porBarcode = await database.getFirstAsync<LocalProduct>(
+          `${localProductSelect} WHERE trim(p.barcode) = ? LIMIT 1`,
           prod.barcode.trim(),
         );
         if (porBarcode && prod.syncId) {
@@ -192,8 +227,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       }
 
       if (!row) {
-        const porNome = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
-          'SELECT id, name, updated_at FROM products WHERE name_key = ? LIMIT 1',
+        const porNome = await database.getFirstAsync<LocalProduct>(
+          `${localProductSelect} WHERE p.name_key = ? LIMIT 1`,
           productNameKey(nome), // Unicode-aware, alinhado ao web (auditoria #76)
         );
         if (porNome && prod.syncId) {
@@ -203,62 +238,65 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       }
 
       let productId: number;
+      const metadataIncoming = prod.metadataUpdatedAt ?? prod.updatedAt;
+      const inventoryIncoming = prod.inventoryUpdatedAt ?? prod.updatedAt;
+      const metadataAt = metadataIncoming ?? now;
+      const inventoryAt = inventoryIncoming ?? now;
+      let aplicarEstoque = true;
 
       if (row) {
         // Mesmo sem aplicar o produto (LWW abaixo), os eventos do snapshot com
         // este nome referem-se a este produto local. (auditoria 2026-06-09 #2)
         idPorNomeRecebido.set(productNameKey(prod.name), row.id);
-        // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
-        if (!shouldApplyIncoming(prod.updatedAt, row.updated_at)) {
-          continue;
-        }
-        // Renomeia só se o novo nome não pertence a outro produto local (evita
-        // violar a unicidade); em colisão mantém o nome local e reconcilia depois.
-        let nomeFinal = nome;
-        if (productNameKey(prod.name) !== productNameKey(row.name)) {
-          const colide = await database.getFirstAsync<{ id: number }>(
-            'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
-            productNameKey(nome), // Unicode-aware (auditoria #76)
-            row.id,
-          );
-          if (colide) nomeFinal = row.name;
-        }
-        // Se o barcode recebido já pertence a OUTRO produto local, não sobrescreve
-        // (o produto casou por syncId/nome, não por barcode): manter o local
-        // evita duplicar código de barras no SQLite, espelhando o backend, que
-        // tem índice único parcial por casa+barcode. (auditoria #59)
-        let barcodeFinal = prod.barcode;
-        if (prod.barcode?.trim()) {
-          const colideBarcode = await database.getFirstAsync<{ barcode: string | null }>(
-            'SELECT barcode FROM products WHERE trim(barcode) = ? AND id <> ? LIMIT 1',
-            prod.barcode.trim(),
-            row.id,
-          );
-          if (colideBarcode) {
-            const atual = await database.getFirstAsync<{ barcode: string | null }>(
-              'SELECT barcode FROM products WHERE id = ? LIMIT 1',
+        // Metadados e estoque têm relógios independentes. Uma edição de nome
+        // não pode bloquear o saldo mais novo de outro aparelho, nem vice-versa.
+        // (#2)
+        if (shouldApplyIncoming(metadataIncoming, row.updated_at)) {
+          let nomeFinal = nome;
+          if (productNameKey(prod.name) !== productNameKey(row.name)) {
+            const colide = await database.getFirstAsync<{ id: number }>(
+              'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
+              productNameKey(nome),
               row.id,
             );
-            barcodeFinal = atual?.barcode ?? null;
+            if (colide) nomeFinal = row.name;
           }
+
+          let barcodeFinal = prod.barcode;
+          if (prod.barcode?.trim()) {
+            const colideBarcode = await database.getFirstAsync<{ barcode: string | null }>(
+              'SELECT barcode FROM products WHERE trim(barcode) = ? AND id <> ? LIMIT 1',
+              prod.barcode.trim(),
+              row.id,
+            );
+            if (colideBarcode) {
+              const atual = await database.getFirstAsync<{ barcode: string | null }>(
+                'SELECT barcode FROM products WHERE id = ? LIMIT 1',
+                row.id,
+              );
+              barcodeFinal = atual?.barcode ?? null;
+            }
+          }
+          await database.runAsync(
+            `UPDATE products SET
+               name = ?, name_key = ?, category = ?, brand = ?, barcode = ?,
+               alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
+             WHERE id = ?`,
+            nomeFinal,
+            productNameKey(nomeFinal),
+            prod.category,
+            prod.brand ?? null,
+            barcodeFinal,
+            prod.alertThreshold,
+            prod.archived ? 1 : 0,
+            prod.occasional ? 1 : 0,
+            metadataAt,
+            row.id,
+          );
         }
-        await database.runAsync(
-          `UPDATE products SET
-             name = ?, name_key = ?, category = ?, brand = ?, barcode = ?,
-             status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
-           WHERE id = ?`,
-          nomeFinal,
-          productNameKey(nomeFinal), // mantém name_key em sincronia (auditoria #76)
-          prod.category,
-          prod.brand ?? null,
-          barcodeFinal,
-          prod.status,
-          prod.alertThreshold,
-          prod.archived ? 1 : 0,
-          prod.occasional ? 1 : 0,
-          prod.updatedAt ?? now,
-          row.id,
-        );
+        aplicarEstoque =
+          row.inventory_updated_at === null ||
+          shouldApplyIncoming(inventoryIncoming, row.inventory_updated_at);
         productId = row.id;
       } else {
         const inserido = await database.runAsync(
@@ -276,25 +314,32 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
           prod.archived ? 1 : 0,
           prod.occasional ? 1 : 0,
           now,
-          prod.updatedAt ?? now,
+          metadataAt,
         );
         productId = inserido.lastInsertRowId;
         idPorNomeRecebido.set(productNameKey(prod.name), productId);
       }
 
-      await database.runAsync(
-        `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(product_id) DO UPDATE SET
-           quantity = excluded.quantity,
-           status = excluded.status,
-           updated_at = excluded.updated_at`,
-        productId,
-        prod.inventoryQuantity,
-        prod.inventoryStatus,
-        now,
-        now,
-      );
+      if (aplicarEstoque) {
+        await database.runAsync(
+          `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(product_id) DO UPDATE SET
+             quantity = excluded.quantity,
+             status = excluded.status,
+             updated_at = excluded.updated_at`,
+          productId,
+          prod.inventoryQuantity,
+          prod.inventoryStatus,
+          now,
+          inventoryAt,
+        );
+        await database.runAsync(
+          'UPDATE products SET status = ? WHERE id = ?',
+          prod.inventoryStatus === 'missing' ? 'missing' : 'active',
+          productId,
+        );
+      }
     }
 
     const idPorNome = new Map<string, number>();
@@ -326,6 +371,44 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 type Db = Awaited<ReturnType<typeof initializeDatabase>>;
 
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+type IndexedLocalEvent = {
+  sync_id: string | null;
+  legacyKey: string;
+};
+
+function indexLocalEvent<T extends IndexedLocalEvent>(
+  event: T,
+  bySyncId: Map<string, T>,
+  byLegacyKey: Map<string, T[]>,
+): void {
+  if (event.sync_id) bySyncId.set(event.sync_id, event);
+  const list = byLegacyKey.get(event.legacyKey) ?? [];
+  list.push(event);
+  byLegacyKey.set(event.legacyKey, list);
+}
+
+function findLocalEvent<T extends IndexedLocalEvent>(
+  syncId: string | undefined,
+  legacyKey: string,
+  bySyncId: Map<string, T>,
+  byLegacyKey: Map<string, T[]>,
+): T | null {
+  if (syncId) {
+    const exact = bySyncId.get(syncId);
+    if (exact) return exact;
+  }
+  return (
+    byLegacyKey
+      .get(legacyKey)
+      ?.find((event) =>
+        sameSyncEvent(
+          { syncId, legacyKey },
+          { syncId: event.sync_id, legacyKey: event.legacyKey },
+        ),
+      ) ?? null
+  );
+}
 
 async function aplicarItensLista(
   database: Db,
@@ -403,25 +486,49 @@ async function aplicarItensLista(
 }
 
 async function aplicarCompras(database: Db, idPorNome: Map<string, number>, compras: SyncSnapshot['purchases']) {
-  // Dedupe por productId (estável), não pelo nome: após um renomeio o mesmo
-  // evento podia chegar com nome antigo e ser inserido de novo. (auditoria #28)
-  const existentes = await database.getAllAsync<{ id: number; product_id: number; quantity: string; purchased_at: string; deleted: number; updated_at: string | null }>(`
-    SELECT id, product_id, quantity, purchased_at, deleted, updated_at FROM purchase_history
+  type PurchaseRow = {
+    id: number;
+    sync_id: string | null;
+    product_id: number;
+    quantity: string;
+    purchased_at: string;
+    deleted: number;
+    updated_at: string | null;
+    legacyKey: string;
+  };
+  const rows = await database.getAllAsync<Omit<PurchaseRow, 'legacyKey'>>(`
+    SELECT id, sync_id, product_id, quantity, purchased_at, deleted, updated_at
+    FROM purchase_history
   `);
-  const porChave = new Map(
-    existentes.map((e) => [eventKey(String(e.product_id), e.purchased_at, e.quantity), e]),
-  );
+  const porSyncId = new Map<string, PurchaseRow>();
+  const porChave = new Map<string, PurchaseRow[]>();
+  for (const row of rows) {
+    indexLocalEvent(
+      { ...row, legacyKey: eventKey(String(row.product_id), row.purchased_at, row.quantity) },
+      porSyncId,
+      porChave,
+    );
+  }
 
   for (const compra of compras) {
     const productId = idPorNome.get(productNameKey(compra.productName)); // NFC (auditoria #76)
     if (!productId) continue;
     const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
-    const local = porChave.get(chave);
+    const local = findLocalEvent(compra.syncId, chave, porSyncId, porChave);
     if (local) {
       // LWW do tombstone (shouldApplyIncomingDeleted, auditoria #65): edição
       // carimbada mais nova vence nas duas direções (excluir E re-incluir);
       // compra viva sem carimbo nunca ressuscita a exclusão local.
       const incomingDeleted = compra.deleted ?? false;
+      if (compra.syncId && !local.sync_id) {
+        await database.runAsync(
+          'UPDATE purchase_history SET sync_id = ? WHERE id = ?',
+          compra.syncId,
+          local.id,
+        );
+        local.sync_id = compra.syncId;
+        porSyncId.set(compra.syncId, local);
+      }
       if (
         shouldApplyIncomingDeleted(
           { deleted: incomingDeleted, updatedAt: compra.updatedAt },
@@ -440,47 +547,90 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
       }
       continue;
     }
-    // Tombstone de um evento que nunca existiu aqui: nada a apagar nem inserir.
-    if (compra.deleted) continue;
     const inserida = await database.runAsync(
-      `INSERT INTO purchase_history (product_id, quantity, purchased_at, source_list_id, source_list_name, updated_at)
-       VALUES (?, ?, ?, NULL, ?, ?)`,
+      `INSERT INTO purchase_history
+         (sync_id, product_id, quantity, purchased_at, source_list_id, source_list_name, deleted, updated_at)
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+      compra.syncId ?? null,
       productId,
       compra.quantity,
       compra.purchasedAt,
       compra.sourceListName ?? null,
+      compra.deleted ? 1 : 0,
       compra.updatedAt ?? null,
     );
-    porChave.set(chave, {
+    indexLocalEvent({
       id: inserida.lastInsertRowId,
+      sync_id: compra.syncId ?? null,
       product_id: productId,
       quantity: compra.quantity,
       purchased_at: compra.purchasedAt,
-      deleted: 0,
+      deleted: compra.deleted ? 1 : 0,
       updated_at: compra.updatedAt ?? null,
-    });
+      legacyKey: chave,
+    }, porSyncId, porChave);
   }
 }
 
 async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, precos: SyncSnapshot['prices']) {
-  // Dedupe por productId (estável), não pelo nome. (auditoria #28)
-  const existentes = await database.getAllAsync<{ product_id: number; price_cents: number; recorded_at: string }>(`
-    SELECT product_id, price_cents, recorded_at FROM price_history
+  type PriceRow = {
+    id: number;
+    sync_id: string | null;
+    product_id: number;
+    price_cents: number;
+    recorded_at: string;
+    legacyKey: string;
+  };
+  const rows = await database.getAllAsync<Omit<PriceRow, 'legacyKey'>>(`
+    SELECT id, sync_id, product_id, price_cents, recorded_at FROM price_history
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.recorded_at, String(e.price_cents))));
+  const porSyncId = new Map<string, PriceRow>();
+  const porChave = new Map<string, PriceRow[]>();
+  for (const row of rows) {
+    indexLocalEvent(
+      { ...row, legacyKey: eventKey(String(row.product_id), row.recorded_at, String(row.price_cents)) },
+      porSyncId,
+      porChave,
+    );
+  }
   const tocados = new Set<number>();
 
   for (const preco of precos) {
     const productId = idPorNome.get(productNameKey(preco.productName)); // NFC (auditoria #76)
     if (!productId) continue;
     const chave = eventKey(String(productId), preco.recordedAt, String(preco.priceCents));
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
-    await database.runAsync(
-      `INSERT INTO price_history (product_id, price_cents, recorded_at) VALUES (?, ?, ?)`,
+    const local = findLocalEvent(preco.syncId, chave, porSyncId, porChave);
+    if (local) {
+      if (preco.syncId && !local.sync_id) {
+        await database.runAsync(
+          'UPDATE price_history SET sync_id = ? WHERE id = ?',
+          preco.syncId,
+          local.id,
+        );
+        local.sync_id = preco.syncId;
+        porSyncId.set(preco.syncId, local);
+      }
+      continue;
+    }
+    const inserted = await database.runAsync(
+      `INSERT INTO price_history (sync_id, product_id, price_cents, recorded_at)
+       VALUES (?, ?, ?, ?)`,
+      preco.syncId ?? null,
       productId,
       Math.round(preco.priceCents),
       preco.recordedAt,
+    );
+    indexLocalEvent(
+      {
+        id: inserted.lastInsertRowId,
+        sync_id: preco.syncId ?? null,
+        product_id: productId,
+        price_cents: Math.round(preco.priceCents),
+        recorded_at: preco.recordedAt,
+        legacyKey: chave,
+      },
+      porSyncId,
+      porChave,
     );
     tocados.add(productId);
   }
@@ -503,26 +653,114 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
 }
 
 async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, consumos: SyncSnapshot['consumptions']) {
-  // Dedupe por productId (estável), não pelo nome. (auditoria #28)
-  const existentes = await database.getAllAsync<{ product_id: number; quantity: string; occurred_at: string }>(`
-    SELECT product_id, quantity, occurred_at
+  type InventoryEventRow = {
+    id: number;
+    sync_id: string | null;
+    product_id: number;
+    event_type: 'consumed' | 'set';
+    quantity: string;
+    occurred_at: string;
+    legacyKey: string;
+  };
+  const rows = await database.getAllAsync<Omit<InventoryEventRow, 'legacyKey'>>(`
+    SELECT id, sync_id, product_id, event_type, quantity, occurred_at
     FROM inventory_events
-    WHERE event_type = 'consumed'
   `);
-  const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.occurred_at, e.quantity)));
+  const porSyncId = new Map<string, InventoryEventRow>();
+  const porChave = new Map<string, InventoryEventRow[]>();
+  for (const row of rows) {
+    indexLocalEvent(
+      {
+        ...row,
+        legacyKey: `${row.event_type}|${eventKey(String(row.product_id), row.occurred_at, row.quantity)}`,
+      },
+      porSyncId,
+      porChave,
+    );
+  }
+  const tocados = new Set<number>();
 
   for (const consumo of consumos) {
     const productId = idPorNome.get(productNameKey(consumo.productName)); // NFC (auditoria #76)
     if (!productId) continue;
-    const chave = eventKey(String(productId), consumo.occurredAt, consumo.quantity);
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
-    await database.runAsync(
-      `INSERT INTO inventory_events (product_id, event_type, quantity, occurred_at)
-       VALUES (?, 'consumed', ?, ?)`,
+    const eventType = consumo.eventType ?? 'consumed';
+    const chave = `${eventType}|${eventKey(String(productId), consumo.occurredAt, consumo.quantity)}`;
+    const local = findLocalEvent(consumo.syncId, chave, porSyncId, porChave);
+    if (local) {
+      if (consumo.syncId && !local.sync_id) {
+        await database.runAsync(
+          'UPDATE inventory_events SET sync_id = ? WHERE id = ?',
+          consumo.syncId,
+          local.id,
+        );
+        local.sync_id = consumo.syncId;
+        porSyncId.set(consumo.syncId, local);
+      }
+      tocados.add(productId);
+      continue;
+    }
+    const inserted = await database.runAsync(
+      `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      consumo.syncId ?? null,
       productId,
+      eventType,
       consumo.quantity,
       consumo.occurredAt,
+    );
+    const row: InventoryEventRow = {
+      id: inserted.lastInsertRowId,
+      sync_id: consumo.syncId ?? null,
+      product_id: productId,
+      event_type: eventType,
+      quantity: consumo.quantity,
+      occurred_at: consumo.occurredAt,
+      legacyKey: chave,
+    };
+    rows.push(row);
+    indexLocalEvent(row, porSyncId, porChave);
+    tocados.add(productId);
+  }
+
+  // Materializa o estoque pelo último `set` e por todos os deltas posteriores.
+  // Dois UUIDs distintos nunca colapsam, mesmo com conteúdo/segundo iguais.
+  // (#72/#73)
+  for (const productId of tocados) {
+    const eventos = rows.filter((row) => row.product_id === productId);
+    if (!eventos.some((row) => row.event_type === 'set')) continue;
+    const atual = await database.getFirstAsync<{ quantity: string }>(
+      'SELECT quantity FROM inventory_items WHERE product_id = ? LIMIT 1',
+      productId,
+    );
+    const quantity = deriveInventoryQuantity(
+      eventos.map((row) => ({
+        syncId: row.sync_id,
+        eventType: row.event_type,
+        quantity: row.quantity,
+        occurredAt: row.occurred_at,
+      })),
+      atual?.quantity ?? '0 un',
+    );
+    const status = isEmptyQuantity(quantity) ? 'missing' : 'in_stock';
+    const latestMs = Math.max(...eventos.map((row) => new Date(row.occurred_at).getTime()));
+    const updatedAt = Number.isFinite(latestMs) ? new Date(latestMs).toISOString() : new Date().toISOString();
+    await database.runAsync(
+      `INSERT INTO inventory_items (product_id, quantity, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(product_id) DO UPDATE SET
+         quantity = excluded.quantity,
+         status = excluded.status,
+         updated_at = excluded.updated_at`,
+      productId,
+      quantity,
+      status,
+      updatedAt,
+      updatedAt,
+    );
+    await database.runAsync(
+      'UPDATE products SET status = ? WHERE id = ?',
+      status === 'missing' ? 'missing' : 'active',
+      productId,
     );
   }
 }

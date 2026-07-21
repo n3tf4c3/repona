@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
-import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity } from "@repona/core";
+import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity, uuidv4 } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
 
@@ -31,6 +31,13 @@ export async function definirQuantidade(
 
   // Atômico (db.batch = uma transação): upsert do estoque + status do produto.
   await db.batch([
+    db.insert(inventoryEvents).values({
+      syncId: uuidv4(),
+      productId: produtoId,
+      eventType: "set",
+      quantity: normalizada,
+      occurredAt: now,
+    }),
     db
       .insert(inventoryItems)
       .values({ productId: produtoId, quantity: normalizada, status, updatedAt: now })
@@ -40,7 +47,7 @@ export async function definirQuantidade(
       }),
     db
       .update(products)
-      .set({ status: productStatus, updatedAt: now })
+      .set({ status: productStatus })
       .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
   ]);
 }
@@ -81,10 +88,10 @@ export async function consumir(casaId: number, produtoId: number): Promise<void>
       await db.batch([
         db
           .insert(inventoryEvents)
-          .values({ productId: produtoId, eventType: "consumed", quantity: consumida }),
+          .values({ syncId: uuidv4(), productId: produtoId, eventType: "consumed", quantity: consumida }),
         db
           .update(products)
-          .set({ status: productStatus, updatedAt: now })
+          .set({ status: productStatus })
           .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
       ]);
     } catch (error) {

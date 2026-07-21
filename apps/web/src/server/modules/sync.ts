@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, lt, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import {
   products,
@@ -10,10 +10,14 @@ import {
   shoppingListItems,
 } from "@/server/db/schema";
 import {
+  deriveInventoryQuantity,
+  isEmptyQuantity,
   productNameKey,
   matchProduct,
   shouldApplyIncoming,
   shouldApplyIncomingDeleted,
+  sameSyncEvent,
+  uuidv4,
   normalizeQuantity,
   type SyncSnapshot,
 } from "@repona/core";
@@ -32,6 +36,58 @@ function instanteEmSegundos(date: Date): number {
   return Math.floor(date.getTime() / 1000);
 }
 
+function dataRecebidaOuAgora(value: string | undefined): Date {
+  if (!value) return new Date();
+  const date = new Date(value);
+  // shouldApplyIncoming rejeita clock muito futuro nos updates; para inserts,
+  // onde ainda não há relógio local para comparar, usamos o horário do servidor.
+  return Number.isNaN(date.getTime()) || !shouldApplyIncoming(value, new Date(0).toISOString())
+    ? new Date()
+    : date;
+}
+
+async function reservarProductId(): Promise<number> {
+  // Reserva o serial sem inserir linha. A sequência não é transacional (gaps são
+  // normais), mas o produto com id explícito entra no MESMO db.batch do estoque
+  // e dos eventos. Assim uma falha não deixa mais produto parcial. (#26)
+  const result = await db.execute<{ id: number | string }>(
+    sql`select nextval(pg_get_serial_sequence('products', 'id'))::int as id`
+  );
+  const id = Number(result.rows[0]?.id);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("PRODUCT_ID_RESERVATION_FAILED");
+  return id;
+}
+
+type IndexedEvent = { syncId: string | null; legacyKey: string };
+
+function indexEvent<T extends IndexedEvent>(
+  event: T,
+  bySyncId: Map<string, T>,
+  byLegacyKey: Map<string, T[]>
+): void {
+  if (event.syncId) bySyncId.set(event.syncId, event);
+  const list = byLegacyKey.get(event.legacyKey) ?? [];
+  list.push(event);
+  byLegacyKey.set(event.legacyKey, list);
+}
+
+function findEvent<T extends IndexedEvent>(
+  syncId: string | undefined,
+  legacyKey: string,
+  bySyncId: Map<string, T>,
+  byLegacyKey: Map<string, T[]>
+): T | null {
+  if (syncId) {
+    const exact = bySyncId.get(syncId);
+    if (exact) return exact;
+  }
+  return (
+    byLegacyKey
+      .get(legacyKey)
+      ?.find((event) => sameSyncEvent({ syncId, legacyKey }, event)) ?? null
+  );
+}
+
 // Uma escrita acumulada para o db.batch (que o neon-http executa como UMA
 // transação). O merge calcula tudo primeiro e aplica de uma vez — antes eram
 // dezenas de round-trips soltos e uma falha no meio deixava o snapshot
@@ -42,23 +98,10 @@ type Escrita = Parameters<typeof db.batch>[0][number];
 // Regras: produto casa por nome (o celular vence nos campos); compras e consumos
 // são append-only com dedupe por produto+instante+quantidade. Nada é apagado.
 //
-// Atomicidade: produtos NOVOS são inseridos individualmente (precisamos do id
-// retornado para o estoque e para resolver os eventos); todas as demais
-// escritas — updates de produto, estoque, compras, consumos, preços, itens de
-// lista, podas e purchase_count — vão num único db.batch. Se o batch falhar,
-// só os produtos novos persistem, e o retry os reconcilia por syncId (o merge é
-// idempotente). O lock por casa na rota já impede merges concorrentes.
-//
-// (auditoria #26) Se o batch falha depois de o produto novo já ter sido inserido
-// individualmente, o retry casa por syncId, mas o updatedAt empata e o LWW
-// rejeita o produto — antes o `continue` pulava JUNTO o upsert de estoque, e o
-// produto podia ficar sem estoque na nuvem indefinidamente (não era auto-curável
-// por retry, ao contrário do que se supunha). Contenção: no caminho de LWW-reject
-// enfileiramos um insert de estoque idempotente (ON CONFLICT DO NOTHING) que
-// preenche a linha ausente sem tocar estoque vivo. Eliminar de vez o parcial
-// exigiria transação interativa (indisponível no driver neon-http) ou reescrever
-// o merge em CTEs resolvendo ids gerados (redesenho de idempotência do sync, com
-// #22/#90) — fora do escopo desta contenção.
+// Atomicidade: ids seriais de produtos novos são reservados antes, mas TODAS as
+// linhas (produto, estoque, eventos, lista e contadores) são gravadas no mesmo
+// db.batch transacional. Falha consome apenas um número da sequência; nenhum
+// produto parcial persiste. (auditoria #26)
 export async function mergeCasaSnapshot(
   casaId: number,
   incoming: SyncSnapshot
@@ -69,9 +112,11 @@ export async function mergeCasaSnapshot(
       name: products.name,
       syncId: products.syncId,
       barcode: products.barcode,
-      updatedAt: products.updatedAt,
+      metadataUpdatedAt: products.updatedAt,
+      inventoryUpdatedAt: inventoryItems.updatedAt,
     })
     .from(products)
+    .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
     .where(eq(products.casaId, casaId));
   const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
@@ -85,7 +130,15 @@ export async function mergeCasaSnapshot(
       .map((p) => [(p.barcode as string).trim(), p.id])
   );
   const infoPorId = new Map(
-    existentes.map((p) => [p.id, { name: p.name, updatedAt: p.updatedAt, barcode: p.barcode }])
+    existentes.map((p) => [
+      p.id,
+      {
+        name: p.name,
+        metadataUpdatedAt: p.metadataUpdatedAt,
+        inventoryUpdatedAt: p.inventoryUpdatedAt,
+        barcode: p.barcode,
+      },
+    ])
   );
 
   // Nome RECEBIDO → produto resolvido pelo matchProduct. Os eventos do snapshot
@@ -107,104 +160,120 @@ export async function mergeCasaSnapshot(
     });
     let productId: number;
 
+    const metadataIncoming = prod.metadataUpdatedAt ?? prod.updatedAt;
+    const inventoryIncoming = prod.inventoryUpdatedAt ?? prod.updatedAt;
+    const inventoryUpdatedAt = dataRecebidaOuAgora(inventoryIncoming);
+    let aplicarEstoque = true;
+
     if (match.id !== null) {
-      // Mesmo sem aplicar o produto (LWW abaixo), os eventos deste device
+      // Mesmo sem aplicar metadados/estoque (LWW abaixo), os eventos deste device
       // referem-se a este produto. (auditoria 2026-06-09 #2)
-      idPorNomeRecebido.set(productNameKey(prod.name), match.id);
-      const info = infoPorId.get(match.id)!;
-      // LWW: registro mais antigo que o local não sobrescreve. (auditoria #2)
-      if (!shouldApplyIncoming(prod.updatedAt, info.updatedAt.toISOString())) {
-        // Contenção #26: se um merge anterior inseriu o produto mas o batch
-        // falhou antes do estoque, o inventory_items pode estar AUSENTE. No
-        // retry o updatedAt empata, o LWW rejeita e o `continue` pulava também o
-        // upsert de estoque — o produto ficava sem estoque na nuvem até outra
-        // mutação. Enfileira um insert idempotente que só preenche a linha
-        // ausente (ON CONFLICT DO NOTHING) sem sobrescrever estoque vivo.
+      productId = match.id;
+      idPorNomeRecebido.set(productNameKey(prod.name), productId);
+      const info = infoPorId.get(productId)!;
+
+      // Metadados e estoque têm relógios independentes. Uma edição de nome no
+      // device A não pode fazer o saldo mais recente do device B perder. (#2)
+      if (shouldApplyIncoming(metadataIncoming, info.metadataUpdatedAt.toISOString())) {
+        const donoDoNome = idPorNome.get(productNameKey(prod.name));
+        const nomeColide = donoDoNome !== undefined && donoDoNome !== productId;
+        const nomeFinal = nomeColide ? info.name : prod.name.trim();
+        const donoBarcode = prod.barcode ? idPorBarcode.get(prod.barcode) : undefined;
+        const barcodeColide = donoBarcode !== undefined && donoBarcode !== productId;
+        const barcodeFinal = barcodeColide ? info.barcode : prod.barcode;
+        const metadataUpdatedAt = dataRecebidaOuAgora(metadataIncoming);
+
         escritas.push(
           db
-            .insert(inventoryItems)
-            .values({ productId: match.id, quantity: prod.inventoryQuantity, status: prod.inventoryStatus })
-            .onConflictDoNothing({ target: inventoryItems.productId })
+            .update(products)
+            .set({
+              name: nomeFinal,
+              category: prod.category,
+              brand: prod.brand ?? null,
+              barcode: barcodeFinal,
+              alertThreshold: prod.alertThreshold,
+              archived: prod.archived,
+              occasional: prod.occasional,
+              updatedAt: metadataUpdatedAt,
+            })
+            .where(eq(products.id, productId))
         );
-        continue;
-      }
-      // Renomeia só se o novo nome não pertence a outro produto (evita violar a
-      // unicidade); em colisão mantém o nome local e reconcilia depois.
-      const donoDoNome = idPorNome.get(productNameKey(prod.name));
-      const nomeColide = donoDoNome !== undefined && donoDoNome !== match.id;
-      const nomeFinal = nomeColide ? info.name : prod.name.trim();
-      // Mesmo tratamento para o barcode: se o código recebido já pertence a OUTRO
-      // produto da casa, manter o local — senão o índice único estoura e derruba o
-      // sync inteiro. O barcode já vem normalizado (trim/null) do schema. (auditoria #37)
-      const donoBarcode = prod.barcode ? idPorBarcode.get(prod.barcode) : undefined;
-      const barcodeColide = donoBarcode !== undefined && donoBarcode !== match.id;
-      const barcodeFinal = barcodeColide ? info.barcode : prod.barcode;
-      const novoUpdatedAt = prod.updatedAt ? new Date(prod.updatedAt) : new Date();
 
-      escritas.push(
-        db
-          .update(products)
-          .set({
-            name: nomeFinal,
-            category: prod.category,
-            brand: prod.brand ?? null,
-            barcode: barcodeFinal,
-            status: prod.status,
-            alertThreshold: prod.alertThreshold,
-            archived: prod.archived,
-            occasional: prod.occasional,
-            updatedAt: novoUpdatedAt,
-          })
-          .where(eq(products.id, match.id))
-      );
-
-      if (productNameKey(info.name) !== productNameKey(nomeFinal)) {
-        idPorNome.delete(productNameKey(info.name));
-        idPorNome.set(productNameKey(nomeFinal), match.id);
+        if (productNameKey(info.name) !== productNameKey(nomeFinal)) {
+          idPorNome.delete(productNameKey(info.name));
+          idPorNome.set(productNameKey(nomeFinal), productId);
+        }
+        if (info.barcode && info.barcode !== barcodeFinal) idPorBarcode.delete(info.barcode);
+        if (barcodeFinal && !barcodeColide) idPorBarcode.set(barcodeFinal, productId);
+        info.name = nomeFinal;
+        info.barcode = barcodeFinal;
+        info.metadataUpdatedAt = metadataUpdatedAt;
       }
-      infoPorId.set(match.id, { name: nomeFinal, updatedAt: novoUpdatedAt, barcode: barcodeFinal });
-      if (barcodeFinal && !barcodeColide) idPorBarcode.set(barcodeFinal, match.id);
-      productId = match.id;
+
+      aplicarEstoque =
+        info.inventoryUpdatedAt === null ||
+        shouldApplyIncoming(inventoryIncoming, info.inventoryUpdatedAt.toISOString());
+      if (aplicarEstoque) info.inventoryUpdatedAt = inventoryUpdatedAt;
     } else {
-      // Insert individual: o id retornado é necessário já no loop (estoque e
-      // resolução de eventos). Caminho raro — produto novo para o servidor.
-      const [novo] = await db
-        .insert(products)
-        .values({
+      productId = await reservarProductId();
+      const syncId = prod.syncId ?? uuidv4();
+      const metadataUpdatedAt = dataRecebidaOuAgora(metadataIncoming);
+      escritas.push(
+        db.insert(products).values({
+          id: productId,
           casaId,
-          syncId: prod.syncId,
+          syncId,
           name: prod.name.trim(),
           category: prod.category,
           brand: prod.brand ?? null,
           barcode: prod.barcode,
-          status: prod.status,
+          status: prod.inventoryStatus === "missing" ? "missing" : "active",
           alertThreshold: prod.alertThreshold,
           archived: prod.archived,
           occasional: prod.occasional,
-          updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : undefined,
+          updatedAt: metadataUpdatedAt,
         })
-        .returning({ id: products.id, syncId: products.syncId });
-      productId = novo.id;
+      );
       idPorNome.set(productNameKey(prod.name), productId);
       idPorNomeRecebido.set(productNameKey(prod.name), productId);
-      idPorSyncId.set(novo.syncId, productId);
+      idPorSyncId.set(syncId, productId);
       if (prod.barcode?.trim()) idPorBarcode.set(prod.barcode.trim(), productId);
       infoPorId.set(productId, {
         name: prod.name.trim(),
-        updatedAt: prod.updatedAt ? new Date(prod.updatedAt) : new Date(),
+        metadataUpdatedAt,
+        inventoryUpdatedAt,
         barcode: prod.barcode,
       });
     }
 
-    escritas.push(
-      db
-        .insert(inventoryItems)
-        .values({ productId, quantity: prod.inventoryQuantity, status: prod.inventoryStatus })
-        .onConflictDoUpdate({
-          target: inventoryItems.productId,
-          set: { quantity: prod.inventoryQuantity, status: prod.inventoryStatus, updatedAt: new Date() },
-        })
-    );
+    if (aplicarEstoque) {
+      escritas.push(
+        db
+          .insert(inventoryItems)
+          .values({
+            productId,
+            quantity: prod.inventoryQuantity,
+            status: prod.inventoryStatus,
+            updatedAt: inventoryUpdatedAt,
+          })
+          .onConflictDoUpdate({
+            target: inventoryItems.productId,
+            set: {
+              quantity: prod.inventoryQuantity,
+              status: prod.inventoryStatus,
+              updatedAt: inventoryUpdatedAt,
+            },
+          })
+      );
+      // products.status é cache derivado para telas antigas; não move o relógio
+      // de metadados quando somente o estoque muda.
+      escritas.push(
+        db
+          .update(products)
+          .set({ status: prod.inventoryStatus === "missing" ? "missing" : "active" })
+          .where(eq(products.id, productId))
+      );
+    }
   }
 
   // Resolução dos eventos: o mapeamento dos nomes recebidos (via matchProduct)
@@ -247,6 +316,8 @@ async function mesclarPrecos(
 ): Promise<Escrita[]> {
   const existentes = await db
     .select({
+      id: priceHistory.id,
+      syncId: priceHistory.syncId,
       productId: priceHistory.productId,
       priceCents: priceHistory.priceCents,
       recordedAt: priceHistory.recordedAt,
@@ -254,9 +325,18 @@ async function mesclarPrecos(
     .from(priceHistory)
     .innerJoin(products, eq(products.id, priceHistory.productId))
     .where(eq(products.casaId, casaId));
-  const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.recordedAt)}|${e.priceCents}`)
-  );
+  const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
+  const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
+  for (const event of existentes) {
+    indexEvent(
+      {
+        ...event,
+        legacyKey: `${event.productId}|${instanteEmSegundos(event.recordedAt)}|${event.priceCents}`,
+      },
+      porSyncId,
+      porChave
+    );
+  }
 
   const escritas: Escrita[] = [];
   const tocados = new Set<number>();
@@ -265,13 +345,28 @@ async function mesclarPrecos(
     if (!productId) continue;
     const at = new Date(preco.recordedAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${instanteEmSegundos(at)}|${Math.round(preco.priceCents)}`;
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
+    const legacyKey = `${productId}|${instanteEmSegundos(at)}|${Math.round(preco.priceCents)}`;
+    const existente = findEvent(preco.syncId, legacyKey, porSyncId, porChave);
+    if (existente) {
+      if (preco.syncId && !existente.syncId) {
+        escritas.push(
+          db.update(priceHistory).set({ syncId: preco.syncId }).where(eq(priceHistory.id, existente.id))
+        );
+        existente.syncId = preco.syncId;
+        porSyncId.set(preco.syncId, existente);
+      }
+      continue;
+    }
+    const syncId = preco.syncId ?? uuidv4();
     escritas.push(
       db
         .insert(priceHistory)
-        .values({ productId, priceCents: Math.round(preco.priceCents), recordedAt: at })
+        .values({ syncId, productId, priceCents: Math.round(preco.priceCents), recordedAt: at })
+    );
+    indexEvent(
+      { id: 0, syncId, productId, priceCents: Math.round(preco.priceCents), recordedAt: at, legacyKey },
+      porSyncId,
+      porChave
     );
     tocados.add(productId);
   }
@@ -309,6 +404,7 @@ async function mesclarCompras(
   const existentes = await db
     .select({
       id: purchaseHistory.id,
+      syncId: purchaseHistory.syncId,
       productId: purchaseHistory.productId,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
@@ -318,12 +414,18 @@ async function mesclarCompras(
     .from(purchaseHistory)
     .innerJoin(products, eq(products.id, purchaseHistory.productId))
     .where(eq(products.casaId, casaId));
-  const porChave = new Map(
-    existentes.map((e) => [
-      `${e.productId}|${instanteEmSegundos(e.purchasedAt)}|${normalizeQuantity(e.quantity)}`,
-      e,
-    ])
-  );
+  const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
+  const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
+  for (const event of existentes) {
+    indexEvent(
+      {
+        ...event,
+        legacyKey: `${event.productId}|${instanteEmSegundos(event.purchasedAt)}|${normalizeQuantity(event.quantity)}`,
+      },
+      porSyncId,
+      porChave
+    );
+  }
 
   const escritas: Escrita[] = [];
   for (const compra of incoming) {
@@ -331,13 +433,19 @@ async function mesclarCompras(
     if (!productId) continue;
     const at = new Date(compra.purchasedAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(compra.quantity)}`;
-    const existente = porChave.get(chave);
+    const legacyKey = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(compra.quantity)}`;
+    const existente = findEvent(compra.syncId, legacyKey, porSyncId, porChave);
     if (existente) {
       // LWW do tombstone (shouldApplyIncomingDeleted, auditoria #65): edição
       // carimbada mais nova vence nas duas direções (excluir E re-incluir);
       // compra viva sem carimbo (cliente antigo) nunca ressuscita a exclusão.
       const incomingDeleted = compra.deleted ?? false;
+      const updates: { syncId?: string; deleted?: boolean; updatedAt?: Date } = {};
+      if (compra.syncId && !existente.syncId) {
+        updates.syncId = compra.syncId;
+        existente.syncId = compra.syncId;
+        porSyncId.set(compra.syncId, existente);
+      }
       if (
         shouldApplyIncomingDeleted(
           { deleted: incomingDeleted, updatedAt: compra.updatedAt },
@@ -345,14 +453,15 @@ async function mesclarCompras(
         )
       ) {
         const carimbo = compra.updatedAt ? new Date(compra.updatedAt) : new Date();
-        escritas.push(
-          db
-            .update(purchaseHistory)
-            .set({ deleted: incomingDeleted, updatedAt: carimbo })
-            .where(eq(purchaseHistory.id, existente.id))
-        );
+        updates.deleted = incomingDeleted;
+        updates.updatedAt = carimbo;
         existente.deleted = incomingDeleted;
         existente.updatedAt = carimbo;
+      }
+      if (Object.keys(updates).length > 0) {
+        escritas.push(
+          db.update(purchaseHistory).set(updates).where(eq(purchaseHistory.id, existente.id))
+        );
       }
       continue;
     }
@@ -360,9 +469,24 @@ async function mesclarCompras(
     // apaga), então não há o que propagar.
     if (compra.deleted) continue;
     const carimbo = compra.updatedAt ? new Date(compra.updatedAt) : null;
-    porChave.set(chave, { id: 0, productId, quantity: compra.quantity, purchasedAt: at, deleted: false, updatedAt: carimbo });
+    const syncId = compra.syncId ?? uuidv4();
+    indexEvent(
+      {
+        id: 0,
+        syncId,
+        productId,
+        quantity: compra.quantity,
+        purchasedAt: at,
+        deleted: false,
+        updatedAt: carimbo,
+        legacyKey,
+      },
+      porSyncId,
+      porChave
+    );
     escritas.push(
       db.insert(purchaseHistory).values({
+        syncId,
         casaId,
         productId,
         quantity: compra.quantity,
@@ -382,31 +506,126 @@ async function mesclarConsumos(
 ): Promise<Escrita[]> {
   const existentes = await db
     .select({
+      id: inventoryEvents.id,
+      syncId: inventoryEvents.syncId,
       productId: inventoryEvents.productId,
+      eventType: inventoryEvents.eventType,
       quantity: inventoryEvents.quantity,
       occurredAt: inventoryEvents.occurredAt,
     })
     .from(inventoryEvents)
     .innerJoin(products, eq(products.id, inventoryEvents.productId))
     .where(eq(products.casaId, casaId));
-  const vistos = new Set(
-    existentes.map((e) => `${e.productId}|${instanteEmSegundos(e.occurredAt)}|${normalizeQuantity(e.quantity)}`)
-  );
+  const porSyncId = new Map<string, (typeof existentes)[number] & IndexedEvent>();
+  const porChave = new Map<string, Array<(typeof existentes)[number] & IndexedEvent>>();
+  const eventosPorProduto = new Map<number, Array<(typeof existentes)[number]>>();
+  for (const event of existentes) {
+    const lista = eventosPorProduto.get(event.productId) ?? [];
+    lista.push(event);
+    eventosPorProduto.set(event.productId, lista);
+    indexEvent(
+      {
+        ...event,
+        legacyKey: `${event.eventType}|${event.productId}|${instanteEmSegundos(event.occurredAt)}|${normalizeQuantity(event.quantity)}`,
+      },
+      porSyncId,
+      porChave
+    );
+  }
 
   const escritas: Escrita[] = [];
+  const tocados = new Set<number>();
   for (const consumo of incoming) {
     const productId = idPorNome.get(productNameKey(consumo.productName));
     if (!productId) continue;
     const at = new Date(consumo.occurredAt);
     if (Number.isNaN(at.getTime())) continue;
-    const chave = `${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(consumo.quantity)}`;
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
+    const eventType = consumo.eventType ?? "consumed";
+    const legacyKey = `${eventType}|${productId}|${instanteEmSegundos(at)}|${normalizeQuantity(consumo.quantity)}`;
+    const existente = findEvent(consumo.syncId, legacyKey, porSyncId, porChave);
+    if (existente) {
+      if (consumo.syncId && !existente.syncId) {
+        escritas.push(
+          db
+            .update(inventoryEvents)
+            .set({ syncId: consumo.syncId })
+            .where(eq(inventoryEvents.id, existente.id))
+        );
+        existente.syncId = consumo.syncId;
+        porSyncId.set(consumo.syncId, existente);
+      }
+      continue;
+    }
+    const syncId = consumo.syncId ?? uuidv4();
     escritas.push(
       db
         .insert(inventoryEvents)
-        .values({ productId, eventType: "consumed", quantity: consumo.quantity, occurredAt: at })
+        .values({ syncId, productId, eventType, quantity: consumo.quantity, occurredAt: at })
     );
+    const novo = {
+      id: 0,
+      syncId,
+      productId,
+      eventType,
+      quantity: consumo.quantity,
+      occurredAt: at,
+    };
+    const lista = eventosPorProduto.get(productId) ?? [];
+    lista.push(novo);
+    eventosPorProduto.set(productId, lista);
+    indexEvent(
+      { ...novo, legacyKey },
+      porSyncId,
+      porChave
+    );
+    tocados.add(productId);
+  }
+
+  if (tocados.size > 0) {
+    const saldos = await db
+      .select({
+        productId: inventoryItems.productId,
+        quantity: inventoryItems.quantity,
+        updatedAt: inventoryItems.updatedAt,
+      })
+      .from(inventoryItems)
+      .where(inArray(inventoryItems.productId, [...tocados]));
+    const saldoPorProduto = new Map(saldos.map((saldo) => [saldo.productId, saldo]));
+
+    for (const productId of tocados) {
+      const eventos = eventosPorProduto.get(productId) ?? [];
+      if (!eventos.some((event) => event.eventType === "set")) continue;
+      const atual = saldoPorProduto.get(productId);
+      const quantity = deriveInventoryQuantity(
+        eventos.map((event) => ({
+          syncId: event.syncId,
+          eventType: event.eventType as "consumed" | "set",
+          quantity: event.quantity,
+          occurredAt: event.occurredAt.toISOString(),
+        })),
+        atual?.quantity ?? "0 un"
+      );
+      const status = isEmptyQuantity(quantity) ? "missing" : "in_stock";
+      const latestEventMs = Math.max(...eventos.map((event) => event.occurredAt.getTime()));
+      const updatedAt = new Date(
+        Math.max(latestEventMs, atual?.updatedAt.getTime() ?? 0)
+      );
+      escritas.push(
+        db
+          .insert(inventoryItems)
+          .values({ productId, quantity, status, updatedAt })
+          .onConflictDoUpdate({
+            target: inventoryItems.productId,
+            set: { quantity, status, updatedAt },
+          })
+      );
+      escritas.push(
+        db
+          .update(products)
+          .set({ status: status === "missing" ? "missing" : "active" })
+          .where(eq(products.id, productId))
+      );
+    }
   }
   return escritas;
 }
@@ -490,7 +709,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   const linhasProdutos = await db
     .select({
       syncId: products.syncId,
-      updatedAt: products.updatedAt,
+      metadataUpdatedAt: products.updatedAt,
       name: products.name,
       category: products.category,
       brand: products.brand,
@@ -502,6 +721,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       occasional: products.occasional,
       inventoryQuantity: inventoryItems.quantity,
       inventoryStatus: inventoryItems.status,
+      inventoryUpdatedAt: inventoryItems.updatedAt,
     })
     .from(products)
     .leftJoin(inventoryItems, eq(inventoryItems.productId, products.id))
@@ -511,6 +731,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   // outros devices — mesmo racional dos itens de lista abaixo.
   const linhasCompras = await db
     .select({
+      syncId: purchaseHistory.syncId,
       productName: products.name,
       quantity: purchaseHistory.quantity,
       purchasedAt: purchaseHistory.purchasedAt,
@@ -524,7 +745,9 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
 
   const linhasConsumos = await db
     .select({
+      syncId: inventoryEvents.syncId,
       productName: products.name,
+      eventType: inventoryEvents.eventType,
       quantity: inventoryEvents.quantity,
       occurredAt: inventoryEvents.occurredAt,
     })
@@ -534,6 +757,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
 
   const linhasPrecos = await db
     .select({
+      syncId: priceHistory.syncId,
       productName: products.name,
       priceCents: priceHistory.priceCents,
       recordedAt: priceHistory.recordedAt,
@@ -564,6 +788,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
     const lista = precosPorProduto.get(p.productName) ?? [];
     if (lista.length < MAX_PRICES_PER_PRODUCT) {
       lista.push({
+        syncId: p.syncId ?? undefined,
         productName: p.productName,
         priceCents: p.priceCents,
         recordedAt: p.recordedAt.toISOString(),
@@ -575,7 +800,11 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
   return {
     products: linhasProdutos.map((p) => ({
       syncId: p.syncId,
-      updatedAt: p.updatedAt.toISOString(),
+      // updatedAt continua espelhando metadados para clientes v1; v2 usa os
+      // dois campos separados abaixo. (#2, #67)
+      updatedAt: p.metadataUpdatedAt.toISOString(),
+      metadataUpdatedAt: p.metadataUpdatedAt.toISOString(),
+      inventoryUpdatedAt: p.inventoryUpdatedAt?.toISOString(),
       name: p.name,
       category: p.category,
       brand: p.brand,
@@ -590,6 +819,7 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       occasional: p.occasional,
     })),
     purchases: linhasCompras.map((c) => ({
+      syncId: c.syncId ?? undefined,
       productName: c.productName,
       quantity: c.quantity,
       purchasedAt: c.purchasedAt.toISOString(),
@@ -598,6 +828,8 @@ async function construirSnapshot(casaId: number): Promise<SyncSnapshot> {
       updatedAt: c.updatedAt ? c.updatedAt.toISOString() : null,
     })),
     consumptions: linhasConsumos.map((c) => ({
+      syncId: c.syncId ?? undefined,
+      eventType: c.eventType as "consumed" | "set",
       productName: c.productName,
       quantity: c.quantity,
       occurredAt: c.occurredAt.toISOString(),

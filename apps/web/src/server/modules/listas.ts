@@ -1,6 +1,12 @@
 import "server-only";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { isEmptyQuantity, type ShoppingListDTO, type ShoppingListItemDTO, type ProductStatus } from "@repona/core";
+import {
+  isEmptyQuantity,
+  uuidv4,
+  type ShoppingListDTO,
+  type ShoppingListItemDTO,
+  type ProductStatus,
+} from "@repona/core";
 import { db } from "@/server/db";
 import {
   products,
@@ -8,6 +14,7 @@ import {
   shoppingListItems,
   purchaseHistory,
   inventoryItems,
+  inventoryEvents,
 } from "@/server/db/schema";
 
 export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDTO> {
@@ -256,6 +263,7 @@ export async function finalizarCompra(casaId: number): Promise<number> {
   for (const item of comprados) {
     escritas.push(
       db.insert(purchaseHistory).values({
+        syncId: uuidv4(),
         casaId,
         productId: item.productId,
         quantity: item.quantity,
@@ -270,7 +278,6 @@ export async function finalizarCompra(casaId: number): Promise<number> {
         .set({
           purchaseCount: sql`${products.purchaseCount} + 1`,
           status: "active",
-          updatedAt: now,
         })
         .where(and(eq(products.casaId, casaId), eq(products.id, item.productId)))
     );
@@ -282,6 +289,15 @@ export async function finalizarCompra(casaId: number): Promise<number> {
           target: inventoryItems.productId,
           set: { quantity: item.quantity, status: "in_stock", updatedAt: now },
         })
+    );
+    escritas.push(
+      db.insert(inventoryEvents).values({
+        syncId: uuidv4(),
+        productId: item.productId,
+        eventType: "set",
+        quantity: item.quantity,
+        occurredAt: now,
+      })
     );
   }
 

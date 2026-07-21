@@ -19,6 +19,7 @@ export type ProductRecord = {
   alertThreshold: string | null;
   inventoryQuantity: string;
   inventoryStatus: InventoryStatus;
+  inventoryUpdatedAt: string | null;
   consumptionCount: number;
   lastConsumedAt: string | null;
   archived: boolean;
@@ -40,6 +41,7 @@ type ProductRow = {
   alert_threshold: string | null;
   inventory_quantity: string;
   inventory_status: InventoryStatus;
+  inventory_updated_at: string | null;
   consumption_count: number;
   last_consumed_at: string | null;
   archived: number;
@@ -62,6 +64,7 @@ const PRODUCT_SELECT = `
       p.alert_threshold,
       COALESCE(ii.quantity, '0 un') as inventory_quantity,
       COALESCE(ii.status, 'missing') as inventory_status,
+      ii.updated_at as inventory_updated_at,
       COALESCE(ie.consumption_count, 0) as consumption_count,
       ie.last_consumed_at,
       p.archived,
@@ -196,6 +199,14 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
        VALUES (?, '0 un', 'missing', ?, ?)`,
       productId,
       now,
+      now,
+    );
+
+    await database.runAsync(
+      `INSERT INTO inventory_events (sync_id, product_id, event_type, quantity, occurred_at)
+       VALUES (?, ?, 'set', '0 un', ?)`,
+      uuidv4(),
+      productId,
       now,
     );
   });
@@ -352,6 +363,7 @@ function mapProductRow(row: ProductRow): ProductRecord {
     alertThreshold: row.alert_threshold,
     inventoryQuantity: row.inventory_quantity,
     inventoryStatus: isMissing ? 'missing' : row.inventory_status,
+    inventoryUpdatedAt: row.inventory_updated_at,
     consumptionCount: row.consumption_count,
     lastConsumedAt: row.last_consumed_at,
     archived: row.archived === 1,
