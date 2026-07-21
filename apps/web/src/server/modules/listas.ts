@@ -1,21 +1,21 @@
 import "server-only";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
-  isEmptyQuantity,
-  uuidv4,
   type ShoppingListDTO,
   type ShoppingListItemDTO,
   type ProductStatus,
 } from "@repona/core";
-import { db } from "@/server/db";
+import { db, queryRaw } from "@/server/db";
+import { products, shoppingLists, shoppingListItems } from "@/server/db/schema";
 import {
-  products,
-  shoppingLists,
-  shoppingListItems,
-  purchaseHistory,
-  inventoryItems,
-  inventoryEvents,
-} from "@/server/db/schema";
+  assertSameDomainOperation,
+  DOMAIN_OPERATION_RESULT_MISSING,
+  type DomainOperationReceipt,
+} from "@/server/modules/domainOperation";
+import {
+  FINALIZE_PURCHASE_OPERATION_SQL,
+  READ_DOMAIN_OPERATION_SQL,
+} from "@/server/modules/domainMutationSql";
 
 export async function garantirListaAtiva(casaId: number): Promise<ShoppingListDTO> {
   const [existente] = await db
@@ -182,149 +182,55 @@ export async function removerItem(casaId: number, itemId: number): Promise<void>
     );
 }
 
-export async function finalizarCompra(casaId: number): Promise<number> {
+export async function finalizarCompra(
+  casaId: number,
+  operationId: string
+): Promise<number> {
   const lista = await garantirListaAtiva(casaId);
-  const marcados = await db
-    .select({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity })
-    .from(shoppingListItems)
-    .innerJoin(products, eq(products.id, shoppingListItems.productId))
-    .where(
-      and(
-        eq(shoppingListItems.shoppingListId, lista.id),
-        eq(shoppingListItems.checked, true),
-        // Ignora tombstones: um item deleted=true (checked antigo, quantidade
-        // vazia) não deve disparar QUANTITY_INVALID na validação inicial — o
-        // claim abaixo já filtra deleted=false. (auditoria #33)
-        eq(shoppingListItems.deleted, false),
-        eq(products.casaId, casaId),
-        // Arquivado não é comprado mesmo que tenha ficado marcado. (auditoria #8)
-        eq(products.archived, false)
-      )
-    )
-    .orderBy(asc(shoppingListItems.id));
 
-  if (marcados.length === 0) return 0;
-  if (marcados.some((item) => isEmptyQuantity(item.quantity))) throw new Error("QUANTITY_INVALID");
+  type OperationRow = {
+    operationType: string;
+    casaId: number | string;
+    resourceId: number | string | null;
+    resultCount: number | string;
+  };
+  const toReceipt = (row: OperationRow): DomainOperationReceipt => ({
+    operationType: row.operationType,
+    casaId: Number(row.casaId),
+    resourceId: row.resourceId === null ? null : Number(row.resourceId),
+    resultCount: Number(row.resultCount),
+  });
 
-  // Claim atômico: o UPDATE ... RETURNING marca os itens como tombstone (deleted)
-  // e os devolve de uma vez. Uma finalização concorrente recebe RETURNING vazio e
-  // não duplica o histórico (a leitura acima é só para validar a quantidade). O
-  // tombstone — em vez de DELETE — faz a finalização propagar no sync sem o item
-  // ser ressuscitado por outro device. (auditoria #15, #9)
-  const now = new Date();
-  const comprados = await db
-    .update(shoppingListItems)
-    .set({ deleted: true, updatedAt: now })
-    .where(
-      and(
-        eq(shoppingListItems.shoppingListId, lista.id),
-        eq(shoppingListItems.checked, true),
-        eq(shoppingListItems.deleted, false),
-        // Não finaliza item de produto arquivado. (auditoria #8)
-        inArray(
-          shoppingListItems.productId,
-          db
-            .select({ id: products.id })
-            .from(products)
-            .where(and(eq(products.casaId, casaId), eq(products.archived, false)))
-        )
-      )
-    )
-    .returning({ productId: shoppingListItems.productId, quantity: shoppingListItems.quantity });
-
-  if (comprados.length === 0) return 0;
-
-  // Revalida sobre o conjunto efetivamente claimado: entre a leitura inicial e o
-  // claim, uma edição concorrente pode ter zerado uma quantidade. O mobile valida
-  // pós-claim dentro da transação; aqui (sem transação no driver) desfazemos o
-  // claim e rejeitamos. (auditoria 2026-06-09 #10)
-  if (comprados.some((item) => isEmptyQuantity(item.quantity))) {
-    await db
-      .update(shoppingListItems)
-      .set({ deleted: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(shoppingListItems.shoppingListId, lista.id),
-          eq(shoppingListItems.deleted, true),
-          eq(shoppingListItems.updatedAt, now),
-          inArray(
-            shoppingListItems.productId,
-            comprados.map((item) => item.productId)
-          )
-        )
-      );
-    throw new Error("QUANTITY_INVALID");
-  }
-
-  // db.batch roda como uma transação: por item comprado grava histórico,
-  // incrementa purchase_count e repõe o estoque.
-  type Escrita = Parameters<typeof db.batch>[0][number];
-  const escritas: Escrita[] = [];
-  for (const item of comprados) {
-    escritas.push(
-      db.insert(purchaseHistory).values({
-        syncId: uuidv4(),
-        casaId,
-        productId: item.productId,
-        quantity: item.quantity,
-        purchasedAt: now,
-        sourceListId: lista.id,
-        sourceListName: lista.name,
-      })
-    );
-    escritas.push(
-      db
-        .update(products)
-        .set({
-          purchaseCount: sql`${products.purchaseCount} + 1`,
-          status: "active",
-        })
-        .where(and(eq(products.casaId, casaId), eq(products.id, item.productId)))
-    );
-    escritas.push(
-      db
-        .insert(inventoryItems)
-        .values({ productId: item.productId, quantity: item.quantity, status: "in_stock", updatedAt: now })
-        .onConflictDoUpdate({
-          target: inventoryItems.productId,
-          set: { quantity: item.quantity, status: "in_stock", updatedAt: now },
-        })
-    );
-    escritas.push(
-      db.insert(inventoryEvents).values({
-        syncId: uuidv4(),
-        productId: item.productId,
-        eventType: "set",
-        quantity: item.quantity,
-        occurredAt: now,
-      })
-    );
-  }
-
-  // db.batch exige uma tupla não-vazia; já garantimos comprados.length > 0 acima.
-  // O claim (tombstone) já foi gravado num round-trip separado; se os efeitos
-  // falharem aqui, os itens sumiriam da lista sem histórico/estoque/contador —
-  // perda de dados. Sem transação interativa (neon-http), desfazemos o claim
-  // (mesmo undo do caso de quantidade inválida) e propagamos o erro. (auditoria #22)
+  // Claim dos itens e todos os efeitos acontecem numa única instrução. O recibo
+  // UNIQUE torna a resposta repetível quando o commit ocorreu mas a conexão caiu:
+  // a mesma chave nunca grava compras/estoque/eventos duas vezes. (#22)
+  let rows: OperationRow[] = [];
+  let queryError: unknown;
   try {
-    await db.batch(escritas as unknown as Parameters<typeof db.batch>[0]);
+    rows = await queryRaw<OperationRow>(FINALIZE_PURCHASE_OPERATION_SQL, [
+      operationId,
+      casaId,
+      lista.id,
+      lista.name,
+    ]);
   } catch (error) {
-    await db
-      .update(shoppingListItems)
-      .set({ deleted: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(shoppingListItems.shoppingListId, lista.id),
-          eq(shoppingListItems.deleted, true),
-          eq(shoppingListItems.updatedAt, now),
-          inArray(
-            shoppingListItems.productId,
-            comprados.map((item) => item.productId)
-          )
-        )
-      );
-    throw error;
+    queryError = error;
   }
 
-  return comprados.length;
+  let receipt = rows[0] ? toReceipt(rows[0]) : null;
+  if (!receipt) {
+    const replay = await queryRaw<OperationRow>(READ_DOMAIN_OPERATION_SQL, [operationId]);
+    receipt = replay[0] ? toReceipt(replay[0]) : null;
+  }
+  if (!receipt) {
+    if (queryError) throw queryError;
+    throw new Error(DOMAIN_OPERATION_RESULT_MISSING);
+  }
+  assertSameDomainOperation(receipt, {
+    operationType: "finalize-purchase",
+    casaId,
+    resourceId: lista.id,
+  });
+  if (receipt.resultCount < 0) throw new Error("QUANTITY_INVALID");
+  return receipt.resultCount;
 }

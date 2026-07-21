@@ -10,10 +10,12 @@ import {
   removerItem,
   finalizarCompra,
 } from "@/server/modules/listas";
+import { DOMAIN_IDEMPOTENCY_CONFLICT } from "@/server/modules/domainOperation";
 
 type Resultado = { ok: true } | { ok: false; error: string };
 
 const idSchema = z.number().int().positive();
+const operationIdSchema = z.string().uuid();
 // Limite do FIELD_LIMITS (fonte única com o sync). (auditoria 2026-06-09 #5)
 const quantitySchema = z
   .string()
@@ -75,15 +77,23 @@ export async function removerItemAction(itemId: number): Promise<Resultado> {
   }
 }
 
-export async function finalizarCompraAction(): Promise<
-  { ok: true; total: number } | { ok: false; error: string }
+export async function finalizarCompraAction(operationId: string): Promise<
+  | { ok: true; total: number }
+  | { ok: false; error: string; resetOperation?: boolean }
 > {
   const { casaId: id } = await requireCasa();
   try {
-    const total = await finalizarCompra(id);
+    const total = await finalizarCompra(id, operationIdSchema.parse(operationId));
     revalidarLista();
     return { ok: true, total };
   } catch (error) {
+    if (error instanceof Error && error.message === DOMAIN_IDEMPOTENCY_CONFLICT) {
+      return {
+        ok: false,
+        error: "A operação anterior pertence a outra lista. Tente novamente.",
+        resetOperation: true,
+      };
+    }
     if (error instanceof Error && error.message === "QUANTITY_INVALID") {
       return { ok: false, error: "A compra tem item com quantidade zerada." };
     }

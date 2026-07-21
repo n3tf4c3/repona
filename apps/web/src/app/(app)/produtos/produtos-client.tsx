@@ -27,6 +27,7 @@ import {
 } from "@repona/core";
 import { CATEGORIAS } from "@/lib/categorias";
 import { formatCentsBRL } from "@/lib/preco";
+import { clearOperationId, getOrCreateOperationId } from "@/lib/idempotentMutation";
 import { CategoriaBolha } from "@/components/categoria-icone";
 import {
   criarProdutoAction,
@@ -39,7 +40,9 @@ import {
   adicionarAListaAction,
 } from "./actions";
 
-type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string };
+type Resultado =
+  | { ok: true; arquivado?: boolean }
+  | { ok: false; error: string; resetOperation?: boolean };
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -149,8 +152,34 @@ export function ProdutosClient({
   function executar(acao: () => Promise<Resultado>) {
     setErro(null);
     startTransition(async () => {
-      const r = await acao();
-      if (!r.ok) setErro(r.error);
+      try {
+        const r = await acao();
+        if (!r.ok) setErro(r.error);
+      } catch {
+        setErro("A resposta foi interrompida. Tente novamente.");
+      }
+    });
+  }
+
+  function executarConsumo(produtoId: number) {
+    const operationKey = `consume:${produtoId}`;
+    let operationId: string;
+    try {
+      operationId = getOrCreateOperationId(
+        operationKey,
+        window.localStorage,
+        () => crypto.randomUUID()
+      );
+    } catch {
+      setErro("Não foi possível preparar a operação. Recarregue a página.");
+      return;
+    }
+    executar(async () => {
+      const result = await consumirAction(produtoId, operationId);
+      if (result.ok || result.resetOperation) {
+        clearOperationId(operationKey, window.localStorage);
+      }
+      return result;
     });
   }
 
@@ -265,7 +294,7 @@ export function ProdutosClient({
                   )
                 }
                 onFalta={() => executar(() => marcarEmFaltaAction(produto.id))}
-                onConsumir={() => executar(() => consumirAction(produto.id))}
+                onConsumir={() => executarConsumo(produto.id)}
               />
             ))}
       </div>

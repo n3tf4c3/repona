@@ -5,6 +5,7 @@ import { Check, Plus, Minus, Trash2, ShoppingBag, CheckCircle2, AlertCircle, Cli
 import { getNextInventoryQuantity, isEmptyQuantity, type ShoppingListItemDTO } from "@repona/core";
 import type { GrupoItens } from "@/lib/categorias";
 import { CategoriaBolha } from "@/components/categoria-icone";
+import { clearOperationId, getOrCreateOperationId } from "@/lib/idempotentMutation";
 import {
   alternarItemAction,
   atualizarQuantidadeAction,
@@ -13,10 +14,12 @@ import {
 } from "./actions";
 
 export function ListaClient({
+  listId,
   listName,
   grupos,
   total,
 }: {
+  listId: number;
   listName: string;
   grupos: GrupoItens[];
   total: number;
@@ -41,14 +44,38 @@ export function ListaClient({
   function finalizar() {
     setErro(null);
     setAviso(null);
+    const operationKey = `finalize:${listId}`;
+    let operationId: string;
+    try {
+      operationId = getOrCreateOperationId(
+        operationKey,
+        window.localStorage,
+        () => crypto.randomUUID()
+      );
+    } catch {
+      setErro("Não foi possível preparar a operação. Recarregue a página.");
+      return;
+    }
     startTransition(async () => {
-      const r = await finalizarCompraAction();
-      if (!r.ok) {
-        setErro(r.error);
-      } else if (r.total === 0) {
-        setAviso("Marque os itens comprados antes de finalizar.");
-      } else {
-        setAviso(`Compra finalizada: ${r.total} ${r.total === 1 ? "item" : "itens"} no histórico.`);
+      try {
+        const r = await finalizarCompraAction(operationId);
+        if (!r.ok) {
+          if (r.resetOperation) clearOperationId(operationKey, window.localStorage);
+          setErro(r.error);
+        } else {
+          clearOperationId(operationKey, window.localStorage);
+          if (r.total === 0) {
+            setAviso("Marque os itens comprados antes de finalizar.");
+          } else {
+            setAviso(
+              `Compra finalizada: ${r.total} ${r.total === 1 ? "item" : "itens"} no histórico.`
+            );
+          }
+        }
+      } catch {
+        // A chave permanece no storage: o próximo clique consulta/reaplica a
+        // mesma operação sem duplicar efeitos após uma resposta perdida.
+        setErro("A resposta foi interrompida. Tente finalizar novamente.");
       }
     });
   }

@@ -60,6 +60,29 @@ export const accountOperations = pgTable(
   ]
 );
 
+// Recibos idempotentes para mutações multi-tabela do web. O operation_id vem
+// do browser e é inserido na mesma instrução PostgreSQL que aplica os efeitos;
+// uma resposta perdida pode ser repetida sem novo consumo/finalização. (#22)
+export const domainOperations = pgTable(
+  "domain_operations",
+  {
+    operationId: uuid("operation_id").primaryKey(),
+    casaId: integer("casa_id")
+      .notNull()
+      .references(() => casas.id, { onDelete: "cascade" }),
+    operationType: text("operation_type").notNull(),
+    resourceId: integer("resource_id").notNull(),
+    resultCount: integer("result_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "domain_operations_type_check",
+      sql`${table.operationType} in ('consume', 'finalize-purchase')`
+    ),
+  ]
+);
+
 // Tabelas de domínio (por casa) — espelham o SQLite do mobile
 // (apps/mobile/src/storage/database.ts), escopadas à casa.
 

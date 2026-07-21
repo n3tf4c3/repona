@@ -13,8 +13,11 @@ import {
 } from "@/server/modules/produtos";
 import { definirQuantidade, marcarEmFalta, consumir } from "@/server/modules/estoque";
 import { adicionarProduto } from "@/server/modules/listas";
+import { DOMAIN_IDEMPOTENCY_CONFLICT } from "@/server/modules/domainOperation";
 
-type Resultado = { ok: true; arquivado?: boolean } | { ok: false; error: string };
+type Resultado =
+  | { ok: true; arquivado?: boolean }
+  | { ok: false; error: string; resetOperation?: boolean };
 
 const MENSAGENS: Record<string, string> = {
   PRODUCT_NAME_REQUIRED: "Informe o nome do produto.",
@@ -28,6 +31,7 @@ const MENSAGENS: Record<string, string> = {
 };
 
 const idSchema = z.number().int().positive();
+const operationIdSchema = z.string().uuid();
 // Limites do FIELD_LIMITS (fonte única, a mesma da criação no mobile e do
 // endpoint de sync): valores locais divergentes impediam editar no web um
 // produto válido criado no mobile. (auditoria 2026-06-09 #5)
@@ -56,6 +60,13 @@ const productInputSchema = z.object({
 
 function tratar(error: unknown): Resultado {
   const codigo = error instanceof Error ? error.message : "ERRO";
+  if (codigo === DOMAIN_IDEMPOTENCY_CONFLICT) {
+    return {
+      ok: false,
+      error: "A operação anterior pertence a outro contexto. Tente novamente.",
+      resetOperation: true,
+    };
+  }
   return { ok: false, error: MENSAGENS[codigo] ?? "Algo deu errado. Tente novamente." };
 }
 
@@ -143,10 +154,17 @@ export async function marcarEmFaltaAction(produtoId: number): Promise<Resultado>
   }
 }
 
-export async function consumirAction(produtoId: number): Promise<Resultado> {
+export async function consumirAction(
+  produtoId: number,
+  operationId: string
+): Promise<Resultado> {
   const { casaId: id } = await requireCasa();
   try {
-    await consumir(id, validar(idSchema, produtoId));
+    await consumir(
+      id,
+      validar(idSchema, produtoId),
+      validar(operationIdSchema, operationId)
+    );
     revalidarDominio();
     return { ok: true };
   } catch (error) {

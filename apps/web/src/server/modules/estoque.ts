@@ -1,8 +1,17 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
-import { isEmptyQuantity, getNextInventoryQuantity, getConsumedQuantity, uuidv4 } from "@repona/core";
-import { db } from "@/server/db";
+import { isEmptyQuantity, uuidv4 } from "@repona/core";
+import { db, queryRaw } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
+import {
+  assertSameDomainOperation,
+  DOMAIN_OPERATION_RESULT_MISSING,
+  type DomainOperationReceipt,
+} from "@/server/modules/domainOperation";
+import {
+  CONSUME_DOMAIN_OPERATION_SQL,
+  READ_DOMAIN_OPERATION_SQL,
+} from "@/server/modules/domainMutationSql";
 
 // Garante que o produto pertence ao usuário e devolve a quantidade atual de estoque.
 async function obterEstoqueAtual(casaId: number, produtoId: number): Promise<string> {
@@ -56,53 +65,59 @@ export async function marcarEmFalta(casaId: number, produtoId: number): Promise<
   await definirQuantidade(casaId, produtoId, "0 un");
 }
 
-export async function consumir(casaId: number, produtoId: number): Promise<void> {
-  // Decremento com compare-and-set para evitar lost update: duas chamadas
-  // concorrentes liam a mesma quantidade e gravavam o mesmo valor absoluto,
-  // perdendo um decremento (mas registrando dois eventos). O UPDATE só vence se
-  // a quantidade ainda for a lida; quem perde a corrida tenta de novo com o
-  // valor novo. Mesmo padrão de claim+efeitos de finalizarCompra. (auditoria #27)
-  for (let tentativa = 0; tentativa < 5; tentativa++) {
-    const atual = await obterEstoqueAtual(casaId, produtoId);
-    if (isEmptyQuantity(atual)) throw new Error("INVENTORY_ALREADY_MISSING");
+type OperationRow = {
+  operationType: string;
+  casaId: number | string;
+  resourceId: number | string | null;
+  resultCount: number | string;
+};
 
-    const consumida = getConsumedQuantity(atual);
-    const proxima = getNextInventoryQuantity(atual, -1);
-    const status = isEmptyQuantity(proxima) ? "missing" : "in_stock";
-    const productStatus = status === "missing" ? "missing" : "active";
-    const now = new Date();
+function toReceipt(row: OperationRow): DomainOperationReceipt {
+  return {
+    operationType: row.operationType,
+    casaId: Number(row.casaId),
+    resourceId: row.resourceId === null ? null : Number(row.resourceId),
+    resultCount: Number(row.resultCount),
+  };
+}
 
-    // Claim do estoque: decrementa só se a quantidade não mudou desde a leitura.
-    const claim = await db
-      .update(inventoryItems)
-      .set({ quantity: proxima, status, updatedAt: now })
-      .where(and(eq(inventoryItems.productId, produtoId), eq(inventoryItems.quantity, atual)))
-      .returning({ productId: inventoryItems.productId });
-    if (claim.length === 0) continue; // outra consumir venceu; recomputa
+async function obterRecibo(operationId: string): Promise<DomainOperationReceipt | null> {
+  const rows = await queryRaw<OperationRow>(READ_DOMAIN_OPERATION_SQL, [operationId]);
+  return rows[0] ? toReceipt(rows[0]) : null;
+}
 
-    // Só após vencer o claim: registra o evento e o status do produto. Se o batch
-    // falhar, o estoque já baixou sem evento/status — desfaz o claim (compare-and
-    // -set: só reverte se a quantidade ainda for a que gravamos). Mesma família do
-    // #22, sem transação interativa no neon-http. (auditoria #42)
-    try {
-      await db.batch([
-        db
-          .insert(inventoryEvents)
-          .values({ syncId: uuidv4(), productId: produtoId, eventType: "consumed", quantity: consumida }),
-        db
-          .update(products)
-          .set({ status: productStatus })
-          .where(and(eq(products.casaId, casaId), eq(products.id, produtoId))),
-      ]);
-    } catch (error) {
-      // atual é não-vazio (checado acima), então o estoque revertido é in_stock.
-      await db
-        .update(inventoryItems)
-        .set({ quantity: atual, status: "in_stock", updatedAt: new Date() })
-        .where(and(eq(inventoryItems.productId, produtoId), eq(inventoryItems.quantity, proxima)));
-      throw error;
-    }
-    return;
+export async function consumir(
+  casaId: number,
+  produtoId: number,
+  operationId: string
+): Promise<void> {
+  // Uma única instrução PostgreSQL cria o recibo idempotente, bloqueia o saldo,
+  // calcula/decrementa, grava o evento e atualiza o cache de status. Qualquer erro
+  // desfaz tudo; retry com a mesma chave apenas lê o resultado persistido. (#22)
+  let rows: OperationRow[] = [];
+  let queryError: unknown;
+  try {
+    rows = await queryRaw<OperationRow>(CONSUME_DOMAIN_OPERATION_SQL, [
+      operationId,
+      casaId,
+      produtoId,
+    ]);
+  } catch (error) {
+    // Duas requisições simultâneas com a mesma chave podem disputar o UNIQUE
+    // do evento/recibo. A perdedora lê o recibo que a vencedora acabou de
+    // commitar; erros sem recibo continuam sendo propagados.
+    queryError = error;
   }
-  throw new Error("INVENTORY_CONFLICT");
+
+  const receipt = rows[0] ? toReceipt(rows[0]) : await obterRecibo(operationId);
+  if (!receipt) {
+    if (queryError) throw queryError;
+    throw new Error(DOMAIN_OPERATION_RESULT_MISSING);
+  }
+  assertSameDomainOperation(receipt, {
+    operationType: "consume",
+    casaId,
+    resourceId: produtoId,
+  });
+  if (receipt.resultCount !== 1) throw new Error("INVENTORY_ALREADY_MISSING");
 }

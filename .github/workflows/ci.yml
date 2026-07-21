@@ -102,9 +102,17 @@ jobs:
       - name: Install
         run: npm ci
 
-      # 1) O baseline aplica limpo num Postgres efêmero (DDL válida).
-      - name: Aplicar baseline no Postgres efêmero
-        run: psql "$DATABASE_URL" -f apps/web/drizzle/0000_*.sql
+      # 1) A cadeia inteira aplica limpa num Postgres efêmero (DDL + backfills).
+      - name: Aplicar migrations no Postgres efêmero
+        run: |
+          for migration in apps/web/drizzle/*.sql; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+
+      - name: Testar mutações transacionais e idempotentes
+        env:
+          TEST_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
+        run: npx tsx --test apps/web/src/server/modules/domainMutations.integration.test.ts
 
       # 2) Sem drift: drizzle-kit generate não deve produzir migration nova — se
       # produzir, alguém mudou schema.ts sem regenerar o baseline (npm run
