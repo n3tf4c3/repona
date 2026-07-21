@@ -28,6 +28,7 @@ import {
 import { CATEGORIAS } from "@/lib/categorias";
 import { formatCentsBRL } from "@/lib/preco";
 import { clearOperationId, getOrCreateOperationId } from "@/lib/idempotentMutation";
+import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
 import { CategoriaBolha } from "@/components/categoria-icone";
 import {
   criarProdutoAction,
@@ -153,10 +154,10 @@ export function ProdutosClient({
     setErro(null);
     startTransition(async () => {
       try {
-        const r = await acao();
+        const r = await withClientTimeout(acao());
         if (!r.ok) setErro(r.error);
-      } catch {
-        setErro("A resposta foi interrompida. Tente novamente.");
+      } catch (cause) {
+        setErro(transportErrorMessage(cause));
       }
     });
   }

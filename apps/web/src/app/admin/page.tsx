@@ -2,6 +2,10 @@ import { revalidatePath } from "next/cache";
 import { excluirCasa } from "@/server/modules/casa";
 import { listarCasas } from "@/server/modules/admin";
 import { requireAdmin } from "@/server/auth/requireAdmin";
+import {
+  genericActionError,
+  reportUnexpectedActionFailure,
+} from "@/server/actionFailure";
 import { DeleteCasaButton } from "./delete-button.client";
 
 // Acesso protegido pelo proxy (Basic Auth via ADMIN_SECRET). Não usa a
@@ -10,13 +14,18 @@ export const dynamic = "force-dynamic";
 
 async function excluirCasaAction(formData: FormData) {
   "use server";
-  // Revalida a autorização por dentro da Action, não só no perímetro do
-  // proxy: exclusão de casa é destrutiva e global. (auditoria #70)
-  await requireAdmin();
-  const id = Number(formData.get("id"));
-  if (Number.isInteger(id) && id > 0) {
-    await excluirCasa(id);
-    revalidatePath("/admin");
+  try {
+    // Revalida a autorização por dentro da Action, não só no perímetro do
+    // proxy: exclusão de casa é destrutiva e global. (auditoria #70)
+    await requireAdmin();
+    const id = Number(formData.get("id"));
+    if (Number.isInteger(id) && id > 0) {
+      await excluirCasa(id);
+      revalidatePath("/admin");
+    }
+  } catch {
+    const requestId = await reportUnexpectedActionFailure("admin.excluir_casa");
+    throw new Error(genericActionError(requestId));
   }
 }
 

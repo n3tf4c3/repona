@@ -6,6 +6,7 @@ import { getNextInventoryQuantity, isEmptyQuantity, type ShoppingListItemDTO } f
 import type { GrupoItens } from "@/lib/categorias";
 import { CategoriaBolha } from "@/components/categoria-icone";
 import { clearOperationId, getOrCreateOperationId } from "@/lib/idempotentMutation";
+import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
 import {
   alternarItemAction,
   atualizarQuantidadeAction,
@@ -36,8 +37,12 @@ export function ListaClient({
     setErro(null);
     setAviso(null);
     startTransition(async () => {
-      const r = await acao();
-      if (!r.ok && r.error) setErro(r.error);
+      try {
+        const r = await withClientTimeout(acao());
+        if (!r.ok && r.error) setErro(r.error);
+      } catch (cause) {
+        setErro(transportErrorMessage(cause));
+      }
     });
   }
 
@@ -58,7 +63,7 @@ export function ListaClient({
     }
     startTransition(async () => {
       try {
-        const r = await finalizarCompraAction(operationId);
+        const r = await withClientTimeout(finalizarCompraAction(operationId));
         if (!r.ok) {
           if (r.resetOperation) clearOperationId(operationKey, window.localStorage);
           setErro(r.error);
@@ -72,10 +77,10 @@ export function ListaClient({
             );
           }
         }
-      } catch {
+      } catch (cause) {
         // A chave permanece no storage: o próximo clique consulta/reaplica a
         // mesma operação sem duplicar efeitos após uma resposta perdida.
-        setErro("A resposta foi interrompida. Tente finalizar novamente.");
+        setErro(transportErrorMessage(cause));
       }
     });
   }

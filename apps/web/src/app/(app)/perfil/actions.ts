@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireCasa } from "@/server/auth/session";
 import { excluirCasa, regenerarCodigo, renomearCasa } from "@/server/modules/casa";
+import {
+  genericActionError,
+  reportUnexpectedActionFailure,
+} from "@/server/actionFailure";
 
 type Resultado = { ok: true } | { ok: false; error: string };
 
@@ -13,9 +17,12 @@ const MENSAGENS: Record<string, string> = {
 
 const nomeSchema = z.string().trim().min(1).max(80);
 
-function tratar(error: unknown): { ok: false; error: string } {
+async function tratar(action: string, error: unknown): Promise<{ ok: false; error: string }> {
   const codigo = error instanceof Error ? error.message : "ERRO";
-  return { ok: false, error: MENSAGENS[codigo] ?? "Algo deu errado. Tente novamente." };
+  const mensagem = MENSAGENS[codigo];
+  if (mensagem) return { ok: false, error: mensagem };
+  const requestId = await reportUnexpectedActionFailure(action);
+  return { ok: false, error: genericActionError(requestId) };
 }
 
 type RotacaoResultado = { ok: true; novoToken: string } | { ok: false; error: string };
@@ -30,7 +37,7 @@ export async function regenerarCodigoAction(): Promise<RotacaoResultado> {
     // e só então atualiza a tela. (auditoria #13)
     return { ok: true, novoToken: token };
   } catch (error) {
-    return tratar(error);
+    return tratar("casa.regenerar_codigo", error);
   }
 }
 
@@ -40,7 +47,7 @@ export async function excluirContaAction(): Promise<Resultado> {
     await excluirCasa(casaId);
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("casa.excluir", error);
   }
 }
 
@@ -51,7 +58,7 @@ export async function renomearCasaAction(name: string): Promise<Resultado> {
     revalidatePath("/perfil");
     return { ok: true };
   } catch (error) {
-    if (error instanceof z.ZodError) return tratar(new Error("NOME_INVALIDO"));
-    return tratar(error);
+    if (error instanceof z.ZodError) return tratar("casa.renomear", new Error("NOME_INVALIDO"));
+    return tratar("casa.renomear", error);
   }
 }

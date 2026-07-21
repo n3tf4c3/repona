@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { InventoryAlert, RebuySuggestion, ProductDTO } from "@repona/core";
 import { CategoriaBolha } from "@/components/categoria-icone";
+import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
 import { adicionarAListaAction } from "../produtos/actions";
 
 export function InicioClient({
@@ -38,8 +39,12 @@ export function InicioClient({
   function adicionar(produtoId: number) {
     setErro(null);
     startTransition(async () => {
-      const r = await adicionarAListaAction(produtoId);
-      if (!r.ok) setErro(r.error);
+      try {
+        const r = await withClientTimeout(adicionarAListaAction(produtoId));
+        if (!r.ok) setErro(r.error);
+      } catch (cause) {
+        setErro(transportErrorMessage(cause));
+      }
     });
   }
 

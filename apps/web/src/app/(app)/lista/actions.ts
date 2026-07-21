@@ -11,6 +11,10 @@ import {
   finalizarCompra,
 } from "@/server/modules/listas";
 import { DOMAIN_IDEMPOTENCY_CONFLICT } from "@/server/modules/domainOperation";
+import {
+  genericActionError,
+  reportUnexpectedActionFailure,
+} from "@/server/actionFailure";
 
 type Resultado = { ok: true } | { ok: false; error: string };
 
@@ -25,14 +29,18 @@ const quantitySchema = z
   .regex(/^\d+(?:[.,]\d+)?\s*[A-Za-zÀ-ÿ]+$/)
   .refine((value) => !isEmptyQuantity(value));
 
-function tratar(error?: unknown): Resultado {
+async function tratar(action: string, error?: unknown): Promise<Resultado> {
   if (error instanceof Error && error.message === "QUANTITY_INVALID") {
     return { ok: false, error: "A quantidade precisa ser maior que zero." };
   }
   if (error instanceof z.ZodError) {
     return { ok: false, error: "Dados inválidos. Confira as informações e tente novamente." };
   }
-  return { ok: false, error: "Algo deu errado. Tente novamente." };
+  if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") {
+    return { ok: false, error: "Produto não encontrado." };
+  }
+  const requestId = await reportUnexpectedActionFailure(action);
+  return { ok: false, error: genericActionError(requestId) };
 }
 
 function revalidarLista() {
@@ -48,7 +56,7 @@ export async function alternarItemAction(itemId: number): Promise<Resultado> {
     revalidarLista();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("lista.alternar_item", error);
   }
 }
 
@@ -62,7 +70,7 @@ export async function atualizarQuantidadeAction(
     revalidarLista();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("lista.atualizar_quantidade", error);
   }
 }
 
@@ -73,7 +81,7 @@ export async function removerItemAction(itemId: number): Promise<Resultado> {
     revalidarLista();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("lista.remover_item", error);
   }
 }
 
@@ -97,6 +105,10 @@ export async function finalizarCompraAction(operationId: string): Promise<
     if (error instanceof Error && error.message === "QUANTITY_INVALID") {
       return { ok: false, error: "A compra tem item com quantidade zerada." };
     }
-    return { ok: false, error: "Não foi possível finalizar a compra." };
+    if (error instanceof z.ZodError) {
+      return { ok: false, error: "Dados inválidos. Confira as informações e tente novamente." };
+    }
+    const requestId = await reportUnexpectedActionFailure("lista.finalizar_compra");
+    return { ok: false, error: genericActionError(requestId) };
   }
 }

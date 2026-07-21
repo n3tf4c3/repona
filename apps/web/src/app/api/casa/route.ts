@@ -10,6 +10,7 @@ import {
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
 import { nextauthOrigin } from "@/server/env";
+import { reportUnexpectedRouteFailure } from "@/server/actionFailure";
 
 const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
@@ -103,7 +104,11 @@ export async function POST(req: NextRequest) {
     if (code === IDEMPOTENCY_RESULT_GONE) {
       return NextResponse.json({ error: code }, { status: 410 });
     }
-    throw error;
+    const requestId = reportUnexpectedRouteFailure(
+      "conta.criar",
+      req.headers.get("x-request-id")
+    );
+    return NextResponse.json({ error: "SERVER_ERROR", requestId }, { status: 500 });
   }
 }
 
@@ -148,6 +153,10 @@ export async function DELETE(req: NextRequest) {
     if (code === IDEMPOTENCY_CONFLICT) {
       return NextResponse.json({ error: code }, { status: 409 });
     }
-    throw error;
+    const requestId = reportUnexpectedRouteFailure(
+      "conta.excluir",
+      req.headers.get("x-request-id")
+    );
+    return NextResponse.json({ error: "SERVER_ERROR", requestId }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { ShoppingBasket, AlertCircle } from "lucide-react";
 import { CASA_CODE_LENGTH } from "@repona/core";
+import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
 
 const inputClass =
   "w-full rounded-xl border border-line bg-surface px-4 py-3 text-center text-lg font-black uppercase tracking-[0.3em] text-ink outline-none transition placeholder:text-ink-faint placeholder:tracking-normal placeholder:font-normal placeholder:text-base focus:border-primary";
@@ -20,14 +21,21 @@ export default function LoginPage() {
     event.preventDefault();
     setError(null);
     setLoading(true);
-    const result = await signIn("credentials", { token: token.trim().toUpperCase(), redirect: false });
-    setLoading(false);
-    if (result?.ok) {
-      router.push("/inicio");
-      router.refresh();
-      return;
+    try {
+      const result = await withClientTimeout(
+        signIn("credentials", { token: token.trim().toUpperCase(), redirect: false })
+      );
+      if (result?.ok) {
+        router.push("/inicio");
+        router.refresh();
+        return;
+      }
+      setError("Token inválido. Confira o código gerado no app.");
+    } catch (cause) {
+      setError(transportErrorMessage(cause));
+    } finally {
+      setLoading(false);
     }
-    setError("Token inválido. Confira o código gerado no app.");
   }
 
   return (

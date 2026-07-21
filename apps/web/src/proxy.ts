@@ -86,10 +86,13 @@ export async function proxy(req: NextRequest) {
   // O header na REQUISIÇÃO é o que faz o Next aplicar o nonce aos seus scripts;
   // o header na RESPOSTA é o que o navegador enforça.
   const requestHeaders = new Headers(req.headers);
+  const requestId = crypto.randomUUID();
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("x-request-id", requestId);
   requestHeaders.set("Content-Security-Policy", csp);
 
   const res = NextResponse.next({ request: { headers: requestHeaders } });
   res.headers.set("Content-Security-Policy", csp);
+  res.headers.set("x-request-id", requestId);
   return res;
 }

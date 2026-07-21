@@ -14,6 +14,10 @@ import {
 import { definirQuantidade, marcarEmFalta, consumir } from "@/server/modules/estoque";
 import { adicionarProduto } from "@/server/modules/listas";
 import { DOMAIN_IDEMPOTENCY_CONFLICT } from "@/server/modules/domainOperation";
+import {
+  genericActionError,
+  reportUnexpectedActionFailure,
+} from "@/server/actionFailure";
 
 type Resultado =
   | { ok: true; arquivado?: boolean }
@@ -58,7 +62,7 @@ const productInputSchema = z.object({
   occasional: z.boolean().optional().default(false),
 });
 
-function tratar(error: unknown): Resultado {
+async function tratar(action: string, error: unknown): Promise<Resultado> {
   const codigo = error instanceof Error ? error.message : "ERRO";
   if (codigo === DOMAIN_IDEMPOTENCY_CONFLICT) {
     return {
@@ -67,7 +71,10 @@ function tratar(error: unknown): Resultado {
       resetOperation: true,
     };
   }
-  return { ok: false, error: MENSAGENS[codigo] ?? "Algo deu errado. Tente novamente." };
+  const mensagem = MENSAGENS[codigo];
+  if (mensagem) return { ok: false, error: mensagem };
+  const requestId = await reportUnexpectedActionFailure(action);
+  return { ok: false, error: genericActionError(requestId) };
 }
 
 function validar<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -89,7 +96,7 @@ export async function criarProdutoAction(input: NewProductInput): Promise<Result
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("produto.criar", error);
   }
 }
 
@@ -103,7 +110,7 @@ export async function atualizarProdutoAction(
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("produto.atualizar", error);
   }
 }
 
@@ -114,7 +121,7 @@ export async function excluirProdutoAction(produtoId: number): Promise<Resultado
     revalidarDominio();
     return { ok: true, arquivado };
   } catch (error) {
-    return tratar(error);
+    return tratar("produto.excluir", error);
   }
 }
 
@@ -125,7 +132,7 @@ export async function desarquivarProdutoAction(produtoId: number): Promise<Resul
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("produto.desarquivar", error);
   }
 }
 
@@ -139,7 +146,7 @@ export async function definirQuantidadeAction(
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("estoque.definir_quantidade", error);
   }
 }
 
@@ -150,7 +157,7 @@ export async function marcarEmFaltaAction(produtoId: number): Promise<Resultado>
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("estoque.marcar_em_falta", error);
   }
 }
 
@@ -168,7 +175,7 @@ export async function consumirAction(
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("estoque.consumir", error);
   }
 }
 
@@ -179,6 +186,6 @@ export async function adicionarAListaAction(produtoId: number): Promise<Resultad
     revalidarDominio();
     return { ok: true };
   } catch (error) {
-    return tratar(error);
+    return tratar("lista.adicionar_produto", error);
   }
 }

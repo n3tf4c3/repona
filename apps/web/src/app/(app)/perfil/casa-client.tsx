@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Copy, Check, RefreshCw, Pencil, KeyRound, AlertCircle, Trash2 } from "lucide-react";
 import { signIn, signOut } from "next-auth/react";
 import type { CasaDTO } from "@/server/modules/casa";
+import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
 import { excluirContaAction, regenerarCodigoAction, renomearCasaAction } from "./actions";
 
 type Resultado = { ok: boolean; error?: string };
@@ -23,27 +24,34 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
   function rotacionar() {
     setErro(null);
     startTransition(async () => {
-      const r = await regenerarCodigoAction();
-      if (!r.ok) {
-        setErro(r.error ?? "Erro.");
-        return;
-      }
-      // Exibe o novo token ANTES de reautenticar: a rotação já invalidou o
-      // anterior no backend, então a credencial precisa ficar visível na tela
-      // mesmo que o re-login falhe ou rejeite (perda de rede), sob risco de
-      // lockout. Só depois renova a sessão para a nova credentialVersion, em
-      // try/catch, antes que qualquer navegação caia em requireCasa. (#13)
-      setCodigo(r.novoToken);
-      setConfirmandoRotacao(false);
+      let tokenWasRotated = false;
       try {
-        const login = await signIn("credentials", { token: r.novoToken, redirect: false });
+        const r = await withClientTimeout(regenerarCodigoAction());
+        if (!r.ok) {
+          setErro(r.error ?? "Erro.");
+          return;
+        }
+        // Exibe o novo token ANTES de reautenticar: a rotação já invalidou o
+        // anterior no backend, então a credencial precisa ficar visível na tela
+        // mesmo que o re-login falhe ou rejeite (perda de rede), sob risco de
+        // lockout. Só depois renova a sessão para a nova credentialVersion. (#13)
+        setCodigo(r.novoToken);
+        tokenWasRotated = true;
+        setConfirmandoRotacao(false);
+        const login = await withClientTimeout(
+          signIn("credentials", { token: r.novoToken, redirect: false })
+        );
         if (login?.error) {
           setErro("Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele.");
         } else {
           router.refresh();
         }
-      } catch {
-        setErro("Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele.");
+      } catch (cause) {
+        setErro(
+          tokenWasRotated
+            ? "Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele."
+            : transportErrorMessage(cause)
+        );
       }
     });
   }
@@ -51,18 +59,26 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
   function excluirConta() {
     setErro(null);
     startTransition(async () => {
-      const r = await excluirContaAction();
-      if (!r.ok) setErro(r.error ?? "Erro.");
-      else await signOut({ callbackUrl: "/login" });
+      try {
+        const r = await withClientTimeout(excluirContaAction());
+        if (!r.ok) setErro(r.error ?? "Erro.");
+        else await withClientTimeout(signOut({ callbackUrl: "/login" }));
+      } catch (cause) {
+        setErro(transportErrorMessage(cause));
+      }
     });
   }
 
   function executar(acao: () => Promise<Resultado>, depois?: () => void) {
     setErro(null);
     startTransition(async () => {
-      const r = await acao();
-      if (!r.ok) setErro(r.error ?? "Erro.");
-      else depois?.();
+      try {
+        const r = await withClientTimeout(acao());
+        if (!r.ok) setErro(r.error ?? "Erro.");
+        else depois?.();
+      } catch (cause) {
+        setErro(transportErrorMessage(cause));
+      }
     });
   }
 
