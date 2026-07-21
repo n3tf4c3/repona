@@ -41,13 +41,14 @@ jobs:
       - name: Install
         run: npm ci
 
-      # Scan de dependências: gate bloqueante em vulnerabilidade CRITICA. A critica
-      # transitiva do node-tar (via @expo/cli) foi resolvida pelo patch expo
-      # 54.0.36 (#35), entao o gate pode bloquear. Advisories high/moderate
-      # remanescentes dependem de majors planejados (next-auth->uuid etc.); quando
-      # o #35 subir esses majors, apertar para --audit-level=high. (auditoria #96, #35)
-      - name: Audit (critical)
-        run: npm audit --audit-level=critical
+      # Scan de dependências: gate bloqueante em HIGH+ (inclui critical). Os três
+      # advisories high (js-yaml, brace-expansion, shell-quote) foram fechados por
+      # patch within-range via npm audit fix (#35), então o gate pode apertar de
+      # critical para high sem depender de major. Os moderates remanescentes estão
+      # em Expo CLI/Metro/Drizzle-kit e só saem com majors planejados (Balde 3 do
+      # #35); por isso o gate para em high, não em moderate. (auditoria #96, #35)
+      - name: Audit (high)
+        run: npm audit --audit-level=high
 
       - name: Lint
         run: npm run lint
