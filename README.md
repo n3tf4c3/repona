@@ -35,8 +35,10 @@ Copie `apps/web/.env.example` para `apps/web/.env.local` e preencha:
   responde 503 (fail-closed)
 
 Com o banco configurado, aplique o schema com `db:push` (fluxo canônico do
-projeto). **Não use `db:migrate`** — o script está desativado e as migrations
-`drizzle/0000_*` são históricas/obsoletas (veja `apps/web/drizzle/README.md`):
+projeto). **Não use `db:migrate`** — o script está desativado. O baseline
+`drizzle/0000_*` foi regenerado para reproduzir exatamente o `schema.ts` atual
+(auditoria #23) e serve de retrato versionado/bootstrap, não é obsoleto; veja
+`apps/web/drizzle/README.md`:
 
 ```bash
 npm run db:push --workspace apps/web
