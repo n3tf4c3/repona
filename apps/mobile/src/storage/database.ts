@@ -444,6 +444,15 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
       }
     });
   },
+
+  // v11: cobre o keyset do histórico mobile (deleted + data + origem + id).
+  // Sem ele cada página voltaria a varrer todo o histórico. (#87)
+  async (db) => {
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS purchase_history_page_idx
+        ON purchase_history(deleted, purchased_at DESC, source_list_name ASC, id ASC);
+    `);
+  },
 ];
 
 async function runMigrations(database: SQLite.SQLiteDatabase) {
