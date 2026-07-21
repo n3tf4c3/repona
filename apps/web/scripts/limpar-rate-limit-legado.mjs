@@ -70,19 +70,16 @@ console.log(`  total: ${antes.total}`);
 
 if (antes.total === 0) {
   console.log("\nNada a limpar: nenhuma chave legada presente.");
-  process.exit(0);
-}
-
-if (!confirmado) {
+} else if (!confirmado) {
   console.log("\nDry-run. Rode com --yes para apagar e reverificar.");
-  process.exit(0);
+} else {
+  const apagadas = await apagarLegadas();
+  const depois = await contarLegadas();
+  console.log(`\nApagadas: ${apagadas}. Contagem legada após limpeza: ${depois.total}.`);
+  if (depois.total !== 0) {
+    console.error("FALHA: ainda restam chaves legadas. Investigue antes de considerar resolvido.");
+    process.exitCode = 1;
+  } else {
+    console.log("OK: zero chaves legadas remanescentes.");
+  }
 }
-
-const apagadas = await apagarLegadas();
-const depois = await contarLegadas();
-console.log(`\nApagadas: ${apagadas}. Contagem legada após limpeza: ${depois.total}.`);
-if (depois.total !== 0) {
-  console.error("FALHA: ainda restam chaves legadas. Investigue antes de considerar resolvido.");
-  process.exit(1);
-}
-console.log("OK: zero chaves legadas remanescentes.");
