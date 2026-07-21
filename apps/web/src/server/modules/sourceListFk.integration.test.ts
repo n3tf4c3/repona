@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
+import { productNameKey } from "@repona/core";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -23,10 +24,10 @@ test(
       casaId = casa.rows[0].id;
 
       const product = await pool.query<{ id: number }>(
-        `insert into products (casa_id, sync_id, name, category)
-         values ($1, $2, $3, 'Mercearia')
+        `insert into products (casa_id, sync_id, name, name_key, category)
+         values ($1, $2, $3, $4, 'Mercearia')
          returning id`,
-        [casaId, randomUUID(), `Produto FK ${marker}`],
+        [casaId, randomUUID(), `Produto FK ${marker}`, productNameKey(`Produto FK ${marker}`)],
       );
       const list = await pool.query<{ id: number }>(
         `insert into shopping_lists (casa_id, name, status)

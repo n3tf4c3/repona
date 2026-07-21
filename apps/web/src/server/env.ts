@@ -3,6 +3,7 @@ import {
   parseAuthSecret,
   parseDatabaseUrl,
   parseInviteTokenSecret,
+  parseLegacyTokenAcceptUntil,
   parseNextAuthOrigin,
   parseRateLimitPepper,
 } from "../../env-schema.mjs";
@@ -60,4 +61,14 @@ export function rateLimitPepper(): string | null {
     cachedRateLimitPepper = parseRateLimitPepper(process.env.RATE_LIMIT_PEPPER);
   }
   return cachedRateLimitPepper;
+}
+
+let cachedLegacyTokenAcceptUntil: string | undefined;
+export function legacyTokenAcceptUntil(): string {
+  if (cachedLegacyTokenAcceptUntil === undefined) {
+    cachedLegacyTokenAcceptUntil = parseLegacyTokenAcceptUntil(
+      process.env.LEGACY_TOKEN_ACCEPT_UNTIL
+    );
+  }
+  return cachedLegacyTokenAcceptUntil;
 }

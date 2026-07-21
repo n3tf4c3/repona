@@ -1,12 +1,6 @@
 import "server-only";
 import { headers } from "next/headers";
-
-const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
-
-function safeRequestId(candidate?: string | null): string {
-  const value = candidate?.trim();
-  return value && SAFE_REQUEST_ID.test(value) ? value : crypto.randomUUID();
-}
+import { safeRequestId } from "@/lib/requestId";
 
 async function currentRequestId(): Promise<string> {
   try {

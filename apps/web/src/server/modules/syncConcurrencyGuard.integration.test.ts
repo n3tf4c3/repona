@@ -4,6 +4,7 @@ import test from "node:test";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { Pool, type PoolClient } from "pg";
+import { productNameKey } from "@repona/core";
 import { buildCasaMutationLock } from "./casaMutationLock";
 import {
   buildSyncConcurrencyGuard,
@@ -221,12 +222,12 @@ test(
       );
       casaId = casa.rows[0].id;
       const createdProducts = await pool.query<{ id: number }>(
-        `insert into products (casa_id, name, category, status, updated_at)
+        `insert into products (casa_id, name, name_key, category, status, updated_at)
          values
-           ($1, 'Arroz guard', 'Mercearia', 'active', '2026-01-01 00:00:00.123456+00'),
-           ($1, 'Feijao sem saldo', 'Mercearia', 'missing', '2026-01-01 00:00:00.654321+00')
+           ($1, 'Arroz guard', $2, 'Mercearia', 'active', '2026-01-01 00:00:00.123456+00'),
+           ($1, 'Feijao sem saldo', $3, 'Mercearia', 'missing', '2026-01-01 00:00:00.654321+00')
          returning id`,
-        [casaId]
+        [casaId, productNameKey("Arroz guard"), productNameKey("Feijao sem saldo")]
       );
       const [productA, productWithoutInventory] = createdProducts.rows.map((row) => row.id);
       await pool.query(
@@ -285,10 +286,10 @@ test(
       // Edicao que commitou depois dos reads e antes do guard invalida o plano.
       const beforeEdit = await captureExpectation(pool, casaId, [productA], true);
       await pool.query(
-        `update products set name = 'Arroz editado antes',
+        `update products set name = 'Arroz editado antes', name_key = $2,
              updated_at = updated_at + interval '1 second'
          where id = $1`,
-        [productA]
+        [productA, productNameKey("Arroz editado antes")]
       );
       const staleClient = await pool.connect();
       await staleClient.query("begin");
@@ -434,8 +435,9 @@ test(
           await client.query("begin");
           await executeDrizzleSql(client, buildCasaMutationLock(casaId as number));
           await client.query(
-            `update products set name = 'Arroz editado depois', updated_at = now() where id = $1`,
-            [productA]
+            `update products set name = 'Arroz editado depois', name_key = $2,
+                updated_at = now() where id = $1`,
+            [productA, productNameKey("Arroz editado depois")]
           );
           await client.query("commit");
         } catch (error) {
@@ -514,9 +516,9 @@ test(
       await runDomainWithMutex(
         pool,
         casaId,
-        `insert into products (casa_id, name, category, status)
-         values ($1, 'Phantom antes', 'Teste', 'missing')`,
-        [casaId]
+        `insert into products (casa_id, name, name_key, category, status)
+         values ($1, 'Phantom antes', $2, 'Teste', 'missing')`,
+        [casaId, productNameKey("Phantom antes")]
       );
       const phantomBefore = await beginGuarded(pool, casaId, {
         products: [],
@@ -524,9 +526,9 @@ test(
       });
       await assert.rejects(
         phantomBefore.query(
-          `insert into products (casa_id, name, category, status)
-           values ($1, '  PHANTOM ANTES  ', 'Teste', 'missing')`,
-          [casaId]
+          `insert into products (casa_id, name, name_key, category, status)
+           values ($1, '  PHANTOM ANTES  ', $2, 'Teste', 'missing')`,
+          [casaId, productNameKey("  PHANTOM ANTES  ")]
         ),
         (error) => isSyncConcurrentUniqueViolation(error)
       );
@@ -542,15 +544,15 @@ test(
       const createAfter = runDomainWithMutex(
         pool,
         casaId,
-        `insert into products (casa_id, name, category, status)
-         values ($1, 'phantom depois', 'Teste', 'missing')`,
-        [casaId]
+        `insert into products (casa_id, name, name_key, category, status)
+         values ($1, 'phantom depois', $2, 'Teste', 'missing')`,
+        [casaId, productNameKey("phantom depois")]
       );
       await assertStillPending(createAfter);
       await phantomAfter.query(
-        `insert into products (casa_id, name, category, status)
-         values ($1, 'Phantom Depois', 'Teste', 'missing')`,
-        [casaId]
+        `insert into products (casa_id, name, name_key, category, status)
+         values ($1, 'Phantom Depois', $2, 'Teste', 'missing')`,
+        [casaId, productNameKey("Phantom Depois")]
       );
       await phantomAfter.query("commit");
       phantomAfter.release();
@@ -564,8 +566,8 @@ test(
       });
       const phantomCount = await pool.query<{ count: string }>(
         `select count(*) from products
-         where casa_id = $1 and lower(normalize(btrim(name), NFC)) = 'phantom depois'`,
-        [casaId]
+         where casa_id = $1 and name_key = $2`,
+        [casaId, productNameKey("phantom depois")]
       );
       assert.equal(Number(phantomCount.rows[0].count), 1);
     } finally {

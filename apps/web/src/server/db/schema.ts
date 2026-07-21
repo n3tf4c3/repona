@@ -34,6 +34,20 @@ export const casas = pgTable("casas", {
 
 export type Casa = typeof casas.$inferSelect;
 
+// Alias temporário usado SOMENTE pelo endpoint de migração de tokens legados.
+// Login, sync e exclusão consultam apenas casas.invite_code_enc. A PK impede que
+// o mesmo bearer anterior aponte para duas casas e o UNIQUE limita uma grace por
+// casa; a geração serializada também exclui colisão cruzada com tokens atuais.
+export const casaTokenMigrationAliases = pgTable("casa_token_migration_aliases", {
+  tokenEnc: text("token_enc").primaryKey(),
+  casaId: integer("casa_id")
+    .notNull()
+    .unique()
+    .references(() => casas.id, { onDelete: "cascade" }),
+  validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Registro durável das mutações de conta disparadas pelo mobile. O cliente
 // persiste o Idempotency-Key antes do request e o servidor grava a operação na
 // mesma transação da criação/exclusão. Assim, timeout ou resposta perdida pode
@@ -45,17 +59,33 @@ export const accountOperations = pgTable(
   "account_operations",
   {
     operationId: uuid("operation_id").primaryKey(),
+    // v1 = recibo legado sem verifier; v2 = HMACs estáveis + verifier cliente.
+    // DEFAULT 1 torna o db:push compatível com linhas existentes. Todo writer
+    // novo grava 2 explicitamente.
+    operationVersion: integer("operation_version").notNull().default(1),
     operationType: text("operation_type").notNull(),
     requestHash: text("request_hash").notNull(),
     resultTokenEnc: text("result_token_enc"),
+    // Verificador HMAC do segredo de recovery, que existe somente no cliente.
+    // operation_id em um dump não basta para recuperar token descriptografado.
+    operationVerifierHash: text("operation_verifier_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    check("account_operations_type_check", sql`${table.operationType} in ('create', 'delete')`),
+    check("account_operations_type_check", sql`${table.operationType} in ('create', 'delete', 'rotate')`),
+    check("account_operations_version_check", sql`${table.operationVersion} in (1, 2)`),
     check(
       "account_operations_result_check",
-      sql`(${table.operationType} = 'create' and ${table.resultTokenEnc} is not null)
+      sql`(${table.operationType} in ('create', 'rotate') and ${table.resultTokenEnc} is not null)
           or (${table.operationType} = 'delete' and ${table.resultTokenEnc} is null)`
+    ),
+    check(
+      "account_operations_verifier_check",
+      sql`(${table.operationVersion} = 1 and ${table.operationVerifierHash} is null)
+          or (${table.operationVersion} = 2 and (
+            (${table.operationType} in ('create', 'rotate') and ${table.operationVerifierHash} is not null)
+            or (${table.operationType} = 'delete' and ${table.operationVerifierHash} is null)
+          ))`
     ),
   ]
 );
@@ -95,6 +125,10 @@ export const products = pgTable(
       .references(() => casas.id, { onDelete: "cascade" }),
     syncId: uuid("sync_id").notNull().defaultRandom(),
     name: text("name").notNull(),
+    // Persistida pelo runtime a partir de productNameKey(name), do @repona/core.
+    // Nao e derivada pelo PostgreSQL: lower() depende da collation e diverge do
+    // locale pt-BR do JavaScript para caracteres como I/İ. (#76)
+    nameKey: text("name_key").notNull(),
     category: text("category").notNull(),
     brand: text("brand"),
     barcode: text("barcode"),
@@ -108,13 +142,10 @@ export const products = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    // A mesma chave do core/mobile: trim + NFC + lowercase. PostgreSQL 16 tem
-    // normalize(..., NFC) nativo; o indice fecha a corrida que antes permitia
-    // "Café" e "Cafe\u0301" coexistirem apesar do merge JS. (#76)
-    uniqueIndex("products_casa_name_key_unique").on(
-      table.casaId,
-      sql`lower(normalize(btrim(${table.name}), NFC))`
-    ),
+    // O indice usa somente a chave persistida pelo runtime JavaScript. Nao volta
+    // a aplicar lower()/collation do PostgreSQL, que diverge do locale pt-BR para
+    // caracteres como I/İ; NFC equivalente continua colidindo. (#76)
+    uniqueIndex("products_casa_name_key_unique").on(table.casaId, table.nameKey),
     uniqueIndex("products_casa_syncid_unique").on(table.casaId, table.syncId),
     // Um código de barras é único por casa (parcial: NULL não colide, então
     // hortifrúti sem código fica livre). Fecha a duplicata por barcode na origem,

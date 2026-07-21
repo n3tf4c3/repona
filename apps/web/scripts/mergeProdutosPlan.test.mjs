@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   construirPlanoMerge,
@@ -14,6 +15,12 @@ import {
   construirExpectativaMerge,
   mergeConcurrencyGuardStatement,
 } from "./mergeProdutosConcurrency.mjs";
+
+test("merge CLI resolve nome pela chave persistida do core", () => {
+  const source = readFileSync(new URL("./merge-produtos.mjs", import.meta.url), "utf8");
+  assert.match(source, /name_key\s*=\s*\$\{productNameKey\(ref\)\}/);
+  assert.doesNotMatch(source, /lower\(normalize\(btrim\(name\)/);
+});
 
 test("merge CLI usa o mesmo mutex advisory transacional do runtime", () => {
   const fakeSql = (strings, ...values) => ({ strings: [...strings], values });

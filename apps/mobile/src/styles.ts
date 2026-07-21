@@ -1159,9 +1159,7 @@ export const styles = StyleSheet.create({
     color: colors.ink,
   },
   syncPairedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
     borderRadius: 12,
     backgroundColor: colors.indigoSoft,
     paddingHorizontal: 14,
@@ -1175,6 +1173,26 @@ export const styles = StyleSheet.create({
     ...typography.labelStrong,
     color: colors.indigo,
     letterSpacing: 2,
+    flexShrink: 1,
+    flexWrap: 'wrap',
+    fontFamily: 'monospace',
+  },
+  syncTokenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  syncCopyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  syncCopyText: {
+    ...typography.labelStrong,
+    color: colors.indigo,
   },
   syncUnpairButton: {
     alignItems: 'center',

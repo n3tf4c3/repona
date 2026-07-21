@@ -5,6 +5,8 @@ import { z } from "zod";
 // portanto cada consumidor fornece explicitamente o ambiente que quer validar.
 // (auditoria #89)
 export const MIN_SECRET_LENGTH = 32;
+export const DEFAULT_LEGACY_TOKEN_ACCEPT_UNTIL = "2027-01-01T00:00:00.000Z";
+export const LEGACY_TOKEN_MIGRATION_HARD_END = "2027-04-01T00:00:00.000Z";
 
 const emptyToUndefined = (value) => (value === "" ? undefined : value);
 
@@ -17,6 +19,16 @@ const optionalSecretSchema = z.preprocess(
   emptyToUndefined,
   requiredSecretSchema.optional()
 );
+
+const legacyTokenAcceptUntilSchema = z
+  .preprocess(
+    emptyToUndefined,
+    z.string().datetime({ offset: true }).default(DEFAULT_LEGACY_TOKEN_ACCEPT_UNTIL)
+  )
+  .refine(
+    (value) => Date.parse(value) <= Date.parse(LEGACY_TOKEN_MIGRATION_HARD_END),
+    `não pode ultrapassar o hard end ${LEGACY_TOKEN_MIGRATION_HARD_END}`
+  );
 
 const databaseUrlSchema = z
   .string()
@@ -120,6 +132,7 @@ export const criticalEnvironmentSchema = z
     ADMIN_SECRET: requiredSecretSchema,
     NEXTAUTH_URL: nextAuthUrlSchema,
     RATE_LIMIT_PEPPER: optionalSecretSchema,
+    LEGACY_TOKEN_ACCEPT_UNTIL: legacyTokenAcceptUntilSchema,
   })
   .superRefine((value, context) => {
     addAuthAliasIssues(value, context);
@@ -134,6 +147,7 @@ export const criticalEnvironmentSchema = z
     nextAuthUrl: value.NEXTAUTH_URL,
     nextAuthOrigin: new URL(value.NEXTAUTH_URL).origin,
     rateLimitPepper: value.RATE_LIMIT_PEPPER ?? null,
+    legacyTokenAcceptUntil: value.LEGACY_TOKEN_ACCEPT_UNTIL,
   }));
 
 export class EnvironmentValidationError extends Error {
@@ -167,6 +181,7 @@ function parse(schema, value) {
  * @property {string} nextAuthUrl
  * @property {string} nextAuthOrigin
  * @property {string | null} rateLimitPepper
+ * @property {string} legacyTokenAcceptUntil
  */
 
 /**
@@ -220,4 +235,12 @@ export function parseRateLimitPepper(value) {
     z.object({ RATE_LIMIT_PEPPER: optionalSecretSchema }),
     { RATE_LIMIT_PEPPER: value }
   ).RATE_LIMIT_PEPPER ?? null;
+}
+
+/** @param {unknown} value @returns {string} */
+export function parseLegacyTokenAcceptUntil(value) {
+  return parse(
+    z.object({ LEGACY_TOKEN_ACCEPT_UNTIL: legacyTokenAcceptUntilSchema }),
+    { LEGACY_TOKEN_ACCEPT_UNTIL: value }
+  ).LEGACY_TOKEN_ACCEPT_UNTIL;
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
-import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
+import { isEmptyQuantity, productNameKey, validateProductFields, type ProductDTO, type NewProductInput, type ProductStatus, type InventoryStatus } from "@repona/core";
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
 import { buildCasaMutationLock } from "@/server/modules/casaMutationLock";
@@ -106,14 +106,16 @@ function mapProduto(row: ProdutoRow): ProductDTO {
 // 2026-06-09 #6)
 export async function listProdutos(casaId: number): Promise<ProductDTO[]> {
   const rows = await selecionarProdutos(casaId, { arquivado: false }).orderBy(
-    asc(sql`lower(${products.name})`)
+    asc(products.nameKey),
+    asc(products.id)
   );
   return rows.map(mapProduto);
 }
 
 export async function listProdutosArquivados(casaId: number): Promise<ProductDTO[]> {
   const rows = await selecionarProdutos(casaId, { arquivado: true }).orderBy(
-    asc(sql`lower(${products.name})`)
+    asc(products.nameKey),
+    asc(products.id)
   );
   return rows.map(mapProduto);
 }
@@ -126,9 +128,9 @@ async function getProdutoDTO(casaId: number, id: number): Promise<ProductDTO | n
 async function nomeJaExiste(casaId: number, name: string, exceptId?: number): Promise<boolean> {
   const condicoes = [
     eq(products.casaId, casaId),
-    // Alinhado a productNameKey (trim + NFC + lowercase) e ao indice unico do
-    // schema. Sem normalize, acento composto/decomposto escapava do lookup. (#76)
-    sql`lower(normalize(btrim(${products.name}), NFC)) = lower(normalize(btrim(${name}::text), NFC))`,
+    // A chave e calculada pelo mesmo JavaScript do core/mobile e comparada com a
+    // coluna persistida; nenhuma regra de collation do PostgreSQL interfere. (#76)
+    eq(products.nameKey, productNameKey(name)),
   ];
   if (exceptId !== undefined) condicoes.push(ne(products.id, exceptId));
   const [existente] = await db
@@ -174,6 +176,7 @@ export async function createProduto(casaId: number, input: NewProductInput): Pro
       .values({
         casaId: casaId,
         name,
+        nameKey: productNameKey(name),
         category: category || "Mercearia",
         brand: input.brand?.trim() || null,
         barcode,
@@ -210,6 +213,7 @@ export async function updateProduto(
       .update(products)
       .set({
         name,
+        nameKey: productNameKey(name),
         category: category || "Mercearia",
         brand: input.brand?.trim() || null,
         barcode,

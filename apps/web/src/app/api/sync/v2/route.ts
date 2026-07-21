@@ -23,7 +23,7 @@ import {
   syncTargetMatches,
 } from "@/server/syncSchemas";
 import { decodeSyncCursor } from "@/server/syncCursor";
-import { logSyncTelemetry } from "@/server/syncTelemetry";
+import { logSyncTelemetry, syncRequestId } from "@/server/syncTelemetry";
 
 const MAX_PAGE_BODY_BYTES = 512 * 1024;
 const RATE_WINDOW_SECONDS = 60;
@@ -51,13 +51,14 @@ const requestSchema = z.discriminatedUnion("phase", [
   }),
 ]);
 
-function jsonV2(body: unknown, init?: ResponseInit): NextResponse {
+function jsonV2(body: unknown, requestId: string, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init);
   response.headers.set("x-repona-sync-protocol", String(SYNC_PROTOCOL_VERSION));
+  response.headers.set("x-request-id", requestId);
   return response;
 }
 
-export async function POST(request: NextRequest) {
+async function postWithEnvelope(request: NextRequest, requestId: string) {
   const parsedClientVersion = parseSyncClientVersion(
     request.headers.get("x-repona-client-version")
   );
@@ -69,8 +70,9 @@ export async function POST(request: NextRequest) {
       clientVersion,
       phase: telemetryPhase,
       outcome,
+      requestId,
     });
-    return jsonV2(body, init);
+    return jsonV2(body, requestId, init);
   };
 
   if (request.headers.get("x-repona-sync-protocol") !== String(SYNC_PROTOCOL_VERSION)) {
@@ -155,16 +157,24 @@ export async function POST(request: NextRequest) {
         nextCursor: page.nextCursor,
         serverTime: new Date().toISOString(),
       }, undefined, "ok");
-    } catch (error) {
-      logSyncTelemetry({
-        protocolVersion: SYNC_PROTOCOL_VERSION,
-        clientVersion,
-        phase: telemetryPhase,
-        outcome: "server_error",
-      });
-      throw error;
+    } catch {
+      return reply({ error: "SERVER_ERROR", requestId }, { status: 500 }, "server_error");
     } finally {
-      if (captureLockToken) await unlock(captureLockKey, captureLockToken);
+      if (captureLockToken) {
+        try {
+          await unlock(captureLockKey, captureLockToken);
+        } catch {
+          // A página já pode ter sido materializada. Não troca uma resposta
+          // válida por uma exceção sem envelope; a lease expira pelo TTL.
+          logSyncTelemetry({
+            protocolVersion: SYNC_PROTOCOL_VERSION,
+            clientVersion,
+            phase: "download",
+            outcome: "unlock_failed",
+            requestId,
+          });
+        }
+      }
     }
   }
 
@@ -209,15 +219,40 @@ export async function POST(request: NextRequest) {
         "unknown_product"
       );
     }
-    logSyncTelemetry({
-      protocolVersion: SYNC_PROTOCOL_VERSION,
-      clientVersion,
-      phase: telemetryPhase,
-      outcome: "server_error",
-    });
-    throw error;
+    return reply({ error: "SERVER_ERROR", requestId }, { status: 500 }, "server_error");
   } finally {
     // Compare-and-delete: nunca libera a lease de um sucessor.
-    await unlock(lockKey, lockToken);
+    try {
+      await unlock(lockKey, lockToken);
+    } catch {
+      // O merge pode ter commitado. Preserva o resultado HTTP correlacionado e
+      // deixa a lease curta expirar, em vez de lançar um erro não sanitizado.
+      logSyncTelemetry({
+        protocolVersion: SYNC_PROTOCOL_VERSION,
+        clientVersion,
+        phase: "upload",
+        outcome: "unlock_failed",
+        requestId,
+      });
+    }
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const requestId = syncRequestId(request.headers.get("x-request-id"));
+  try {
+    return await postWithEnvelope(request, requestId);
+  } catch {
+    const parsedClientVersion = parseSyncClientVersion(
+      request.headers.get("x-repona-client-version")
+    );
+    logSyncTelemetry({
+      protocolVersion: SYNC_PROTOCOL_VERSION,
+      clientVersion: parsedClientVersion ?? "invalid",
+      phase: "unknown",
+      outcome: "server_error",
+      requestId,
+    });
+    return jsonV2({ error: "SERVER_ERROR", requestId }, requestId, { status: 500 });
   }
 }

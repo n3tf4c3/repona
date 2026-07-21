@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 import { adminSecretConfigurado, autorizadoAdmin } from "@/server/auth/adminAuth";
+import { safeRequestId } from "@/lib/requestId";
 
 // O proxy faz duas coisas:
 //   1. CSP completa com nonce por requisição em TODAS as rotas de documento
@@ -75,18 +76,25 @@ async function protegerAdmin(req: NextRequest): Promise<NextResponse | null> {
 }
 
 export async function proxy(req: NextRequest) {
-  if (req.nextUrl.pathname.startsWith("/admin")) {
-    const bloqueio = await protegerAdmin(req);
-    if (bloqueio) return bloqueio;
-  }
-
   const nonce = gerarNonce();
   const csp = montarCsp(nonce);
+  // Preserva o ID opaco enviado pelo app para que o mesmo valor apareca no
+  // log do handler e no header de resposta. Entrada ausente/injetada recebe um
+  // UUID novo; nunca usamos token, IP ou identificador de dominio. (#83)
+  const requestId = safeRequestId(req.headers.get("x-request-id"));
+
+  if (req.nextUrl.pathname.startsWith("/admin")) {
+    const bloqueio = await protegerAdmin(req);
+    if (bloqueio) {
+      bloqueio.headers.set("Content-Security-Policy", csp);
+      bloqueio.headers.set("x-request-id", requestId);
+      return bloqueio;
+    }
+  }
 
   // O header na REQUISIÇÃO é o que faz o Next aplicar o nonce aos seus scripts;
   // o header na RESPOSTA é o que o navegador enforça.
   const requestHeaders = new Headers(req.headers);
-  const requestId = crypto.randomUUID();
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("x-request-id", requestId);
   requestHeaders.set("Content-Security-Policy", csp);

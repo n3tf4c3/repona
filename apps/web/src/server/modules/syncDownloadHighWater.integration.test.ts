@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { Pool, type PoolClient } from "pg";
+import { productNameKey } from "@repona/core";
 import { CASA_MUTATION_LOCK_NAMESPACE } from "./casaMutationLock";
 import {
   buildSyncDownloadHighWaterQuery,
@@ -44,10 +45,11 @@ async function insertSyncBundle(
   listItemId: number;
   activeListId: number;
 }> {
+  const productName = `Produto high-water ${label}`;
   const product = await client.query<{ id: number }>(
-    `insert into products (casa_id, name, category, status)
-     values ($1, $2, 'Teste', 'active') returning id`,
-    [casaId, `Produto high-water ${label}`]
+    `insert into products (casa_id, name, name_key, category, status)
+     values ($1, $2, $3, 'Teste', 'active') returning id`,
+    [casaId, productName, productNameKey(productName)]
   );
   const productId = product.rows[0].id;
   let listId = activeListId;

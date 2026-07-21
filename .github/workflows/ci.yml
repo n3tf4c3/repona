@@ -121,7 +121,7 @@ jobs:
   # a fonte de verdade); este job prova que o baseline reflete o schema atual.
   db-schema:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     services:
       postgres:
         # Tag legível + digest imutável do manifest multiarch.
@@ -137,6 +137,12 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
+      AUTH_SECRET: "ci-secret-apenas-para-smoke-0123456789abcdef"
+      NEXTAUTH_SECRET: "ci-secret-apenas-para-smoke-0123456789abcdef"
+      INVITE_TOKEN_SECRET: "ci-invite-token-secret-0123456789abcdef"
+      ADMIN_SECRET: "ci-admin-secret-0123456789abcdef012345"
+      NEXTAUTH_URL: "http://127.0.0.1:3107"
+      RATE_LIMIT_PEPPER: "ci-rate-limit-pepper-0123456789abcdef"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -160,6 +166,23 @@ jobs:
         env:
           TEST_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
         run: npx tsx --test "apps/web/src/**/*.integration.test.ts"
+
+      # Exercita o roteamento HTTP real e os recibos duraveis, inclusive resposta
+      # perdida/replay, verifier, troca de credencial e exclusao. O script nunca
+      # imprime tokens, payloads ou IDs de casa. (#71/#83/#88/#90)
+      - name: Smoke HTTP de conta e sync
+        run: |
+          set -euo pipefail
+          log_path="$RUNNER_TEMP/repona-next-smoke.log"
+          setsid node node_modules/next/dist/bin/next dev apps/web \
+            --hostname 127.0.0.1 --port 3107 >"$log_path" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill -TERM -- "-$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          SMOKE_BASE_URL="http://127.0.0.1:3107" npm run smoke:account-api -w web
 
       # 2) Sem drift: drizzle-kit generate não deve produzir migration nova — se
       # produzir, alguém mudou schema.ts sem regenerar o baseline (npm run

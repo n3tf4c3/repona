@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Pool } from "pg";
+import { productNameKey } from "@repona/core";
 import {
   CONSUME_DOMAIN_OPERATION_SQL,
   FINALIZE_PURCHASE_OPERATION_SQL,
@@ -24,12 +25,19 @@ test(
       );
       casaId = casa.rows[0].id;
 
+      const productNames = ["Arroz integra\u00e7\u00e3o", "Feij\u00e3o integra\u00e7\u00e3o"];
       const products = await pool.query<{ id: number }>(
-        `insert into products (casa_id, name, category, status)
-         values ($1, 'Arroz integração', 'Mercearia', 'active'),
-                ($1, 'Feijão integração', 'Mercearia', 'active')
+        `insert into products (casa_id, name, name_key, category, status)
+         values ($1, $2, $3, 'Mercearia', 'active'),
+                ($1, $4, $5, 'Mercearia', 'active')
          returning id`,
-        [casaId],
+        [
+          casaId,
+          productNames[0],
+          productNameKey(productNames[0]),
+          productNames[1],
+          productNameKey(productNames[1]),
+        ],
       );
       const [productA, productB] = products.rows.map((row) => row.id);
       await pool.query(

@@ -270,12 +270,7 @@ export async function mergeCasaSnapshot(
     identityFilters.push(inArray(products.syncId, references.syncIds));
   }
   if (references.nameKeys.length > 0) {
-    identityFilters.push(
-      inArray(
-        sql<string>`lower(normalize(btrim(${products.name}), NFC))`,
-        references.nameKeys
-      )
-    );
+    identityFilters.push(inArray(products.nameKey, references.nameKeys));
   }
   if (references.barcodes.length > 0) {
     identityFilters.push(inArray(products.barcode, references.barcodes));
@@ -291,6 +286,7 @@ export async function mergeCasaSnapshot(
           .select({
             id: products.id,
             name: products.name,
+            nameKey: products.nameKey,
             syncId: products.syncId,
             category: products.category,
             brand: products.brand,
@@ -338,7 +334,7 @@ export async function mergeCasaSnapshot(
         : []
     ),
   };
-  const idPorNome = new Map(existentes.map((p) => [productNameKey(p.name), p.id]));
+  const idPorNome = new Map(existentes.map((p) => [p.nameKey, p.id]));
   const idPorSyncId = new Map(existentes.map((p) => [p.syncId, p.id]));
   const syncIdsAposentados = indexProductSyncAliases(idPorSyncId, aliases);
   // Só produtos com código não-nulo entram no mapa de barcode (hortifrúti sem
@@ -442,6 +438,7 @@ export async function mergeCasaSnapshot(
             .update(products)
             .set({
               name: nomeFinal,
+              nameKey: productNameKey(nomeFinal),
               category: prod.category,
               brand: prod.brand ?? null,
               barcode: barcodeFinal,
@@ -478,6 +475,7 @@ export async function mergeCasaSnapshot(
           casaId,
           syncId,
           name: prod.name.trim(),
+          nameKey: productNameKey(prod.name),
           category: prod.category,
           brand: prod.brand ?? null,
           barcode: prod.barcode,

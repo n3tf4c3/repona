@@ -3,13 +3,14 @@
 // (A). O mesmo lock do endpoint /api/sync impede corrida com devices.
 //
 // Uso (da pasta apps/web):
-//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome>
-//   node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> --yes
+//   npm run merge-produtos -- <casa> <dup:id|nome> <canonico:id|nome>
+//   npm run merge-produtos -- <casa> <dup:id|nome> <canonico:id|nome> --yes
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config({ path: ".env" });
 
 import { neon } from "@neondatabase/serverless";
+import { productNameKey } from "@repona/core";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDatabaseUrl } from "../env-schema.mjs";
@@ -64,7 +65,7 @@ async function resolverProduto(casaId, ref) {
     SELECT id, casa_id, sync_id, name, archived, barcode, updated_at
     FROM products
     WHERE casa_id = ${casaId}
-      AND lower(normalize(btrim(name), NFC)) = lower(normalize(btrim(${ref.trim()}::text), NFC))
+      AND name_key = ${productNameKey(ref)}
   `;
   if (rows.length > 1) {
     throw new Error(`Nome "${limpar(ref)}" casa com ${rows.length} produtos; use o id.`);
@@ -397,7 +398,7 @@ async function main() {
   const revelarToken = flags.includes("--show-token");
   if (!casaRef || !duplicateRef || !canonicalRef) {
     console.log(
-      "Uso: node scripts/merge-produtos.mjs <casa> <dup:id|nome> <canonico:id|nome> [--yes]"
+      "Uso: npm run merge-produtos -- <casa> <dup:id|nome> <canonico:id|nome> [--yes]"
     );
     return;
   }
@@ -424,7 +425,7 @@ async function main() {
     if (!confirmado) {
       console.log("\nDRY-RUN. Nada foi alterado. Para aplicar (com backup antes):");
       console.log(
-        `  node scripts/merge-produtos.mjs ${casa.id} ${duplicate.id} ${canonical.id} --yes`
+        `  npm run merge-produtos -- ${casa.id} ${duplicate.id} ${canonical.id} --yes`
       );
       return;
     }

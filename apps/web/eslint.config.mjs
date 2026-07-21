@@ -11,6 +11,9 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    // Artefatos administrativos não são fonte e podem ter ACL privada que o
+    // runner/sandbox não consegue enumerar. O lint não deve exigir relaxá-la.
+    "backups/**",
     "next-env.d.ts",
   ]),
   js.configs.recommended,

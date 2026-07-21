@@ -12,7 +12,7 @@ import { rateLimited, tryLock, unlock, ipDaRequest } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
 import { readBoundedJson, RequestBodyTooLargeError } from "@/server/boundedJson";
 import { parseSyncClientVersion } from "@/server/syncSchemas";
-import { logSyncTelemetry } from "@/server/syncTelemetry";
+import { logSyncTelemetry, syncRequestId } from "@/server/syncTelemetry";
 
 // Limites de tamanho vêm do @repona/core (fonte única), os mesmos validados na
 // criação de produto — assim a criação nunca gera um valor que o sync rejeita.
@@ -138,19 +138,26 @@ const MAX_POR_TOKEN = 60;
 // memória/CPU no parse de um payload gigante. (auditoria #55)
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
-function jsonV1(body: unknown, init?: ResponseInit): NextResponse {
+function jsonV1(body: unknown, requestId: string, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init);
   response.headers.set("x-repona-sync-protocol", "1");
+  response.headers.set("x-request-id", requestId);
   return response;
 }
 
-export async function POST(req: NextRequest) {
+async function postWithEnvelope(req: NextRequest, requestId: string) {
   const rawClientVersion = req.headers.get("x-repona-client-version");
   const clientVersion = parseSyncClientVersion(rawClientVersion) ??
     (rawClientVersion === null ? "legacy" : "invalid");
   const reply = (body: unknown, init: ResponseInit | undefined, outcome: string) => {
-    logSyncTelemetry({ protocolVersion: 1, clientVersion, phase: "snapshot", outcome });
-    return jsonV1(body, init);
+    logSyncTelemetry({
+      protocolVersion: 1,
+      clientVersion,
+      phase: "snapshot",
+      outcome,
+      requestId,
+    });
+    return jsonV1(body, requestId, init);
   };
 
   const ip = ipDaRequest(req.headers);
@@ -231,14 +238,39 @@ export async function POST(req: NextRequest) {
         "unknown_product"
       );
     }
+    return reply({ error: "SERVER_ERROR", requestId }, { status: 500 }, "server_error");
+  } finally {
+    try {
+      await unlock(lockKey, lockToken);
+    } catch {
+      // A resposta do merge pode já estar pronta (inclusive após commit). Uma
+      // indisponibilidade ao liberar a lease não deve substituí-la por uma
+      // rejeição sem envelope; a lease tem TTL e expira de forma segura.
+      logSyncTelemetry({
+        protocolVersion: 1,
+        clientVersion,
+        phase: "snapshot",
+        outcome: "unlock_failed",
+        requestId,
+      });
+    }
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const requestId = syncRequestId(req.headers.get("x-request-id"));
+  try {
+    return await postWithEnvelope(req, requestId);
+  } catch {
+    const rawClientVersion = req.headers.get("x-repona-client-version");
     logSyncTelemetry({
       protocolVersion: 1,
-      clientVersion,
+      clientVersion: parseSyncClientVersion(rawClientVersion) ??
+        (rawClientVersion === null ? "legacy" : "invalid"),
       phase: "snapshot",
       outcome: "server_error",
+      requestId,
     });
-    throw error;
-  } finally {
-    await unlock(lockKey, lockToken);
+    return jsonV1({ error: "SERVER_ERROR", requestId }, requestId, { status: 500 });
   }
 }
