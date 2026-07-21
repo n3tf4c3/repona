@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gt, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import type { PricePoint, PurchaseHistoryDTO } from "@repona/core";
 import type { HistoricoCursor } from "@/lib/historicoCursor";
 import { db } from "@/server/db";
@@ -104,9 +104,15 @@ export async function listarHistorico(
   };
 }
 
-// Último preço conhecido por produto (centavos), para estimar o total da compra
-// no histórico — mesma base do "Total estimado" do mobile. (auditoria UI)
-export async function ultimoPrecoPorProduto(casaId: number): Promise<Map<number, number>> {
+// Último preço conhecido somente para os produtos da página renderizada.
+// Consultar todo o catálogo anulava parte do ganho da paginação do histórico
+// em casas com muitos produtos/preços. (#87)
+export async function ultimoPrecoPorProduto(
+  casaId: number,
+  productIds: readonly number[]
+): Promise<Map<number, number>> {
+  const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))];
+  if (ids.length === 0) return new Map();
   const rows = await db
     .selectDistinctOn([priceHistory.productId], {
       productId: priceHistory.productId,
@@ -114,7 +120,7 @@ export async function ultimoPrecoPorProduto(casaId: number): Promise<Map<number,
     })
     .from(priceHistory)
     .innerJoin(products, eq(products.id, priceHistory.productId))
-    .where(eq(products.casaId, casaId))
+    .where(and(eq(products.casaId, casaId), inArray(priceHistory.productId, ids)))
     .orderBy(priceHistory.productId, desc(priceHistory.recordedAt), desc(priceHistory.id));
 
   return new Map(rows.map((row) => [row.productId, row.priceCents]));

@@ -15,10 +15,11 @@ export default async function HistoricoPage({
   const { casaId: id } = await requireCasa();
   const cursor = decodeHistoricoCursor((await searchParams).cursor);
 
-  const [pagina, precoPorProduto] = await Promise.all([
-    listarHistorico(id, { limit: TAMANHO_PAGINA, cursor }),
-    ultimoPrecoPorProduto(id),
-  ]);
+  const pagina = await listarHistorico(id, { limit: TAMANHO_PAGINA, cursor });
+  const precoPorProduto = await ultimoPrecoPorProduto(
+    id,
+    pagina.items.map((item) => item.productId)
+  );
   const grupos = agruparHistorico(pagina.items, precoPorProduto);
 
   return (
