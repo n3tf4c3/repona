@@ -1,14 +1,10 @@
--- OBSOLETO — NÃO É A FONTE DE VERDADE. (auditoria #23)
--- Este projeto aplica o schema com `db:push` a partir de src/server/db/schema.ts,
--- não com `db:migrate`. Este arquivo é histórico e está DESATUALIZADO (ex.: falta
--- products.brand). Veja drizzle/README.md. Não use para criar o banco.
 CREATE TABLE "casas" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"name" text DEFAULT 'Minha casa' NOT NULL,
-	"invite_code" text NOT NULL,
+	"invite_code_enc" text NOT NULL,
 	"credential_version" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "casas_invite_code_unique" UNIQUE("invite_code")
+	CONSTRAINT "casas_invite_code_enc_unique" UNIQUE("invite_code_enc")
 );
 --> statement-breakpoint
 CREATE TABLE "inventory_events" (
@@ -44,6 +40,7 @@ CREATE TABLE "products" (
 	"sync_id" uuid DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
 	"category" text NOT NULL,
+	"brand" text,
 	"barcode" text,
 	"photo_uri" text,
 	"purchase_count" integer DEFAULT 0 NOT NULL,
@@ -64,7 +61,15 @@ CREATE TABLE "purchase_history" (
 	"quantity" text DEFAULT '1 un' NOT NULL,
 	"purchased_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"source_list_id" integer,
-	"source_list_name" text
+	"source_list_name" text,
+	"deleted" boolean DEFAULT false NOT NULL,
+	"updated_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "rate_limits" (
+	"chave" text PRIMARY KEY NOT NULL,
+	"count" integer NOT NULL,
+	"reset_em" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "shopping_list_items" (
@@ -90,6 +95,12 @@ CREATE TABLE "shopping_lists" (
 	CONSTRAINT "shopping_lists_status_check" CHECK ("shopping_lists"."status" in ('active', 'archived'))
 );
 --> statement-breakpoint
+CREATE TABLE "sync_locks" (
+	"chave" text PRIMARY KEY NOT NULL,
+	"token" text NOT NULL,
+	"expira_em" timestamp with time zone NOT NULL
+);
+--> statement-breakpoint
 ALTER TABLE "inventory_events" ADD CONSTRAINT "inventory_events_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "inventory_items" ADD CONSTRAINT "inventory_items_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "price_history" ADD CONSTRAINT "price_history_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -110,6 +121,8 @@ CREATE UNIQUE INDEX "products_casa_syncid_unique" ON "products" USING btree ("ca
 CREATE UNIQUE INDEX "products_casa_barcode_unique" ON "products" USING btree ("casa_id","barcode") WHERE "products"."barcode" is not null;--> statement-breakpoint
 CREATE INDEX "purchase_history_product_idx" ON "purchase_history" USING btree ("product_id");--> statement-breakpoint
 CREATE INDEX "purchase_history_source_list_idx" ON "purchase_history" USING btree ("source_list_id");--> statement-breakpoint
+CREATE INDEX "purchase_history_casa_deleted_data_idx" ON "purchase_history" USING btree ("casa_id","deleted","purchased_at");--> statement-breakpoint
+CREATE INDEX "rate_limits_reset_em_idx" ON "rate_limits" USING btree ("reset_em");--> statement-breakpoint
 CREATE INDEX "shopping_list_items_product_idx" ON "shopping_list_items" USING btree ("product_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "shopping_list_items_unique_product" ON "shopping_list_items" USING btree ("shopping_list_id","product_id");--> statement-breakpoint
 CREATE INDEX "shopping_lists_casa_status_idx" ON "shopping_lists" USING btree ("casa_id","status");--> statement-breakpoint

@@ -14,7 +14,8 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). As migrations 0000_* sao historicas e estao desatualizadas.'); process.exit(1)\"",
     "casas": "node scripts/casas.mjs",
-    "merge-produtos": "node scripts/merge-produtos.mjs"
+    "merge-produtos": "node scripts/merge-produtos.mjs",
+    "rate-limit:limpar": "node scripts/limpar-rate-limit-legado.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

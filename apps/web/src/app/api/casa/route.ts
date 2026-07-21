@@ -3,6 +3,7 @@ import { z } from "zod";
 import { criarContaNuvem, excluirCasa, obterCasaPorCodigo, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { rateLimited, ipDaRequest } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
+import { nextauthOrigin } from "@/server/env";
 
 const bodySchema = z.object({
   nome: z.string().trim().min(1).max(80),
@@ -26,10 +27,10 @@ const DEL_MAX_POR_JANELA = 20;
 // (NEXTAUTH_URL). O app mobile é fetch nativo e não envia Origin, então não é
 // afetado. (auditoria #91)
 function origemPermitida(origin: string): boolean {
-  const base = process.env.NEXTAUTH_URL;
+  const base = nextauthOrigin();
   if (!base) return false;
   try {
-    return new URL(origin).origin === new URL(base).origin;
+    return new URL(origin).origin === base;
   } catch {
     return false;
   }

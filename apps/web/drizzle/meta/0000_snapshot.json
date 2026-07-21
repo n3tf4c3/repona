@@ -1,5 +1,5 @@
 {
-  "id": "d5c2da0e-aefb-4c4d-861a-4f78ad62b524",
+  "id": "c2e64439-3b85-4fdd-9497-206591e5f43a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -21,8 +21,8 @@
           "notNull": true,
           "default": "'Minha casa'"
         },
-        "invite_code": {
-          "name": "invite_code",
+        "invite_code_enc": {
+          "name": "invite_code_enc",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -46,11 +46,11 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "casas_invite_code_unique": {
-          "name": "casas_invite_code_unique",
+        "casas_invite_code_enc_unique": {
+          "name": "casas_invite_code_enc_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "invite_code"
+            "invite_code_enc"
           ]
         }
       },
@@ -332,6 +332,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "barcode": {
           "name": "barcode",
           "type": "text",
@@ -541,6 +547,19 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "deleted": {
+          "name": "deleted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -564,6 +583,33 @@
           "columns": [
             {
               "expression": "source_list_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "purchase_history_casa_deleted_data_idx": {
+          "name": "purchase_history_casa_deleted_data_idx",
+          "columns": [
+            {
+              "expression": "casa_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "deleted",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "purchased_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -633,6 +679,53 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rate_limits": {
+      "name": "rate_limits",
+      "schema": "",
+      "columns": {
+        "chave": {
+          "name": "chave",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reset_em": {
+          "name": "reset_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "rate_limits_reset_em_idx": {
+          "name": "rate_limits_reset_em_idx",
+          "columns": [
+            {
+              "expression": "reset_em",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -921,6 +1014,37 @@
           "value": "\"shopping_lists\".\"status\" in ('active', 'archived')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.sync_locks": {
+      "name": "sync_locks",
+      "schema": "",
+      "columns": {
+        "chave": {
+          "name": "chave",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expira_em": {
+          "name": "expira_em",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     }
   },

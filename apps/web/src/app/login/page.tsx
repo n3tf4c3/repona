@@ -52,11 +52,11 @@ export default function LoginPage() {
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            maxLength={8}
+            maxLength={12}
             required
             value={token}
             onChange={(e) => setToken(e.target.value.toUpperCase())}
-            placeholder="8 caracteres"
+            placeholder="12 caracteres"
             className={inputClass}
           />
         </div>

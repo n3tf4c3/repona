@@ -1,6 +1,6 @@
-import { isEmptyQuantity, uuidv4, validateProductFields } from '@repona/core';
+import { isEmptyQuantity, uuidv4, validateProductFields, productNameKey } from '@repona/core';
 import { initializeDatabase } from './database';
-import { deletePhoto } from './photos';
+import { deletePhoto, listPersistedPhotos } from './photos';
 import type { NewProductInput } from '../types';
 import type { InventoryStatus } from './inventory';
 
@@ -154,9 +154,12 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   }
   validateProductFields(input);
 
+  // Dedupe por name_key (NFC + lower pt-BR): Unicode-aware, ao contrário do
+  // lower() ASCII do SQLite. (auditoria #76)
+  const nameKey = productNameKey(name);
   const existing = await database.getFirstAsync<{ id: number }>(
-    'SELECT id FROM products WHERE lower(name) = lower(?) LIMIT 1',
-    name,
+    'SELECT id FROM products WHERE name_key = ? LIMIT 1',
+    nameKey,
   );
 
   if (existing) {
@@ -172,10 +175,11 @@ export async function createProduct(input: NewProductInput): Promise<ProductReco
   let productId = 0;
   await database.withTransactionAsync(async () => {
     const result = await database.runAsync(
-      `INSERT INTO products (sync_id, name, category, brand, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
+      `INSERT INTO products (sync_id, name, name_key, category, brand, barcode, photo_uri, alert_threshold, occasional, purchase_count, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'missing', ?, ?)`,
       uuidv4(),
       name,
+      nameKey,
       category || 'Mercearia',
       input.brand?.trim() || null,
       barcode,
@@ -218,9 +222,11 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   }
   validateProductFields(input);
 
+  // Dedupe por name_key (Unicode-aware), excluindo o próprio produto. (auditoria #76)
+  const nameKey = productNameKey(name);
   const existing = await database.getFirstAsync<{ id: number }>(
-    'SELECT id FROM products WHERE lower(name) = lower(?) AND id <> ? LIMIT 1',
-    name,
+    'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
+    nameKey,
     productId,
   );
 
@@ -244,6 +250,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
   await database.runAsync(
     `UPDATE products
      SET name = ?,
+          name_key = ?,
           category = ?,
           brand = ?,
           barcode = ?,
@@ -253,6 +260,7 @@ export async function updateProduct(productId: number, input: NewProductInput): 
           updated_at = ?
       WHERE id = ?`,
     name,
+    nameKey,
     category || 'Mercearia',
     input.brand?.trim() || null,
     barcode,
@@ -306,6 +314,27 @@ export async function deleteProduct(productId: number) {
   });
 
   deletePhoto(foto?.photo_uri ?? null);
+}
+
+// GC conservador de fotos órfãs: apaga arquivos do diretório de fotos que nenhum
+// produto referencia mais. Cobre órfãos históricos (anteriores ao delete/rollback
+// por caminho) e restos de falhas. Seguro porque photo_uri só existe na tabela
+// products; a comparação é por igualdade exata de URI e deletePhoto já se
+// restringe ao photosDir. Idempotente e best-effort. (auditoria #94)
+export async function collectOrphanPhotos(): Promise<number> {
+  const database = await initializeDatabase();
+  const rows = await database.getAllAsync<{ photo_uri: string | null }>(
+    'SELECT photo_uri FROM products WHERE photo_uri IS NOT NULL',
+  );
+  const referenciadas = new Set(rows.map((r) => r.photo_uri));
+  let removidas = 0;
+  for (const uri of listPersistedPhotos()) {
+    if (!referenciadas.has(uri)) {
+      deletePhoto(uri);
+      removidas += 1;
+    }
+  }
+  return removidas;
 }
 
 function mapProductRow(row: ProductRow): ProductRecord {

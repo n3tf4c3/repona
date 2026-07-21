@@ -58,11 +58,15 @@ Backlog inicial do Repona com foco no MVP e na evolucao planejada do produto.
 - Melhorar explicacao e configuracao das sugestoes de recompra.
 - Avaliar modelo de organizacao por casa ou familia.
 
-## Integracoes Futuras
+## Integracoes
 
-- Autenticacao com Firebase Auth.
-- Sincronizacao com Firestore.
-- Notificacoes com Expo Notifications.
+> Nota (auditoria #98, 2026-07-20): auth e sync foram implementadas com backend
+> proprio (API Next.js + Neon/PostgreSQL) por token de casa, NAO com Firebase.
+> Os dois primeiros itens permanecem como registro do plano original, ja superado.
+
+- ~~Autenticacao com Firebase Auth.~~ (implementado: token de casa via API propria)
+- ~~Sincronizacao com Firestore.~~ (implementado: sync local-first SQLite -> API Next -> Neon)
+- Notificacoes com Expo Notifications. (pendente)
 
 ## Inteligencia
 

@@ -36,3 +36,16 @@ export function deletePhoto(uri: string | null | undefined): void {
     // best-effort: um arquivo que não pôde ser apagado não deve quebrar o fluxo.
   }
 }
+
+// Lista as URIs de todos os arquivos persistidos no diretório de fotos do app.
+// Base para o GC de órfãos: compara com as URIs referenciadas no SQLite.
+// Best-effort — diretório ausente ou erro de leitura devolve lista vazia.
+// (auditoria #94)
+export function listPersistedPhotos(): string[] {
+  try {
+    if (!photosDir.exists) return [];
+    return photosDir.list().map((entry) => entry.uri);
+  } catch {
+    return [];
+  }
+}

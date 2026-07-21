@@ -1,16 +1,17 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { z } from "zod";
-import { autenticarCasa } from "@/server/modules/casa";
+import { autenticarCasa, CASA_CODE_REGEX } from "@/server/modules/casa";
 import { rateLimited } from "@/server/rateLimit";
 import { fingerprintToken } from "@/server/rateLimitToken";
 import { authSecret } from "@/server/env";
 
 const loginSchema = z.object({
-  token: z.string().trim().toUpperCase().regex(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/),
+  // Mesmo formato/comprimento do token gerado (fonte única em casa.ts). (#71)
+  token: z.string().trim().toUpperCase().regex(CASA_CODE_REGEX),
 });
 
-// Throttle do login (auditoria #20): o token de 8 chars é a única credencial da
+// Throttle do login (auditoria #20): o token de 12 chars é a única credencial da
 // casa. Diferente de /api/sync e /api/casa, o fluxo de credentials do NextAuth
 // não passava por rateLimited — tentativas online ficavam sem limite. Limita por
 // IP e por token normalizado.

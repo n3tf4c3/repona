@@ -13,10 +13,25 @@ import {
 test("canonicalQuantity: valor válido passa, inválido cai no fallback (auditoria #75)", () => {
   assert.equal(canonicalQuantity("500 g", "0 un"), "500 g");
   assert.equal(canonicalQuantity("0,8 kg", "1 un"), "0,8 kg");
-  assert.equal(canonicalQuantity("0 un", "1 un"), "0 un"); // começa com número: válido
   assert.equal(canonicalQuantity("", "0 un"), "0 un");
   assert.equal(canonicalQuantity("abc", "1 un"), "1 un");
   assert.equal(canonicalQuantity("   ", "0 un"), "0 un");
+  // Match precisa ser integral: número sem unidade ou com lixo depois não passa.
+  assert.equal(canonicalQuantity("5", "1 un"), "1 un");
+  assert.equal(canonicalQuantity("1 ???", "1 un"), "1 un");
+  assert.equal(canonicalQuantity("1 un lixo", "1 un"), "1 un");
+  // Teto: acima de MAX_QUANTITY_VALUE cai no fallback.
+  assert.equal(canonicalQuantity(`${MAX_QUANTITY_VALUE + 1} un`, "1 un"), "1 un");
+  assert.equal(canonicalQuantity(`${MAX_QUANTITY_VALUE} un`, "1 un"), `${MAX_QUANTITY_VALUE} un`);
+});
+
+test("canonicalQuantity: positividade é contextual — estoque aceita zero, compra/consumo não (auditoria #75)", () => {
+  // Sem allowZero (compra, consumo, item de lista): zero cai no fallback positivo.
+  assert.equal(canonicalQuantity("0 un", "1 un"), "1 un");
+  assert.equal(canonicalQuantity("0,0 kg", "1 un"), "1 un");
+  // Com allowZero (estoque): zero é preservado.
+  assert.equal(canonicalQuantity("0 un", "0 un", { allowZero: true }), "0 un");
+  assert.equal(canonicalQuantity("500 g", "0 un", { allowZero: true }), "500 g");
 });
 
 test("normalizeQuantity: caixa e espaços viram a mesma chave", () => {

@@ -28,16 +28,22 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
         setErro(r.error ?? "Erro.");
         return;
       }
-      // Reautentica com o novo token: renova a sessão para a nova
-      // credentialVersion antes que qualquer navegação caia em requireCasa e
-      // deslogue (lockout). O token novo já está em mãos e é exibido. (#13)
-      const login = await signIn("credentials", { token: r.novoToken, redirect: false });
+      // Exibe o novo token ANTES de reautenticar: a rotação já invalidou o
+      // anterior no backend, então a credencial precisa ficar visível na tela
+      // mesmo que o re-login falhe ou rejeite (perda de rede), sob risco de
+      // lockout. Só depois renova a sessão para a nova credentialVersion, em
+      // try/catch, antes que qualquer navegação caia em requireCasa. (#13)
       setCodigo(r.novoToken);
       setConfirmandoRotacao(false);
-      if (login?.error) {
+      try {
+        const login = await signIn("credentials", { token: r.novoToken, redirect: false });
+        if (login?.error) {
+          setErro("Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele.");
+        } else {
+          router.refresh();
+        }
+      } catch {
         setErro("Novo token gerado e exibido acima. A sessão expirou — entre novamente com ele.");
-      } else {
-        router.refresh();
       }
     });
   }

@@ -4,8 +4,12 @@ import { isEmptyQuantity, validateProductFields, type ProductDTO, type NewProduc
 import { db } from "@/server/db";
 import { products, inventoryItems, inventoryEvents } from "@/server/db/schema";
 
-// Subconsulta de consumo agregado (eventos 'consumed') por produto.
-function consumoSubquery() {
+// Subconsulta de consumo agregado (eventos 'consumed') por produto, escopada à
+// casa. inventory_events não tem casa_id, então junta com products e filtra por
+// casaId: o agregado só computa os eventos desta casa, em vez de agrupar a tabela
+// inteira (todas as casas) e só depois escopar no join externo. Defesa em
+// profundidade + custo proporcional ao tamanho da casa. (auditoria #87)
+function consumoSubquery(casaId: number) {
   return db
     .select({
       productId: inventoryEvents.productId,
@@ -13,7 +17,8 @@ function consumoSubquery() {
       lastConsumedAt: sql<Date | null>`max(${inventoryEvents.occurredAt})`.as("last_consumed_at"),
     })
     .from(inventoryEvents)
-    .where(eq(inventoryEvents.eventType, "consumed"))
+    .innerJoin(products, eq(products.id, inventoryEvents.productId))
+    .where(and(eq(inventoryEvents.eventType, "consumed"), eq(products.casaId, casaId)))
     .groupBy(inventoryEvents.productId)
     .as("consumo");
 }
@@ -39,7 +44,7 @@ type ProdutoRow = {
 };
 
 function selecionarProdutos(casaId: number, opts?: { id?: number; arquivado?: boolean }) {
-  const consumo = consumoSubquery();
+  const consumo = consumoSubquery(casaId);
   const conds = [eq(products.casaId, casaId)];
   if (opts?.id !== undefined) conds.push(eq(products.id, opts.id));
   if (opts?.arquivado !== undefined) conds.push(eq(products.archived, opts.arquivado));

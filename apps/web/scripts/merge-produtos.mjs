@@ -133,12 +133,18 @@ const dump = {
   inventory_items: await sql`SELECT * FROM inventory_items WHERE product_id = ANY(${ids}) ORDER BY id`,
   shopping_list_items: await sql`SELECT * FROM shopping_list_items WHERE product_id = ANY(${ids}) ORDER BY id`,
 };
+// O dump traz dados da casa em JSON claro. Cria diretorio e arquivo com permissao
+// restritiva (dono apenas, ~0700/0600) para nao herdar ACL de leitura ampla, o
+// mesmo que casas.mjs faz. Em Windows o modo POSIX e best-effort; ainda assim
+// mantenha o backup fora de compartilhamentos/backups. (auditoria #85)
 const dir = resolve(aqui, "../backups");
-mkdirSync(dir, { recursive: true });
+mkdirSync(dir, { recursive: true, mode: 0o700 });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const file = resolve(dir, `merge-${casa.id}-${B.id}-into-${A.id}-${stamp}.json`);
-writeFileSync(file, JSON.stringify(dump, null, 2), "utf8");
+writeFileSync(file, JSON.stringify(dump, null, 2), { encoding: "utf8", mode: 0o600 });
 console.log(`\nBackup salvo em:\n  ${file}`);
+console.log("  AVISO: contem dados da casa em texto claro.");
+console.log("  Guarde fora de compartilhamentos/backups e apague quando nao precisar mais.");
 
 // Tudo numa transacao. Os DELETEs de dedupe mantem a linha de menor id por
 // (instante ao segundo + quantidade/preco), mesma regra do dedupe do sync.

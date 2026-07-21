@@ -149,6 +149,59 @@ export async function buildLocalSnapshot(): Promise<SyncSnapshot> {
 // Aplica o snapshot mesclado vindo da nuvem no SQLite local. Nunca apaga:
 // produtos são upsert por nome, compras e consumos entram só se ainda não
 // existirem (dedupe por produto+instante+quantidade).
+// Validação de runtime do snapshot recebido da nuvem (auditoria #83). O apply
+// insere/atualiza direto no SQLite confiando no shape; uma resposta malformada
+// (servidor com bug, proxy, corpo corrompido) inseriria lixo ou lançaria no meio
+// da transação. Aqui checamos estrutura e tipos dos campos que o apply lê; um
+// snapshot inválido é rejeitado antes de tocar o banco. Sem zod — o core é puro
+// e não vale adicionar a dependência ao mobile só por isto.
+function isObj(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null;
+}
+function isStr(x: unknown): x is string {
+  return typeof x === 'string';
+}
+function isFiniteNum(x: unknown): x is number {
+  return typeof x === 'number' && Number.isFinite(x);
+}
+function validProduct(p: unknown): boolean {
+  return (
+    isObj(p) &&
+    isStr(p.name) &&
+    isStr(p.category) &&
+    isStr(p.status) &&
+    isStr(p.inventoryQuantity) &&
+    isStr(p.inventoryStatus) &&
+    isFiniteNum(p.purchaseCount)
+  );
+}
+function validPurchase(e: unknown): boolean {
+  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.purchasedAt);
+}
+function validConsumption(e: unknown): boolean {
+  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.occurredAt);
+}
+function validPrice(e: unknown): boolean {
+  return isObj(e) && isStr(e.productName) && isFiniteNum(e.priceCents) && isStr(e.recordedAt);
+}
+function validListItem(e: unknown): boolean {
+  return isObj(e) && isStr(e.productName) && isStr(e.quantity) && isStr(e.updatedAt);
+}
+
+// Valida o snapshot recebido e o devolve tipado, ou null se estiver malformado.
+export function parseSyncSnapshot(raw: unknown): SyncSnapshot | null {
+  if (!isObj(raw)) return null;
+  const { products, purchases, consumptions, prices, listItems } = raw;
+  if (![products, purchases, consumptions, prices].every(Array.isArray)) return null;
+  if (listItems !== undefined && !Array.isArray(listItems)) return null;
+  if (!(products as unknown[]).every(validProduct)) return null;
+  if (!(purchases as unknown[]).every(validPurchase)) return null;
+  if (!(consumptions as unknown[]).every(validConsumption)) return null;
+  if (!(prices as unknown[]).every(validPrice)) return null;
+  if (listItems && !(listItems as unknown[]).every(validListItem)) return null;
+  return raw as unknown as SyncSnapshot;
+}
+
 export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
   const database = await initializeDatabase();
   const now = new Date().toISOString();
@@ -190,8 +243,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
 
       if (!row) {
         const porNome = await database.getFirstAsync<{ id: number; name: string; updated_at: string }>(
-          'SELECT id, name, updated_at FROM products WHERE lower(name) = lower(?) LIMIT 1',
-          nome,
+          'SELECT id, name, updated_at FROM products WHERE name_key = ? LIMIT 1',
+          productNameKey(nome), // Unicode-aware, alinhado ao web (auditoria #76)
         );
         if (porNome && prod.syncId) {
           await database.runAsync('UPDATE products SET sync_id = ? WHERE id = ?', prod.syncId, porNome.id);
@@ -214,8 +267,8 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         let nomeFinal = nome;
         if (productNameKey(prod.name) !== productNameKey(row.name)) {
           const colide = await database.getFirstAsync<{ id: number }>(
-            'SELECT id FROM products WHERE lower(name) = lower(?) AND id <> ? LIMIT 1',
-            nome,
+            'SELECT id FROM products WHERE name_key = ? AND id <> ? LIMIT 1',
+            productNameKey(nome), // Unicode-aware (auditoria #76)
             row.id,
           );
           if (colide) nomeFinal = row.name;
@@ -241,10 +294,11 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
         }
         await database.runAsync(
           `UPDATE products SET
-             name = ?, category = ?, brand = ?, barcode = ?,
+             name = ?, name_key = ?, category = ?, brand = ?, barcode = ?,
              status = ?, alert_threshold = ?, archived = ?, occasional = ?, updated_at = ?
            WHERE id = ?`,
           nomeFinal,
+          productNameKey(nomeFinal), // mantém name_key em sincronia (auditoria #76)
           prod.category,
           prod.brand ?? null,
           barcodeFinal,
@@ -259,10 +313,11 @@ export async function applySnapshot(snapshot: SyncSnapshot): Promise<void> {
       } else {
         const inserido = await database.runAsync(
           `INSERT INTO products
-             (sync_id, name, category, brand, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (sync_id, name, name_key, category, brand, barcode, status, alert_threshold, archived, occasional, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           prod.syncId ?? uuidv4(),
           nome,
+          productNameKey(nome), // Unicode-aware (auditoria #76)
           prod.category,
           prod.brand ?? null,
           prod.barcode,
@@ -350,7 +405,10 @@ async function aplicarItensLista(
   const porProduto = new Map(existentes.map((e) => [e.product_id, e.updated_at]));
 
   for (const item of itens) {
-    const productId = idPorNome.get(item.productName.trim().toLocaleLowerCase('pt-BR'));
+    // productNameKey (NFC + trim + lower pt-BR): mesma chave com que idPorNome é
+    // construído. Sem o NFC, um nome com acento combinante não casava e o item
+    // era descartado no apply. (auditoria #76)
+    const productId = idPorNome.get(productNameKey(item.productName));
     if (!productId) continue;
     const atual = porProduto.get(productId);
     const updatedAt = item.updatedAt ?? new Date().toISOString();
@@ -405,7 +463,7 @@ async function aplicarCompras(database: Db, idPorNome: Map<string, number>, comp
   );
 
   for (const compra of compras) {
-    const productId = idPorNome.get(compra.productName.trim().toLocaleLowerCase('pt-BR'));
+    const productId = idPorNome.get(productNameKey(compra.productName)); // NFC (auditoria #76)
     if (!productId) continue;
     const chave = eventKey(String(productId), compra.purchasedAt, compra.quantity);
     const local = porChave.get(chave);
@@ -463,7 +521,7 @@ async function aplicarPrecos(database: Db, idPorNome: Map<string, number>, preco
   const tocados = new Set<number>();
 
   for (const preco of precos) {
-    const productId = idPorNome.get(preco.productName.trim().toLocaleLowerCase('pt-BR'));
+    const productId = idPorNome.get(productNameKey(preco.productName)); // NFC (auditoria #76)
     if (!productId) continue;
     const chave = eventKey(String(productId), preco.recordedAt, String(preco.priceCents));
     if (vistos.has(chave)) continue;
@@ -504,7 +562,7 @@ async function aplicarConsumos(database: Db, idPorNome: Map<string, number>, con
   const vistos = new Set(existentes.map((e) => eventKey(String(e.product_id), e.occurred_at, e.quantity)));
 
   for (const consumo of consumos) {
-    const productId = idPorNome.get(consumo.productName.trim().toLocaleLowerCase('pt-BR'));
+    const productId = idPorNome.get(productNameKey(consumo.productName)); // NFC (auditoria #76)
     if (!productId) continue;
     const chave = eventKey(String(productId), consumo.occurredAt, consumo.quantity);
     if (vistos.has(chave)) continue;

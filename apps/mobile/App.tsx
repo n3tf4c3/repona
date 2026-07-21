@@ -36,10 +36,11 @@ import { ProductsScreen } from './src/screens/ProductsScreen';
 import { FinalizeBar, ShoppingListScreen } from './src/screens/ShoppingListScreen';
 import { shoppingListRecordToItem } from './src/shoppingListPresentation';
 import { consumeProductInventory, markProductInventoryMissing, setProductInventoryQuantity } from './src/storage/inventory';
-import { persistPhoto } from './src/storage/photos';
+import { persistPhoto, deletePhoto } from './src/storage/photos';
 import { addProductPrice, listRecentPricesByProduct } from './src/storage/priceHistory';
 import {
   archiveProduct,
+  collectOrphanPhotos,
   createProduct,
   deleteProduct,
   listArchivedProducts,
@@ -58,7 +59,7 @@ import {
   toggleShoppingListItem,
   updateShoppingListItemQuantity,
 } from './src/storage/shoppingLists';
-import { getCasaCode } from './src/storage/syncClient';
+import { getCasaCode, restoreActiveScope } from './src/storage/syncClient';
 import { styles } from './src/styles';
 import { colors } from './src/theme';
 import { NewProductInput, Product, ShoppingItem, TabKey } from './src/types';
@@ -98,6 +99,9 @@ export default function App() {
   // pareciam apagados, sem aviso nem retry. Agora só os que falharam ficam sem
   // dado, e o usuário é avisado com opção de tentar de novo. (auditoria #82)
   const loadInitialData = useCallback(async () => {
+    // Abre o arquivo SQLite da casa pareada (ou o 'local') ANTES de qualquer
+    // leitura, para não ler o scratch quando há uma casa ativa. (auditoria #68)
+    await restoreActiveScope();
     const [activeList, records, archivedRecords, listRecords, historyRecords, prices] =
       await Promise.allSettled([
         ensureActiveShoppingList(),
@@ -125,9 +129,17 @@ export default function App() {
     if (prices.status === 'fulfilled') setPricesByProduct(prices.value);
     else algumaFalha = true;
 
-    setIsProductsReady(true);
-    setIsShoppingListReady(true);
-    setIsHistoryReady(true);
+    // Só marca uma tela como pronta quando as leituras que a alimentam tiveram
+    // sucesso; uma leitura que falhou mantém a tela em "Carregando" (com o alerta
+    // de retry abaixo) em vez de renderizar o estado vazio como se a consulta
+    // tivesse dado certo. `prev || ok` impede que um retry parcial esconda dados
+    // já exibidos por uma tela que carregou antes. (auditoria #82)
+    const productsOk = records.status === 'fulfilled' && archivedRecords.status === 'fulfilled';
+    const shoppingOk = activeList.status === 'fulfilled' && listRecords.status === 'fulfilled';
+    const historyOk = historyRecords.status === 'fulfilled';
+    setIsProductsReady((prev) => prev || productsOk);
+    setIsShoppingListReady((prev) => prev || shoppingOk);
+    setIsHistoryReady((prev) => prev || historyOk);
 
     if (algumaFalha) {
       console.error('Failed to load some app data');
@@ -145,6 +157,19 @@ export default function App() {
   useEffect(() => {
     void loadInitialData();
   }, [loadInitialData]);
+
+  // GC de fotos órfãs uma vez por sessão, em segundo plano: recolhe arquivos
+  // sem produto correspondente (órfãos históricos e restos de falha). Idempotente
+  // e best-effort — nunca bloqueia nem quebra a UI. Restaura o escopo antes, para
+  // rodar contra o arquivo da casa ativa, não o 'local'. (auditoria #94, #68)
+  useEffect(() => {
+    void (async () => {
+      await restoreActiveScope();
+      await collectOrphanPhotos();
+    })().catch((error) => {
+      console.error('Failed to collect orphan photos', error);
+    });
+  }, []);
 
   async function refreshShoppingItems() {
     const activeList = await ensureActiveShoppingList();
@@ -248,13 +273,16 @@ export default function App() {
   }
 
   async function handleSaveProduct(input: NewProductInput) {
+    // Foto persistida nesta tentativa, para rollback do arquivo se a escrita falhar.
+    let persistedPhotoUri: string | null = null;
     try {
       setProductFormError(null);
       setProductActionError(null);
 
       // Persiste a foto no diretório do app antes de salvar (a câmera grava no
       // cache, que o sistema pode limpar).
-      const persisted = { ...input, photoUri: persistPhoto(input.photoUri) };
+      persistedPhotoUri = persistPhoto(input.photoUri);
+      const persisted = { ...input, photoUri: persistedPhotoUri };
 
       if (editingProduct?.id) {
         await updateProduct(editingProduct.id, persisted);
@@ -274,6 +302,13 @@ export default function App() {
       setActiveTab(scanBarcodeToRegister ? 'list' : 'products');
       setScanBarcodeToRegister(null);
     } catch (error) {
+      // Rollback do arquivo: se a escrita falhou depois de copiar uma foto NOVA
+      // para o diretório do app, apaga a cópia órfã. Só quando é cópia nova
+      // (difere da URI de entrada); uma foto já persistida e reaproveitada na
+      // edição segue referenciada pelo produto inalterado. (auditoria #94)
+      if (persistedPhotoUri && persistedPhotoUri !== input.photoUri) {
+        deletePhoto(persistedPhotoUri);
+      }
       setProductFormError(getProductErrorMessage(error));
     }
   }

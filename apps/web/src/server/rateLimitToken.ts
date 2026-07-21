@@ -1,6 +1,6 @@
 import "server-only";
 import { createHmac, hkdfSync } from "crypto";
-import { inviteTokenSecret } from "@/server/env";
+import { inviteTokenSecret, rateLimitPepper } from "@/server/env";
 
 // Fingerprint do token para usar como chave de rate limit, em vez de gravar o
 // token (a única credencial da casa) em claro em rate_limits.chave. Antes as
@@ -8,10 +8,9 @@ import { inviteTokenSecret } from "@/server/env";
 // então um dump ou leitura somente-leitura do banco revelaria tokens ativos —
 // contornando a cifragem de casas.invite_code_enc. (auditoria #43)
 //
-// HMAC-SHA-256 com pepper dedicado e separação por contexto. O token tem só 40
-// bits de espaço (auditoria #71), então um hash simples seria reversível por
-// força bruta a partir do banco; o segredo do HMAC impede isso sem conhecer o
-// pepper.
+// HMAC-SHA-256 com pepper dedicado e separação por contexto. Mesmo com o token
+// em ~60 bits (auditoria #71), um hash simples seria reversível por força bruta a
+// partir do banco; o segredo do HMAC impede isso sem conhecer o pepper.
 
 // Pepper dedicado. Usa RATE_LIMIT_PEPPER se definido; senão deriva de
 // INVITE_TOKEN_SECRET com contexto próprio (HKDF) — assim não exige uma variável
@@ -20,8 +19,8 @@ import { inviteTokenSecret } from "@/server/env";
 let _pepper: Buffer | undefined;
 function pepper(): Buffer {
   if (_pepper === undefined) {
-    const dedicado = process.env.RATE_LIMIT_PEPPER;
-    if (dedicado && dedicado.length >= 16) {
+    const dedicado = rateLimitPepper();
+    if (dedicado) {
       _pepper = Buffer.from(dedicado, "utf8");
     } else {
       _pepper = Buffer.from(

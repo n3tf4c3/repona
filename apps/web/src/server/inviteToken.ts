@@ -2,7 +2,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync } from "crypto";
 import { inviteTokenSecret } from "@/server/env";
 
-// Cifragem do token (invite_code) em repouso (auditoria #43). O token de 8 chars
+// Cifragem do token (invite_code) em repouso (auditoria #43). O token de 12 chars
 // é a única credencial da casa; guardá-lo em claro deixava qualquer dump do
 // banco, log de query ou endpoint admin com acesso direto a web/sync/exclusão.
 //

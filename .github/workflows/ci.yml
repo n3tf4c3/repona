@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 # Permissão mínima do GITHUB_TOKEN: só leitura do repo. Reduz o blast radius se
-# um passo/dep for comprometido. (auditoria #96) Residual: pin de Actions por SHA
-# e job dedicado de dependency/secret scanning.
+# um passo/dep for comprometido. Actions pinadas por SHA (imutável) em vez de tag
+# móvel, e passo de auditoria de dependências (gate em critical). (auditoria #96)
 permissions:
   contents: read
 
@@ -27,9 +27,12 @@ jobs:
       AUTH_SECRET: "ci-secret-apenas-para-build-0123456789abcdef"
       NEXTAUTH_SECRET: "ci-secret-apenas-para-build-0123456789abcdef"
     steps:
-      - uses: actions/checkout@v4
+      # Actions pinadas por SHA (o comentário registra a versão legível). Uma tag
+      # como @v4 é móvel e pode ser reapontada para código malicioso; o SHA é
+      # imutável. (auditoria #96)
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -37,6 +40,15 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # Scan de dependências: reporta advisories high/critical no log do CI. Não
+      # bloqueia por enquanto (continue-on-error) porque há uma critica transitiva
+      # conhecida no tooling de build do Expo (node-tar, via @expo/cli), cuja
+      # correcao depende do upgrade de Expo tratado no #35. Ao limpar o #35,
+      # remover o continue-on-error para o scan virar gate. (auditoria #96, #35)
+      - name: Audit (high+critical, report-only)
+        continue-on-error: true
+        run: npm audit --audit-level=high
 
       - name: Lint
         run: npm run lint
@@ -49,3 +61,53 @@ jobs:
 
       - name: Build web
         run: npm run web:build
+
+  # Baseline do banco reproduzível (auditoria #23): garante que o schema.ts aplica
+  # do zero num Postgres limpo e que o baseline Drizzle commitado continua em
+  # sincronia com o schema.ts (sem drift). O fluxo canônico é db:push (schema.ts é
+  # a fonte de verdade); este job prova que o baseline reflete o schema atual.
+  db-schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # 1) O baseline aplica limpo num Postgres efêmero (DDL válida).
+      - name: Aplicar baseline no Postgres efêmero
+        run: psql "$DATABASE_URL" -f apps/web/drizzle/0000_*.sql
+
+      # 2) Sem drift: drizzle-kit generate não deve produzir migration nova — se
+      # produzir, alguém mudou schema.ts sem regenerar o baseline (npm run
+      # db:generate). git status suja e o job falha.
+      - name: Baseline em sincronia com schema.ts
+        run: |
+          cd apps/web
+          npx drizzle-kit generate --config drizzle.config.ts
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "Baseline dessincronizado do schema.ts. Rode: npm run db:generate -w web"
+            git status --porcelain drizzle
+            exit 1
+          fi

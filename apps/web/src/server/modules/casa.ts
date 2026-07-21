@@ -11,22 +11,25 @@ export type CasaDTO = {
   inviteCode: string;
 };
 
-// Código de acesso (token): 8 chars base32 sem caracteres ambíguos (0/O/1/I).
-// É a única credencial — nasce no mobile e é usado para entrar no web.
+// Código de acesso (token): base32 sem caracteres ambíguos (0/O/1/I). É a única
+// credencial — nasce no mobile e é usado para entrar no web. 12 chars = ~60 bits
+// de entropia (antes 8 = 40 bits, fraco para um bearer permanente). (auditoria #71)
 const ALFABETO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const CASA_CODE_LEN = 12;
 
 function gerarCodigo(): string {
   let codigo = "";
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < CASA_CODE_LEN; i++) {
     codigo += ALFABETO[randomInt(ALFABETO.length)];
   }
   return codigo;
 }
 
-// Formato do token da casa (mesmo alfabeto de gerarCodigo). Exportado para as
-// rotas validarem o header x-casa-code antes de usá-lo como chave de rate limit,
-// evitando inflar rate_limits com valores arbitrários. (auditoria #54)
-export const CASA_CODE_REGEX = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
+// Formato do token da casa (mesmo alfabeto e comprimento de gerarCodigo).
+// Exportado para as rotas validarem o header x-casa-code antes de usá-lo como
+// chave de rate limit, evitando inflar rate_limits com valores arbitrários.
+// (auditoria #54) Construído a partir das constantes para não divergir. (#71)
+export const CASA_CODE_REGEX = new RegExp(`^[${ALFABETO}]{${CASA_CODE_LEN}}$`);
 
 // Postgres unique_violation: só a colisão do código único justifica gerar outro
 // e tentar de novo. Qualquer outro erro (banco indisponível, timeout, outra
@@ -58,18 +61,22 @@ async function criarCasa(name: string): Promise<{ id: number; code: string }> {
   throw new Error("CASA_CREATE_FAILED");
 }
 
-// Cria a conta (= casa) com o nome escolhido no mobile e devolve o token.
-export async function criarContaNuvem(nome: string): Promise<{ token: string; name: string }> {
+// Cria a conta (= casa) com o nome escolhido no mobile e devolve o token e o
+// casaId. O mobile guarda o casaId para escopar seus dados por casa (arquivo
+// SQLite por casa) e nunca misturar dados entre contas. (auditoria #68)
+export async function criarContaNuvem(
+  nome: string
+): Promise<{ token: string; name: string; casaId: number }> {
   const name = nome.trim();
   if (!name) throw new Error("NOME_INVALIDO");
-  const { code } = await criarCasa(name);
-  return { token: code, name };
+  const { id, code } = await criarCasa(name);
+  return { token: code, name, casaId: id };
 }
 
 // Resolve a casa pelo token. Usado pela sincronização do mobile.
 export async function obterCasaPorCodigo(code: string): Promise<number | null> {
   const codigo = code.trim().toUpperCase();
-  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(codigo)) return null;
+  if (!CASA_CODE_REGEX.test(codigo)) return null;
   const [casa] = await db
     .select({ id: casas.id })
     .from(casas)
@@ -83,7 +90,7 @@ export async function autenticarCasa(
   code: string
 ): Promise<{ id: number; name: string; credentialVersion: number } | null> {
   const codigo = code.trim().toUpperCase();
-  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/.test(codigo)) return null;
+  if (!CASA_CODE_REGEX.test(codigo)) return null;
   const [casa] = await db
     .select({ id: casas.id, name: casas.name, credentialVersion: casas.credentialVersion })
     .from(casas)

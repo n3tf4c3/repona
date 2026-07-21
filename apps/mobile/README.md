@@ -47,7 +47,7 @@ Implementado nesta etapa:
 
 - Estrutura Expo limpa, sem pastas nativas `android/` ou `ios/` geradas.
 - Tema visual Repona com paleta quente de supermercado/domestica.
-- Telas React Native mockadas para inicio, lista de compras, produtos, historico e perfil/futuro.
+- Telas React Native para inicio, lista de compras, produtos, historico e perfil/futuro (inicialmente com dados mockados, hoje conectadas ao SQLite com dados reais — ver itens abaixo).
 - Bottom navigation com acao central de novo produto.
 - Bottom sheet de cadastro manual de produto.
 - Componentes visuais para cards, chips, busca, itens comprados, estado "em falta" e sugestao de recompra.
@@ -83,7 +83,7 @@ Ainda pendente:
 ## Estrutura Inicial
 
 - `App.tsx`: entrada do aplicativo Expo/React Native.
-- `src/`: tema, dados mockados e tipos do app.
+- `src/`: tema, telas, componentes, armazenamento local (SQLite) e tipos do app.
 - `package.json`: scripts e dependencias Expo.
 - `app.json`: configuracao do projeto Expo.
 - `docs/`: documentacao de apoio, ideias, decisoes, arquitetura e releases.

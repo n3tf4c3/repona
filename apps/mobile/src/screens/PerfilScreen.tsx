@@ -43,7 +43,7 @@ export function FutureScreen({ onSynced }: { onSynced: () => void }) {
 
 const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], string> = {
   NOT_PAIRED: 'Crie uma conta ou conecte com um token primeiro.',
-  INVALID_CODE: 'Token inválido. São 8 caracteres (letras e números).',
+  INVALID_CODE: 'Token inválido. São 12 caracteres (letras e números).',
   NETWORK: 'Sem conexão. O backup precisa de internet para ser ativado.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
   BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
@@ -147,6 +147,9 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
                   setPairedCode(null);
                   setLastSyncAt(null);
                   setMessage({ kind: 'ok', text: 'Conta excluída da nuvem.' });
+                  // Voltou ao escopo local: recarrega a UI do arquivo local em vez
+                  // de manter os dados da casa excluída na tela. (auditoria #68)
+                  onSynced();
                 } else {
                   setMessage({ kind: 'error', text: SYNC_ERROR_MESSAGES[result.error] });
                 }
@@ -172,6 +175,8 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
             setPairedCode(null);
             setLastSyncAt(null);
             setMessage(null);
+            // Voltou ao escopo local: recarrega a UI do arquivo local. (auditoria #68)
+            onSynced();
           })();
         },
       },
@@ -246,11 +251,11 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
                   value={code}
                   onChangeText={(text) => setCode(text.toUpperCase())}
                   style={styles.input}
-                  placeholder="Token (8 caracteres)"
+                  placeholder="Token (12 caracteres)"
                   placeholderTextColor={colors.ink3}
                   autoCapitalize="characters"
                   autoCorrect={false}
-                  maxLength={8}
+                  maxLength={12}
                 />
               </View>
               <Pressable style={styles.syncUnpairButton} disabled={busy} onPress={handlePair}>

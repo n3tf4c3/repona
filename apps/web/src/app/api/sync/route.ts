@@ -32,12 +32,12 @@ const snapshotSchema = z.object({
         purchaseCount: z.number().int().min(0),
         status: z.enum(["active", "missing"]),
         alertThreshold: z.string().max(FIELD_LIMITS.alertThreshold).nullable(),
-        // Canonicaliza: vazio/"abc" -> "0 un" em vez de virar status/estoque
-        // inválido. Estoque aceita zero. (auditoria #75)
+        // Canonicaliza: vazio/"abc"/"1 ???" -> "0 un" em vez de virar
+        // status/estoque inválido. Estoque aceita zero. (auditoria #75)
         inventoryQuantity: z
           .string()
           .max(FIELD_LIMITS.quantity)
-          .transform((v) => canonicalQuantity(v, "0 un")),
+          .transform((v) => canonicalQuantity(v, "0 un", { allowZero: true })),
         inventoryStatus: z.enum(["in_stock", "missing"]),
         // Clientes antigos não enviam archived/occasional: default mantém compat.
         archived: z.boolean().optional().default(false),
@@ -173,7 +173,10 @@ export async function POST(req: NextRequest) {
   }
   try {
     const merged = await mergeCasaSnapshot(casaId, parsed.data);
-    return NextResponse.json(merged);
+    // casaId acompanha o snapshot mesclado: o mobile o usa para escopar os dados
+    // por casa (arquivo SQLite por casa) e comparar com o local_casa_id, nunca
+    // enviando dados de uma conta para outra. (auditoria #68)
+    return NextResponse.json({ ...merged, casaId });
   } finally {
     await unlock(lockKey, lockToken);
   }

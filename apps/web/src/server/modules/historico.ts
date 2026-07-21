@@ -4,8 +4,15 @@ import type { PricePoint, PurchaseHistoryDTO } from "@repona/core";
 import { db } from "@/server/db";
 import { products, shoppingLists, purchaseHistory, priceHistory } from "@/server/db/schema";
 
-export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDTO[]> {
-  const rows = await db
+// Histórico de compras da casa, do mais recente ao mais antigo. `limit` opcional
+// limita a consulta para paginação — sem ele, devolve tudo (compat). A ordem é
+// determinística (purchased_at desc, id asc), então páginas por limite crescente
+// são contíguas e estáveis. (auditoria #87)
+export async function listarHistorico(
+  casaId: number,
+  limit?: number
+): Promise<PurchaseHistoryDTO[]> {
+  const consulta = db
     .select({
       id: purchaseHistory.id,
       productId: purchaseHistory.productId,
@@ -23,6 +30,8 @@ export async function listarHistorico(casaId: number): Promise<PurchaseHistoryDT
     .leftJoin(shoppingLists, eq(shoppingLists.id, purchaseHistory.sourceListId))
     .where(and(eq(products.casaId, casaId), eq(purchaseHistory.deleted, false)))
     .orderBy(desc(purchaseHistory.purchasedAt), asc(purchaseHistory.id));
+
+  const rows = await (limit !== undefined ? consulta.limit(limit) : consulta);
 
   return rows.map((row) => ({
     id: row.id,

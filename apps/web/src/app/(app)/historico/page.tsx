@@ -4,12 +4,28 @@ import { listarHistorico, ultimoPrecoPorProduto } from "@/server/modules/histori
 import { agruparHistorico } from "@/lib/historico";
 import { formatCentsBRL } from "@/lib/preco";
 
-export default async function HistoricoPage() {
+// Tamanho da página do histórico. Cada "carregar mais" soma uma página ao
+// limite, mantendo os grupos por data contíguos e estáveis. (auditoria #87)
+const TAMANHO_PAGINA = 50;
+
+export default async function HistoricoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pagina?: string }>;
+}) {
   const { casaId: id } = await requireCasa();
-  const [registros, precoPorProduto] = await Promise.all([
-    listarHistorico(id),
+  const paramPagina = Number((await searchParams).pagina);
+  const pagina = Number.isInteger(paramPagina) && paramPagina > 0 ? paramPagina : 1;
+  const limite = TAMANHO_PAGINA * pagina;
+
+  const [registrosBrutos, precoPorProduto] = await Promise.all([
+    // Busca um a mais que o limite para saber se há próxima página sem uma
+    // contagem extra.
+    listarHistorico(id, limite + 1),
     ultimoPrecoPorProduto(id),
   ]);
+  const temMais = registrosBrutos.length > limite;
+  const registros = temMais ? registrosBrutos.slice(0, limite) : registrosBrutos;
   const grupos = agruparHistorico(registros, precoPorProduto);
 
   return (
@@ -86,6 +102,15 @@ export default async function HistoricoPage() {
           })}
         </div>
       ))}
+
+      {temMais && (
+        <a
+          href={`/historico?pagina=${pagina + 1}`}
+          className="mt-2 flex items-center justify-center rounded-card border border-line bg-surface px-4 py-3 text-sm font-semibold text-ink-soft shadow-sm transition hover:bg-bg"
+        >
+          Carregar mais
+        </a>
+      )}
     </div>
   );
 }

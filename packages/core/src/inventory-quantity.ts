@@ -29,16 +29,34 @@ export function buildQuantityString(value: string, unit: string): string | null 
   return `${formatado} ${unidade}`;
 }
 
+// Formato canônico completo de quantidade: número (decimal com vírgula ou ponto)
+// seguido de uma unidade de letras — o mesmo que as Actions do web exigem
+// (lista/actions.ts, produtos/actions.ts). Ancorado em ^...$ para casar a string
+// INTEIRA, fechando valores como "1 ???" ou "5" sem unidade que o match parcial
+// deixava passar.
+const CANONICAL_QUANTITY_RE = /^(\d+(?:[.,]\d+)?)\s*[A-Za-zÀ-ÿ]+$/;
+
 // Canonicaliza uma quantidade recebida pelo protocolo de sync. O parser de
 // estoque/consumo assume que a string começa com um número; valores fora do
 // formato ("", "abc") cairiam em defaults silenciosos e produziriam status,
-// totais ou eventos incorretos. Aqui um valor inválido vira o fallback explícito
-// em vez de rejeitar o snapshot INTEIRO da casa (mesma tolerância do enum de
-// categoria). Web e mobile já geram quantidades válidas; isto fecha a brecha de
-// um cliente modificado/corrompido. (auditoria #75)
-export function canonicalQuantity(raw: string, fallback: string): string {
+// totais ou eventos incorretos. Um valor que não casa integralmente com o
+// formato canônico, ou excede MAX_QUANTITY_VALUE, vira o fallback explícito em
+// vez de rejeitar o snapshot INTEIRO da casa (mesma tolerância do enum de
+// categoria). A positividade é contextual: estoque admite zero (allowZero);
+// compra, consumo e item de lista exigem valor positivo, como nas Actions
+// normais. Web e mobile já geram quantidades válidas; isto fecha a brecha de um
+// cliente modificado/corrompido. (auditoria #75)
+export function canonicalQuantity(
+  raw: string,
+  fallback: string,
+  options?: { allowZero?: boolean }
+): string {
   const t = raw.trim();
-  if (!/^\d+(?:[.,]\d+)?/.test(t)) return fallback;
+  const match = CANONICAL_QUANTITY_RE.exec(t);
+  if (!match) return fallback;
+  const value = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(value) || value > MAX_QUANTITY_VALUE) return fallback;
+  if (!options?.allowZero && value <= 0) return fallback;
   return t;
 }
 

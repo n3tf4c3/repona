@@ -11,16 +11,23 @@ import { z } from "zod";
 //   - AUTH_SECRET /
 //     NEXTAUTH_SECRET     -> authSecret() (aqui)
 //   - INVITE_TOKEN_SECRET -> inviteTokenSecret() (aqui)
+//   - NEXTAUTH_URL        -> nextauthOrigin() (aqui)
+//   - RATE_LIMIT_PEPPER   -> rateLimitPepper() (aqui, opcional)
 //   - ADMIN_SECRET        -> server/auth/adminAuth.ts (precisa ser Edge-safe,
 //                            usado pelo middleware; não pode importar este módulo
-//                            server-only)
+//                            server-only). É a única leitura direta de process.env
+//                            que sobra, por essa restrição de runtime.
 //
 // A validação é PREGUIÇOSA e por campo: só dispara quando o consumidor lê aquele
 // valor, para não exigir todas as variáveis durante o build/dev parcial nem
 // falhar no import (o mesmo motivo pelo qual os módulos originais liam em
 // runtime). Cada resultado é memoizado.
 
-const secretSchema = z.string().min(16, "defina um segredo aleatório (>= 16 chars)");
+// Mínimo de 32 chars para segredos gerados (auditoria #89): material de chave
+// abaixo disso é fraco para os usos criptográficos (assinatura de sessão, cifra
+// do token da casa em repouso). Segredos padrão (openssl rand -base64 32 -> 44
+// chars) já satisfazem; um valor curto herdado deve ser rotacionado.
+const secretSchema = z.string().min(32, "defina um segredo aleatório (>= 32 chars)");
 const urlSchema = z.string().url();
 
 function validar<T>(schema: z.ZodType<T>, valor: unknown, nome: string, dica: string): T {
@@ -51,7 +58,7 @@ export function authSecret(): string {
       secretSchema,
       process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
       "AUTH_SECRET/NEXTAUTH_SECRET",
-      "segredo do NextAuth para assinar a sessão (>= 16 chars)."
+      "segredo do NextAuth para assinar a sessão (>= 32 chars)."
     );
   }
   return _authSecret;
@@ -64,8 +71,36 @@ export function inviteTokenSecret(): string {
       secretSchema,
       process.env.INVITE_TOKEN_SECRET,
       "INVITE_TOKEN_SECRET",
-      "segredo para cifrar o token da casa em repouso (>= 16 chars)."
+      "segredo para cifrar o token da casa em repouso (>= 32 chars)."
     );
   }
   return _inviteTokenSecret;
+}
+
+// Origem pública do app (NEXTAUTH_URL), usada para validar Origin em rotas de
+// navegador (auditoria #91). Fail-closed suave: ausente/malformada -> null, para
+// o consumidor negar a requisição em vez de derrubar o handler. Memoizado.
+let _nextauthOrigin: string | null | undefined;
+export function nextauthOrigin(): string | null {
+  if (_nextauthOrigin === undefined) {
+    const raw = process.env.NEXTAUTH_URL;
+    try {
+      _nextauthOrigin = raw ? new URL(raw).origin : null;
+    } catch {
+      _nextauthOrigin = null;
+    }
+  }
+  return _nextauthOrigin;
+}
+
+// Pepper dedicado do rate limit (auditoria #43), opcional: quando ausente/curto,
+// devolve null e o consumidor deriva o material de INVITE_TOKEN_SECRET via HKDF.
+// Memoizado.
+let _rateLimitPepper: string | null | undefined;
+export function rateLimitPepper(): string | null {
+  if (_rateLimitPepper === undefined) {
+    const raw = process.env.RATE_LIMIT_PEPPER;
+    _rateLimitPepper = raw && raw.length >= 16 ? raw : null;
+  }
+  return _rateLimitPepper;
 }

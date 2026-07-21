@@ -1,11 +1,57 @@
-import { uuidv4 } from '@repona/core';
+import { uuidv4, productNameKey } from '@repona/core';
 import * as SQLite from 'expo-sqlite';
 
+// Isolamento multi-tenant por ARQUIVO (auditoria #68): cada casa tem seu próprio
+// arquivo SQLite, então trocar de conta troca de arquivo e nenhum dado de uma
+// casa entra no arquivo de outra — impossível vazar por engano numa query. O
+// escopo 'local' é o estado não-pareado (scratch) e mantém o nome histórico
+// repona.db para preservar dados de instalações anteriores.
+type Scope = number | 'local';
+
+let activeScope: Scope = 'local';
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let initializationPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+function fileForScope(scope: Scope): string {
+  return scope === 'local' ? 'repona.db' : `repona-casa-${scope}.db`;
+}
+
+export function getActiveScope(): Scope {
+  return activeScope;
+}
+
+// Troca o arquivo ativo. Ao mudar de escopo, fecha o handle atual e zera os
+// caches para a próxima leitura abrir e inicializar (migrations) o arquivo novo.
+// Idempotente para o mesmo escopo. Deve ser chamada ANTES de aplicar o snapshot
+// de uma casa, para os dados caírem no arquivo certo. (auditoria #68)
+export async function setActiveScope(scope: Scope): Promise<void> {
+  if (scope === activeScope && databasePromise) return;
+  const anterior = databasePromise;
+  activeScope = scope;
+  databasePromise = null;
+  initializationPromise = null;
+  if (anterior) {
+    try {
+      await (await anterior).closeAsync();
+    } catch {
+      // best-effort: não conseguir fechar o handle antigo não deve travar a troca.
+    }
+  }
+}
+
+// Apaga o arquivo de um escopo (usado ao excluir a conta). O arquivo não pode
+// estar aberto, então troque para outro escopo antes. Best-effort. (auditoria #68)
+export async function deleteScopeDatabase(scope: Scope): Promise<void> {
+  try {
+    await SQLite.deleteDatabaseAsync(fileForScope(scope));
+  } catch {
+    // best-effort: o arquivo pode nem existir.
+  }
+}
 
 export function getDatabase() {
   if (!databasePromise) {
-    databasePromise = SQLite.openDatabaseAsync('repona.db');
+    databasePromise = SQLite.openDatabaseAsync(fileForScope(activeScope));
   }
 
   return databasePromise;
@@ -15,10 +61,8 @@ export function getDatabase() {
 // cada chamada de initializeDatabase reexecutava PRAGMAs, DDL, cleanup e
 // migrations — desperdício recorrente e disputa quando App.tsx dispara várias
 // leituras em paralelo no boot. Agora a inicialização inteira roda uma vez por
-// sessão; concorrentes compartilham a mesma promise. Em falha, zera o cache para
-// a próxima tentativa poder recomeçar.
-let initializationPromise: Promise<SQLite.SQLiteDatabase> | null = null;
-
+// sessão (por arquivo ativo); concorrentes compartilham a mesma promise. Em
+// falha, zera o cache para a próxima tentativa poder recomeçar.
 export function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!initializationPromise) {
     initializationPromise = initializeOnce().catch((error) => {
@@ -296,6 +340,34 @@ const MIGRATIONS: Array<(db: SQLite.SQLiteDatabase) => Promise<void>> = [
     const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(purchase_history)');
     if (!cols.some((c) => c.name === 'updated_at')) {
       await db.execAsync('ALTER TABLE purchase_history ADD COLUMN updated_at TEXT;');
+    }
+  },
+
+  // v9: chave de nome normalizada (productNameKey = NFC + trim + lower pt-BR)
+  // para dedupe Unicode-aware, alinhando o mobile ao Postgres do web (lá lower()
+  // é Unicode e há índice único por lower(name); no SQLite o NOCASE/lower é só
+  // ASCII e deixava "Açúcar"/"açúcar" coexistirem). O backfill roda em JS porque
+  // o SQLite não normaliza NFC. O índice único é criado só sem duplicata de chave
+  // (mesmo cuidado do v3); mesmo sem ele, o CRUD checa por name_key em JS.
+  // (auditoria #76)
+  async (db) => {
+    const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(products)');
+    if (!cols.some((c) => c.name === 'name_key')) {
+      await db.execAsync('ALTER TABLE products ADD COLUMN name_key TEXT;');
+    }
+    const semKey = await db.getAllAsync<{ id: number; name: string }>(
+      'SELECT id, name FROM products WHERE name_key IS NULL',
+    );
+    for (const row of semKey) {
+      await db.runAsync('UPDATE products SET name_key = ? WHERE id = ?', productNameKey(row.name), row.id);
+    }
+    const dup = await db.getFirstAsync<{ n: number }>(
+      'SELECT COUNT(*) - COUNT(DISTINCT name_key) AS n FROM products WHERE name_key IS NOT NULL',
+    );
+    if ((dup?.n ?? 0) === 0) {
+      await db.execAsync(
+        'CREATE UNIQUE INDEX IF NOT EXISTS products_name_key_unique ON products(name_key);',
+      );
     }
   },
 ];

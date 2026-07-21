@@ -1,6 +1,12 @@
 # Database
 
-Planejamento inicial do banco de dados do Repona. O MVP deve usar Expo SQLite como banco local, mantendo a estrutura preparada para sincronizacao futura com Firestore.
+> **Nota (auditoria #98, 2026-07-20):** este e o planejamento inicial e permanece
+> como registro historico. A sincronizacao NAO usa Firestore: foi implementada com
+> backend proprio (API Next.js + Neon/PostgreSQL) por token de casa. Topologia
+> corrente: `Expo/SQLite (local-first) -> API Next -> Neon/PostgreSQL`. As mencoes
+> a Firestore abaixo estao superadas.
+
+Planejamento inicial do banco de dados do Repona. O MVP deve usar Expo SQLite como banco local, mantendo a estrutura preparada para sincronizacao futura (na epoca planejada como Firestore; hoje via API propria + Neon/PostgreSQL).
 
 ## Entidades Iniciais
 
@@ -76,7 +82,7 @@ Representa um evento local de mudanca no estoque domestico.
 
 - Entidade de familia ou casa.
 - Vinculo entre usuarios e familia.
-- Metadados de sincronizacao para Firestore.
+- Metadados de sincronizacao (implementados via API Next + Neon/PostgreSQL, nao Firestore).
 - Eventos de consumo para sugestoes futuras.
 
 ## Diretrizes
