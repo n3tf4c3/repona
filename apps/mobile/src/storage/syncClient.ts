@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { getRandomBytesAsync, randomUUID as secureRandomUUID } from 'expo-crypto';
+import { randomUUID as secureRandomUUID } from 'expo-crypto';
 import {
   CASA_CODE_REGEX,
   SYNC_COLLECTIONS,
@@ -22,14 +22,7 @@ import {
 import { getActiveScope, setActiveScope, deleteScopeDatabase } from './database';
 import {
   hasPendingDeleteOperation,
-  pendingVerifiedOperationMatches,
-  parsePendingCreateAck,
-  pendingCreateAckMatches,
-  resolveCreateOperation,
   resolveDeleteOperation,
-  verifierFromRandomBytes,
-  type PendingVerifiedOperation,
-  type PendingCreateAck,
 } from './accountOperations';
 import { captureUnexpectedResult } from './resultBoundary';
 import {
@@ -78,7 +71,6 @@ const CASA_CODE_KEY = 'casa_code';
 // não pareado (escopo 'local').
 const ACTIVE_CASA_ID_KEY = 'active_casa_id';
 const LAST_SYNC_KEY = 'last_sync_at';
-const CREATE_ACCOUNT_OPERATION_KEY = 'pending_create_account_operation_id';
 const DELETE_ACCOUNT_OPERATION_KEY = 'pending_delete_account_operation';
 const SYNC_V2_SESSION_KEY = 'sync_v2_session_v1';
 const ACCOUNT_BINDING_KEY = 'account_binding_v1';
@@ -97,7 +89,6 @@ const runAccountOperation = createPromiseMutex();
 type CredentialState =
   | { kind: 'binding'; binding: AccountBinding }
   | { kind: 'pending-create'; binding: AccountBinding }
-  | { kind: 'pending-create-request' }
   | { kind: 'pending-pair'; code: string; casaId?: number }
   | { kind: 'legacy-unverified'; code: string; casaId: number }
   | { kind: 'legacy-unbound'; code: string }
@@ -135,12 +126,6 @@ async function getCredentialState(): Promise<CredentialState> {
   if (pending) return { kind: 'pending-create', binding: pending };
   if (pendingRaw !== null) await SecureStore.deleteItemAsync(PENDING_CREATE_BINDING_KEY);
 
-  // Um CREATE pode ter commitado e perdido a resposta. A intenção persistida
-  // bloqueia pareamento/troca de conta até que o mesmo id+verifier seja refeito.
-  if (await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY) !== null) {
-    return { kind: 'pending-create-request' };
-  }
-
   // Pair é pull-only e ainda não possui binding antes da 1ª resposta. A
   // sessão global funciona como intent durável; depois de crash, syncNow retoma
   // sem pedir o token de novo e sem transformar o scratch em upload.
@@ -176,27 +161,11 @@ async function getCredentialState(): Promise<CredentialState> {
 
 async function getCasaCodeSeguro(): Promise<string | null> {
   const state = await getCredentialState();
-  return state.kind === 'none' || state.kind === 'pending-create-request'
+  return state.kind === 'none'
     ? null
     : state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified' || state.kind === 'pending-pair'
       ? state.code
       : state.binding.code;
-}
-
-async function newVerifiedOperation(): Promise<PendingVerifiedOperation> {
-  const verifier = verifierFromRandomBytes(await getRandomBytesAsync(32));
-  return { operationId: secureRandomUUID(), verifier };
-}
-
-async function getOrCreateCreateOperation(): Promise<PendingVerifiedOperation> {
-  const current = await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
-  const generated = current === null ? await newVerifiedOperation() : null;
-  const operation = resolveCreateOperation(current, () => generated!);
-  const serialized = JSON.stringify(operation);
-  if (current === null) {
-    await SecureStore.setItemAsync(CREATE_ACCOUNT_OPERATION_KEY, serialized);
-  }
-  return operation;
 }
 
 async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
@@ -207,15 +176,6 @@ async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
     await SecureStore.setItemAsync(DELETE_ACCOUNT_OPERATION_KEY, serialized);
   }
   return operation.operationId;
-}
-
-async function acknowledgeCreateOperation(
-  operation: PendingCreateAck,
-): Promise<void> {
-  const current = await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
-  if (pendingCreateAckMatches(current, operation)) {
-    await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
-  }
 }
 
 async function hasPendingRemoteDelete(): Promise<boolean> {
@@ -246,7 +206,6 @@ async function clearCredentialsAfterLocalDelete(): Promise<void> {
   await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
   await SecureStore.deleteItemAsync(CASA_CODE_KEY);
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
-  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
@@ -360,7 +319,6 @@ async function unpairCasaUnsafe(): Promise<void> {
   await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
   await SecureStore.deleteItemAsync(CASA_CODE_KEY);
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
-  await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
@@ -379,20 +337,8 @@ export function syncNow(): Promise<SyncResult> {
 
 async function syncNowUnsafe(): Promise<SyncResult> {
   const state = await getCredentialState();
-  if (state.kind === 'none' || state.kind === 'pending-create-request') {
+  if (state.kind === 'none') {
     return { ok: false, error: 'NOT_PAIRED' };
-  }
-  let createOperation: PendingCreateAck | null = null;
-  if (state.kind === 'pending-create') {
-    try {
-      // Captura o registro que esta tentativa efetivamente está confirmando.
-      // O ACK posterior compara id+verifier e não pode apagar um sucessor.
-      createOperation = parsePendingCreateAck(
-        await SecureStore.getItemAsync(CREATE_ACCOUNT_OPERATION_KEY),
-      );
-    } catch {
-      return { ok: false, error: 'SERVER' };
-    }
   }
 
   const isLegacy = state.kind === 'legacy-unbound' || state.kind === 'legacy-unverified';
@@ -424,7 +370,6 @@ async function syncNowUnsafe(): Promise<SyncResult> {
   }
   if (state.kind !== 'binding') {
     await persistBinding(code, r.casaId);
-    if (createOperation) await acknowledgeCreateOperation(createOperation).catch(() => {});
   }
   // A sessão `download complete` só deixa de ser a fonte de recuperação
   // DEPOIS que o binding atômico code+casaId foi promovido com sucesso.
@@ -454,18 +399,12 @@ export function criarConta(): Promise<SyncResult> {
 async function resumePendingCreateSync(
   code: string,
   casaId: number,
-  operation?: PendingVerifiedOperation,
 ): Promise<SyncResult> {
   await setActiveScope('local');
   const r = await runPagedSync(code, true, casaId);
   if (!r.ok) return { ok: false, error: r.error };
   if (r.casaId !== casaId) return { ok: false, error: 'SERVER' };
   await persistBinding(code, casaId);
-  // O binding code+casaId já está durável; só agora o recibo de CREATE deixa
-  // de ser necessário para recuperar uma resposta perdida.
-  if (operation) {
-    await acknowledgeCreateOperation({ kind: 'verified', operation }).catch(() => {});
-  }
   await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY).catch(() => {});
   return { ok: true, lastSyncAt: r.lastSyncAt };
 }
@@ -479,43 +418,32 @@ async function criarContaUnsafe(): Promise<SyncResult> {
     return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
   }
   if (action.kind === 'resume') {
-    // O POST ja foi confirmado e token+casaId estao salvos. Um novo POST aqui
-    // poderia criar uma segunda casa; o retry retoma somente a sync pendente.
-    let operation: PendingVerifiedOperation;
-    try {
-      operation = await getOrCreateCreateOperation();
-    } catch {
-      return { ok: false, error: 'SERVER' };
-    }
-    return resumePendingCreateSync(action.code, action.casaId, operation);
+    // O token já foi recebido e persistido (pending-create), mas o primeiro sync
+    // não terminou. Um novo POST criaria uma segunda casa; o retry só retoma a
+    // sync pendente com o token já salvo.
+    return resumePendingCreateSync(action.code, action.casaId);
   }
 
   // Cria a conta e MIGRA os dados locais (scratch) para ela: o snapshot local
   // atual vira o conteúdo inicial da casa nova. É dado do próprio usuário indo
   // para a própria conta nova — não é cruzamento entre casas. (auditoria #68)
-  let operation: PendingVerifiedOperation;
-  try {
-    // Persistido ANTES do request. Se o servidor fizer commit e a resposta se
-    // perder, a próxima tentativa reutiliza a chave e recebe a mesma casa/token.
-    operation = await getOrCreateCreateOperation();
-  } catch {
-    return { ok: false, error: 'SERVER' };
-  }
-
   let response: Response;
   try {
     response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Idempotency-Key': operation.operationId,
-        'x-operation-verifier': operation.verifier,
         'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
         'x-request-id': secureRandomUUID(),
       },
       body: JSON.stringify({ nome: NOME_PADRAO }),
     });
   } catch {
+    // Resposta perdida (timeout/queda) pode ter criado a casa no servidor sem o
+    // token chegar aqui. A criação de conta NÃO é idempotente no servidor (por
+    // simplicidade proporcional), então um retry cria outra casa e a anterior
+    // fica órfã — risco aceito e barrado pelo rate limit; não há dado do usuário
+    // nela (o scratch só migra após o token chegar). Ver docs/auditoria-achados #1.
     return { ok: false, error: 'NETWORK' };
   }
 
@@ -540,22 +468,20 @@ async function criarContaUnsafe(): Promise<SyncResult> {
     !Number.isSafeInteger(casaId) ||
     casaId <= 0
   ) {
-    // Mantém a operação pendente: um retry obtém o resultado memoizado correto.
     reportMobileRemoteFailure('create-account', response);
     return { ok: false, error: 'SERVER' };
   }
   // Persiste o token ANTES da primeira sincronização (auditoria #58). Ele é a
   // ÚNICA credencial da casa recém-criada e só existe aqui: se a primeira sync
   // falhar (timeout, 413, crash), salvá-lo só no fim perderia a credencial e
-  // deixaria a casa órfã na nuvem. Salvo antes, a casa é recuperável e a UI —
-  // vendo-se pareada — não reoferece "criar conta", evitando uma segunda casa.
+  // deixaria a casa órfã na nuvem. Salvo antes, a casa é recuperável (pending-create)
+  // e a UI — vendo-se pareada — não reoferece "criar conta", evitando uma segunda casa.
   // O active_casa_id NÃO é gravado ainda: no arranque restoreActiveScope abre o
   // scratch 'local' (não a casa vazia), preservando os dados a enviar; a próxima
-  // syncNow empurra o scratch e adota a casa. A Idempotency-Key persistida acima
-  // também cobre a resposta perdida ANTES de recebermos o token. (#90)
+  // syncNow empurra o scratch e adota a casa.
   await persistPendingCreate(token, casaId);
   // Empurra o scratch para a casa nova e adota o merge no arquivo dela.
-  return resumePendingCreateSync(token, casaId, operation);
+  return resumePendingCreateSync(token, casaId);
 }
 
 // Conecta a uma casa existente PUXANDO os dados dela, sem enviar o arquivo local
@@ -628,12 +554,13 @@ async function excluirContaUnsafe(): Promise<DeleteResult> {
   // apagar localmente sem arriscar remover o scratch de outra geração.
   if (casaId === null) return { ok: false, error: 'SERVER' };
 
-  let operationId: string;
   try {
-    // O vínculo com casaCode impede reaproveitar uma operação pendente depois de
-    // trocar de conta. Se a resposta do DELETE sumir após o commit, o retry usa
-    // a mesma chave e o servidor devolve sucesso mesmo sem a casa. (#90)
-    operationId = await getOrCreateDeleteOperationId(code);
+    // Persiste o marcador de exclusão pendente (vinculado ao casaCode) ANTES do
+    // request: ele bloqueia criar/parear conta em paralelo e sinaliza um DELETE
+    // em andamento para o boot retomar a limpeza local. O DELETE é naturalmente
+    // idempotente no servidor (apagar casa inexistente = sucesso), então um retry
+    // após resposta perdida só reenvia.
+    await getOrCreateDeleteOperationId(code);
   } catch {
     return { ok: false, error: 'SERVER' };
   }
@@ -644,7 +571,6 @@ async function excluirContaUnsafe(): Promise<DeleteResult> {
       method: 'DELETE',
       headers: {
         'x-casa-code': code,
-        'Idempotency-Key': operationId,
         'x-request-id': secureRandomUUID(),
       },
     });

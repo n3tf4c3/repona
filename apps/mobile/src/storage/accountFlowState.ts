@@ -1,6 +1,5 @@
 export type AccountCredentialState =
   | { kind: 'none' }
-  | { kind: 'pending-create-request' }
   | { kind: 'binding' }
   | { kind: 'pending-create'; binding: { code: string; casaId: number } }
   | { kind: 'pending-pair'; code: string; casaId?: number }
@@ -24,7 +23,7 @@ export type UnpairAccountAction = { kind: 'proceed' } | { kind: 'reject' };
 export function resolveCreateAccountAction(
   state: AccountCredentialState,
 ): CreateAccountAction {
-  if (state.kind === 'none' || state.kind === 'pending-create-request') return { kind: 'start' };
+  if (state.kind === 'none') return { kind: 'start' };
   if (state.kind === 'pending-create') {
     return {
       kind: 'resume',
@@ -51,9 +50,7 @@ export function resolvePairAccountAction(
 export function resolveUnpairAccountAction(
   state: AccountCredentialState,
 ): UnpairAccountAction {
-  // Uma casa pode existir no servidor mesmo antes de o primeiro sync terminar.
-  // Abandonar o receipt de CREATE aqui a tornaria órfã e irrecuperável.
-  return state.kind === 'pending-create' || state.kind === 'pending-create-request'
-    ? { kind: 'reject' }
-    : { kind: 'proceed' };
+  // Token já recebido mas primeiro sync incompleto (pending-create): desconectar
+  // aqui abandonaria uma casa recuperável. Só esse estado bloqueia o unpair.
+  return state.kind === 'pending-create' ? { kind: 'reject' } : { kind: 'proceed' };
 }

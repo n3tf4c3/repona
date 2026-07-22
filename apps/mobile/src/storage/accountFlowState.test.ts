@@ -12,9 +12,6 @@ const CODE_B = 'BBBBBBBBBBBBBBBB';
 
 test('create inicia apenas sem credencial e retoma o pending-create existente', () => {
   assert.deepEqual(resolveCreateAccountAction({ kind: 'none' }), { kind: 'start' });
-  assert.deepEqual(resolveCreateAccountAction({ kind: 'pending-create-request' }), {
-    kind: 'start',
-  });
   assert.deepEqual(
     resolveCreateAccountAction({
       kind: 'pending-create',
@@ -57,7 +54,6 @@ test('pair recusa binding, pending-create e credenciais legadas', () => {
   const states: AccountCredentialState[] = [
     { kind: 'binding' },
     { kind: 'pending-create', binding: { code: CODE_A, casaId: 41 } },
-    { kind: 'pending-create-request' },
     { kind: 'legacy-unverified' },
     { kind: 'legacy-unbound' },
   ];
@@ -68,9 +64,6 @@ test('pair recusa binding, pending-create e credenciais legadas', () => {
 });
 
 test('desconexão explícita não pode abandonar CREATE ainda recuperável', () => {
-  assert.deepEqual(resolveUnpairAccountAction({ kind: 'pending-create-request' }), {
-    kind: 'reject',
-  });
   assert.deepEqual(
     resolveUnpairAccountAction({
       kind: 'pending-create',
