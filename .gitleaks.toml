@@ -1,0 +1,12 @@
+# Configuracao do Gitleaks para o secret scan da CI (.github/workflows/security.yml).
+# Estende as regras padrao e ignora apenas o placeholder documentado que aparece
+# em apps/web/.env.example. Nao e segredo real: os segredos reais vivem em
+# .env.local (gitignored) e no secret manager da plataforma (auditoria #52).
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder de exemplo do .env.example (nao e segredo real)"
+regexes = [
+  '''substitua_por_segredo_aleatorio_com_32_chars_ou_mais''',
+]
