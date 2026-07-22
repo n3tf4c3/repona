@@ -31,7 +31,6 @@ const backupPurchases = backupData.tabelas?.purchase_history || [];
 const backupPrices = backupData.tabelas?.price_history || [];
 const backupInventory = backupData.tabelas?.inventory_items || [];
 const backupShopping = backupData.tabelas?.shopping_list_items || [];
-const backupLists = backupData.tabelas?.shopping_lists || [];
 
 console.log(`Exportado em: ${backupData.exportadoEm}`);
 console.log(`Registros encontrados:`);
