@@ -46,7 +46,7 @@ jobs:
 
   codeql:
     name: CodeQL (JavaScript/TypeScript)
-    if: ${{ github.event.repository.private == false || vars.GITHUB_CODE_SECURITY_ENABLED == 'true' }}
+    if: ${{ github.event.repository.private == false || vars.CODE_SECURITY_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -70,7 +70,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: ${{ github.event_name == 'pull_request' && (github.event.repository.private == false || vars.GITHUB_CODE_SECURITY_ENABLED == 'true') }}
+    if: ${{ github.event_name == 'pull_request' && (github.event.repository.private == false || vars.CODE_SECURITY_ENABLED == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

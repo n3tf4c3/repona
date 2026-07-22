@@ -17,7 +17,8 @@ repositórios privados ou internos, um administrador precisa:
 
 1. habilitar **GitHub Code Security** em **Settings > Security > Advanced
    Security**; e
-2. criar a variável de Actions `GITHUB_CODE_SECURITY_ENABLED` com valor `true`.
+2. definir a variável de Actions `CODE_SECURITY_ENABLED` com valor `true` (o
+   prefixo `GITHUB_` é reservado pelo GitHub e não pode ser usado em variáveis).
 
 Sem esses dois passos os jobs ficam ignorados deliberadamente, pois o upload do
 CodeQL e a API de dependency review falhariam sem a licença/permissão. Este
