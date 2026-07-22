@@ -2,14 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   hasPendingDeleteOperation,
-  hasPendingTokenRotation,
   pendingVerifiedOperationMatches,
-  parseTokenRotationOperation,
   parsePendingCreateAck,
   pendingCreateAckMatches,
   resolveCreateOperation,
   resolveDeleteOperation,
-  resolveTokenRotationOperation,
   verifierFromRandomBytes,
 } from './accountOperations';
 
@@ -78,28 +75,6 @@ test('verifier exige exatamente 32 bytes criptográficos', () => {
   assert.throws(() => verifierFromRandomBytes(new Uint8Array(16)), /SECURE_RANDOM_UNAVAILABLE/);
 });
 
-test('rotação reutiliza somente id+verifier ligados ao mesmo token', () => {
-  const codeA = '2'.repeat(12);
-  const codeB = '3'.repeat(12);
-  const raw = JSON.stringify({ operationId: ID_A, verifier: VERIFIER_A, casaCode: codeA });
-  assert.deepEqual(resolveTokenRotationOperation(raw, codeA, () => ({
-    operationId: ID_B,
-    verifier: VERIFIER_B,
-  })), { operationId: ID_A, verifier: VERIFIER_A, casaCode: codeA });
-  assert.throws(
-    () => resolveTokenRotationOperation(raw, codeB, () => ({
-      operationId: ID_B,
-      verifier: VERIFIER_B,
-    })),
-    /PENDING_ROTATION_CONFLICT/,
-  );
-  assert.deepEqual(parseTokenRotationOperation(raw), {
-    operationId: ID_A,
-    verifier: VERIFIER_A,
-    casaCode: codeA,
-  });
-});
-
 test('DELETE reutiliza a chave apenas para a mesma conta e falha fechado', () => {
   const stored = JSON.stringify({ operationId: ID_A, casaCode: 'TOKEN-A' });
   assert.deepEqual(resolveDeleteOperation(stored, 'TOKEN-A', () => ID_B), {
@@ -115,9 +90,4 @@ test('DELETE reutiliza a chave apenas para a mesma conta e falha fechado', () =>
 test('DELETE pendente bloqueia outras mutações mesmo se o registro corrompeu', () => {
   assert.equal(hasPendingDeleteOperation(null), false);
   assert.equal(hasPendingDeleteOperation('{'), true);
-});
-
-test('rotação pendente bloqueia unpair mesmo se a resposta se perdeu', () => {
-  assert.equal(hasPendingTokenRotation(null), false);
-  assert.equal(hasPendingTokenRotation('{'), true);
 });

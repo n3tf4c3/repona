@@ -10,19 +10,16 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\" scripts/productNameKeyBackfill.test.ts scripts/productNameKeyBackfill.integration.test.ts && node --test scripts/mergeProdutosPlan.test.mjs scripts/privateBackup.test.mjs scripts/tokenLegadoStatusPlan.test.mjs",
+    "test": "tsx --test \"src/**/*.test.ts\" scripts/productNameKeyBackfill.test.ts scripts/productNameKeyBackfill.integration.test.ts && node --test scripts/mergeProdutosPlan.test.mjs scripts/privateBackup.test.mjs",
     "env:check": "node scripts/env-check.mjs",
     "env:check:production": "node scripts/env-check.mjs --production",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:product-name-key": "tsx scripts/backfill-product-name-key.ts",
-    "smoke:account-api": "node scripts/smoke-account-api.mjs",
     "db:migrate": "node -e \"console.error('db:migrate desativado: este projeto aplica schema com db:push (veja drizzle/README.md). O baseline 0000_* e reproduzivel, mas nao e o journal autoritativo do banco existente.'); process.exit(1)\"",
     "casas": "node scripts/casas.mjs",
     "merge-produtos": "tsx scripts/merge-produtos.mjs",
-    "rate-limit:limpar": "node scripts/limpar-rate-limit-legado.mjs",
-    "sync-v2:backfill": "node scripts/backfill-sync-v2.mjs",
-    "token-legado:status": "node scripts/token-legado-status.mjs"
+    "sync-v2:backfill": "node scripts/backfill-sync-v2.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

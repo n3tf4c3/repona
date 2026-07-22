@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireCasa } from "@/server/auth/session";
-import { excluirCasa, renomearCasa } from "@/server/modules/casa";
+import { excluirCasa, regenerarToken, renomearCasa } from "@/server/modules/casa";
 import {
   genericActionError,
   reportUnexpectedActionFailure,
@@ -32,6 +32,21 @@ export async function excluirContaAction(): Promise<Resultado> {
     return { ok: true };
   } catch (error) {
     return tratar("casa.excluir", error);
+  }
+}
+
+// Gera um novo token e devolve-o. A rotação invalida a sessão atual (bump de
+// credentialVersion), então o cliente usa o token retornado para reautenticar e
+// exibir a nova credencial — sem ele a conta ficaria travada.
+export async function regenerarTokenAction(): Promise<
+  { ok: true; token: string } | { ok: false; error: string }
+> {
+  const { casaId } = await requireCasa();
+  try {
+    const { token } = await regenerarToken(casaId);
+    return { ok: true, token };
+  } catch (error) {
+    return tratar("casa.regenerar", error);
   }
 }
 

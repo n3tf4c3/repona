@@ -1,12 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
 import { getRandomBytesAsync, randomUUID as secureRandomUUID } from 'expo-crypto';
 import {
-  CASA_CODE_CURRENT_REGEX,
   CASA_CODE_REGEX,
   SYNC_COLLECTIONS,
   SYNC_PROTOCOL_VERSION,
   emptySyncSnapshot,
-  isLegacyCasaCode,
   syncCollectionSize,
   uuidv4,
   type SyncSnapshot,
@@ -24,16 +22,12 @@ import {
 import { getActiveScope, setActiveScope, deleteScopeDatabase } from './database';
 import {
   hasPendingDeleteOperation,
-  hasPendingTokenRotation,
   pendingVerifiedOperationMatches,
   parsePendingCreateAck,
   pendingCreateAckMatches,
-  parseTokenRotationOperation,
   resolveCreateOperation,
   resolveDeleteOperation,
-  resolveTokenRotationOperation,
   verifierFromRandomBytes,
-  type PendingTokenRotation,
   type PendingVerifiedOperation,
   type PendingCreateAck,
 } from './accountOperations';
@@ -76,9 +70,7 @@ import {
 import {
   reportMobileRemoteFailure,
   reportMobileUnexpectedFailure,
-  type MobileOperation,
 } from './mobileTelemetry';
-import { planTokenMigrationPromotion } from './tokenMigrationState';
 
 const CASA_CODE_KEY = 'casa_code';
 // casaId da casa pareada (auditoria #68): determina qual arquivo SQLite abrir, por
@@ -88,7 +80,6 @@ const ACTIVE_CASA_ID_KEY = 'active_casa_id';
 const LAST_SYNC_KEY = 'last_sync_at';
 const CREATE_ACCOUNT_OPERATION_KEY = 'pending_create_account_operation_id';
 const DELETE_ACCOUNT_OPERATION_KEY = 'pending_delete_account_operation';
-const TOKEN_ROTATION_OPERATION_KEY = 'pending_token_rotation_v1';
 const SYNC_V2_SESSION_KEY = 'sync_v2_session_v1';
 const ACCOUNT_BINDING_KEY = 'account_binding_v1';
 const PENDING_CREATE_BINDING_KEY = 'pending_create_binding_v1';
@@ -208,18 +199,6 @@ async function getOrCreateCreateOperation(): Promise<PendingVerifiedOperation> {
   return operation;
 }
 
-async function getOrCreateTokenRotationOperation(
-  casaCode: string,
-): Promise<PendingTokenRotation> {
-  const current = await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY);
-  const generated = current === null ? await newVerifiedOperation() : null;
-  const operation = resolveTokenRotationOperation(current, casaCode, () => generated!);
-  if (current === null) {
-    await SecureStore.setItemAsync(TOKEN_ROTATION_OPERATION_KEY, JSON.stringify(operation));
-  }
-  return operation;
-}
-
 async function getOrCreateDeleteOperationId(casaCode: string): Promise<string> {
   const raw = await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
   const operation = resolveDeleteOperation(raw, casaCode, secureRandomUUID);
@@ -269,7 +248,6 @@ async function clearCredentialsAfterLocalDelete(): Promise<void> {
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
   await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
-  await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
 
@@ -344,7 +322,6 @@ export type SyncResult =
         | 'BUSY'
         | 'SYNC_LIMIT'
         | 'ACCOUNT_STATE_CONFLICT'
-        | 'MIGRATION_EXPIRED'
         | 'SERVER';
     };
 
@@ -364,197 +341,6 @@ export function unpairCasa(): Promise<void> {
   return runAccountFlow(unpairCasaUnsafe);
 }
 
-type TokenMigrationResponse = {
-  token: string;
-  casaId: number;
-  credentialVersion: number;
-};
-
-export type TokenMigrationResult =
-  | { ok: true; token: string; casaId: number }
-  | {
-      ok: false;
-      error:
-        | 'NOT_PAIRED'
-        | 'NOT_LEGACY'
-        | 'NETWORK'
-        | 'CASA_NOT_FOUND'
-        | 'MIGRATION_EXPIRED'
-        | 'ACCOUNT_STATE_CONFLICT'
-        | 'SERVER';
-    };
-
-function legacyCodeFromState(state: CredentialState): string | null {
-  const code =
-    state.kind === 'binding' || state.kind === 'pending-create'
-      ? state.binding.code
-      : state.kind === 'pending-pair' ||
-          state.kind === 'legacy-unverified' ||
-          state.kind === 'legacy-unbound'
-        ? state.code
-        : null;
-  return code && isLegacyCasaCode(code) ? code : null;
-}
-
-function parseTokenMigrationResponse(value: unknown): TokenMigrationResponse | null {
-  if (!isRecord(value)) return null;
-  if (
-    typeof value.token !== 'string' ||
-    !CASA_CODE_CURRENT_REGEX.test(value.token) ||
-    typeof value.casaId !== 'number' ||
-    !Number.isSafeInteger(value.casaId) ||
-    value.casaId <= 0 ||
-    typeof value.credentialVersion !== 'number' ||
-    !Number.isSafeInteger(value.credentialVersion) ||
-    value.credentialVersion < 0
-  ) {
-    return null;
-  }
-  return value as TokenMigrationResponse;
-}
-
-type TokenMigrationError = Extract<TokenMigrationResult, { ok: false }>['error'];
-type TokenMigrationAttempt =
-  | { ok: true; result: TokenMigrationResponse }
-  | { ok: false; error: TokenMigrationError; code?: string };
-
-async function patchTokenMigration(
-  operation: PendingTokenRotation,
-  recover: boolean,
-  telemetryOperation: MobileOperation,
-): Promise<TokenMigrationAttempt> {
-  let response: Response;
-  try {
-    response = await fetchComTimeout(`${API_BASE_URL}/api/casa`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': operation.operationId,
-        'x-operation-verifier': operation.verifier,
-        'x-repona-client-version': SYNC_V2_CLIENT_VERSION,
-        'x-request-id': secureRandomUUID(),
-        ...(recover ? {} : { 'x-casa-code': operation.casaCode }),
-      },
-      body: JSON.stringify({ mode: recover ? 'recover' : 'migrate' }),
-    });
-  } catch {
-    return { ok: false, error: 'NETWORK' };
-  }
-
-  let raw: unknown = null;
-  try {
-    raw = await response.json();
-  } catch {
-    // Mantém id+verifier: um 2xx malformado pode ter vindo depois do commit.
-  }
-  if (response.ok) {
-    const result = parseTokenMigrationResponse(raw);
-    if (!result) reportMobileRemoteFailure(telemetryOperation, response);
-    return result ? { ok: true, result } : { ok: false, error: 'SERVER' };
-  }
-  reportMobileRemoteFailure(telemetryOperation, response);
-  const code = isRecord(raw) && typeof raw.error === 'string' ? raw.error : undefined;
-  if (response.status === 404) return { ok: false, error: 'CASA_NOT_FOUND', code };
-  if (response.status === 410) return { ok: false, error: 'MIGRATION_EXPIRED', code };
-  if (response.status === 409) return { ok: false, error: 'ACCOUNT_STATE_CONFLICT', code };
-  return { ok: false, error: 'SERVER', code };
-}
-
-async function acknowledgeTokenMigration(operation: PendingTokenRotation): Promise<void> {
-  const current = parseTokenRotationOperation(
-    await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY),
-  );
-  if (
-    current?.operationId === operation.operationId &&
-    current.verifier === operation.verifier &&
-    current.casaCode === operation.casaCode
-  ) {
-    await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
-  }
-}
-
-async function promoteMigratedToken(
-  state: CredentialState,
-  operation: PendingTokenRotation,
-  result: TokenMigrationResponse,
-): Promise<TokenMigrationResult> {
-  const plan = planTokenMigrationPromotion(state, operation.casaCode, result);
-  if (plan.kind === 'conflict') {
-    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
-  }
-  if (plan.kind === 'persist-binding') {
-    // Primeiro torna token+casaId autoritativos; só depois invalida sessão
-    // paginada que ainda poderia conter o bearer antigo.
-    await persistBinding(result.token, result.casaId);
-    await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
-  } else if (plan.kind === 'persist-pending-create') {
-    // O scratch ainda precisa de upload; não promove a binding antes da sync.
-    await persistPendingCreate(result.token, result.casaId);
-    await SecureStore.deleteItemAsync(SYNC_V2_SESSION_KEY);
-  } else if (plan.kind === 'persist-pull-only') {
-    await saveSyncSession({
-      ...createSyncSession(result.token, false, null, null),
-      casaId: result.casaId,
-    });
-  }
-
-  await acknowledgeTokenMigration(operation);
-  return { ok: true, token: result.token, casaId: result.casaId };
-}
-
-async function executeTokenMigration(
-  startIfMissing: boolean,
-  recoveryOnly: boolean,
-  telemetryOperation: MobileOperation,
-): Promise<TokenMigrationResult | null> {
-  if (
-    hasPendingDeleteOperation(
-      await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY),
-    )
-  ) {
-    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
-  }
-  const state = await getCredentialState();
-  const rawPending = await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY);
-  let operation = parseTokenRotationOperation(rawPending);
-  const legacyCode = legacyCodeFromState(state);
-
-  if (!operation) {
-    if (!startIfMissing) return null;
-    if (state.kind === 'none' || state.kind === 'pending-create-request') {
-      return { ok: false, error: 'NOT_PAIRED' };
-    }
-    if (!legacyCode) return { ok: false, error: 'NOT_LEGACY' };
-    operation = await getOrCreateTokenRotationOperation(legacyCode);
-  }
-
-  // Recovery não envia o bearer anterior. Se ainda não há recibo, o 404 pode
-  // ter vencido a requisição inicial esperando o lock; nunca apaga o verifier.
-  const recovered = await patchTokenMigration(operation, true, telemetryOperation);
-  if (recovered.ok) return promoteMigratedToken(state, operation, recovered.result);
-  if (recoveryOnly || recovered.error !== 'CASA_NOT_FOUND') return recovered;
-
-  if (!legacyCode || legacyCode !== operation.casaCode) {
-    return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
-  }
-  const migrated = await patchTokenMigration(operation, false, telemetryOperation);
-  if (!migrated.ok) return migrated;
-  return promoteMigratedToken(state, operation, migrated.result);
-}
-
-export function migrarTokenLegado(): Promise<TokenMigrationResult> {
-  return runAccountFlow(async () => {
-    try {
-      return (await executeTokenMigration(true, false, 'migrate-token')) ?? {
-        ok: false,
-        error: 'NOT_PAIRED',
-      };
-    } catch {
-      return { ok: false, error: 'SERVER' };
-    }
-  });
-}
-
 async function unpairCasaUnsafe(): Promise<void> {
   if (
     hasPendingDeleteOperation(
@@ -566,13 +352,6 @@ async function unpairCasaUnsafe(): Promise<void> {
   if (resolveUnpairAccountAction(await getCredentialState()).kind === 'reject') {
     throw new Error('PENDING_CREATE_OPERATION');
   }
-  if (
-    hasPendingTokenRotation(
-      await SecureStore.getItemAsync(TOKEN_ROTATION_OPERATION_KEY),
-    )
-  ) {
-    throw new Error('PENDING_TOKEN_ROTATION');
-  }
   // Fecha primeiro o arquivo da casa. Se isso falhar, o binding ainda existe e
   // o boot consegue restaurá-lo; nunca ficamos sem credencial apontando ao DB aberto.
   await setActiveScope('local');
@@ -583,7 +362,6 @@ async function unpairCasaUnsafe(): Promise<void> {
   await SecureStore.deleteItemAsync(ACTIVE_CASA_ID_KEY);
   await SecureStore.deleteItemAsync(CREATE_ACCOUNT_OPERATION_KEY);
   await SecureStore.deleteItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
-  await SecureStore.deleteItemAsync(TOKEN_ROTATION_OPERATION_KEY);
   await SecureStore.deleteItemAsync(ACCOUNT_BINDING_KEY);
 }
 
@@ -600,10 +378,6 @@ export function syncNow(): Promise<SyncResult> {
 }
 
 async function syncNowUnsafe(): Promise<SyncResult> {
-  const migration = await executeTokenMigration(true, false, 'sync');
-  if (migration && !migration.ok && migration.error !== 'NOT_LEGACY') {
-    return { ok: false, error: syncErrorFromMigration(migration.error) };
-  }
   const state = await getCredentialState();
   if (state.kind === 'none' || state.kind === 'pending-create-request') {
     return { ok: false, error: 'NOT_PAIRED' };
@@ -658,21 +432,6 @@ async function syncNowUnsafe(): Promise<SyncResult> {
   return { ok: true, lastSyncAt: r.lastSyncAt };
 }
 
-function syncErrorFromMigration(
-  error: TokenMigrationError,
-): Exclude<SyncResult, { ok: true }>['error'] {
-  return error === 'NOT_PAIRED'
-    ? 'NOT_PAIRED'
-    : error === 'NETWORK'
-      ? 'NETWORK'
-      : error === 'CASA_NOT_FOUND'
-        ? 'CASA_NOT_FOUND'
-        : error === 'ACCOUNT_STATE_CONFLICT'
-          ? 'ACCOUNT_STATE_CONFLICT'
-          : error === 'MIGRATION_EXPIRED'
-            ? 'MIGRATION_EXPIRED'
-            : 'SERVER';
-}
 
 // Nome padrão da conta. O nome é só um rótulo (não é credencial nem tem
 // unicidade), então nasce automático para o usuário não precisar decidir nada
@@ -776,7 +535,7 @@ async function criarContaUnsafe(): Promise<SyncResult> {
   const casaId = isRecord(data) ? data.casaId : undefined;
   if (
     typeof token !== 'string' ||
-    !CASA_CODE_CURRENT_REGEX.test(token) ||
+    !CASA_CODE_REGEX.test(token) ||
     typeof casaId !== 'number' ||
     !Number.isSafeInteger(casaId) ||
     casaId <= 0
@@ -831,15 +590,6 @@ async function pairAndSyncUnsafe(code: string): Promise<SyncResult> {
   if (action.kind === 'start') {
     await saveSyncSession(createSyncSession(normalized, false, null, null));
   }
-  if (isLegacyCasaCode(normalized)) {
-    const migration = await executeTokenMigration(true, false, 'pair-account');
-    if (!migration?.ok) {
-      return {
-        ok: false,
-        error: syncErrorFromMigration(migration?.error ?? 'SERVER'),
-      };
-    }
-  }
   const prepared = await getCredentialState();
   if (prepared.kind !== 'pending-pair') {
     return { ok: false, error: 'ACCOUNT_STATE_CONFLICT' };
@@ -871,24 +621,7 @@ export function excluirConta(): Promise<DeleteResult> {
 }
 
 async function excluirContaUnsafe(): Promise<DeleteResult> {
-  const pendingDeleteRaw = await SecureStore.getItemAsync(DELETE_ACCOUNT_OPERATION_KEY);
-  if (!hasPendingDeleteOperation(pendingDeleteRaw)) {
-    const migration = await executeTokenMigration(true, false, 'delete-account');
-    if (migration && !migration.ok && migration.error !== 'NOT_LEGACY') {
-      return {
-        ok: false,
-        error:
-          migration.error === 'NETWORK'
-            ? 'NETWORK'
-            : migration.error === 'CASA_NOT_FOUND'
-              ? 'CASA_NOT_FOUND'
-              : migration.error === 'NOT_PAIRED'
-                ? 'NOT_PAIRED'
-                : 'SERVER',
-      };
-    }
-  }
-  let code = await getCasaCode();
+  const code = await getCasaCode();
   if (!code) return { ok: false, error: 'NOT_PAIRED' };
   const casaId = await getActiveCasaId();
   // Sem identidade validada do arquivo não há como cumprir o contrato de

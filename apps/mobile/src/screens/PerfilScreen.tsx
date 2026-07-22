@@ -2,7 +2,7 @@
 // (extraída de App.tsx, auditoria 2026-06-09 #12.1).
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { CASA_CODE_LENGTH, isLegacyCasaCode } from '@repona/core';
+import { CASA_CODE_LENGTH } from '@repona/core';
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
 
@@ -12,7 +12,6 @@ import {
   excluirConta,
   getCasaCode,
   getLastSyncAt,
-  migrarTokenLegado,
   pairAndSync,
   syncNow,
   unpairCasa,
@@ -46,15 +45,13 @@ export function FutureScreen({ onSynced }: { onSynced: () => void }) {
 
 const SYNC_ERROR_MESSAGES: Record<Exclude<SyncResult, { ok: true }>['error'], string> = {
   NOT_PAIRED: 'Crie uma conta ou conecte com um token primeiro.',
-  INVALID_CODE: `Token inválido. Use ${CASA_CODE_LENGTH} caracteres (ou 8/12 para uma conta anterior).`,
+  INVALID_CODE: `Token inválido. Use os ${CASA_CODE_LENGTH} caracteres do código da casa.`,
   NETWORK: 'Sem conexão. O backup precisa de internet para ser ativado.',
   CASA_NOT_FOUND: 'Nenhuma conta encontrada com esse token.',
   BUSY: 'Outro aparelho está sincronizando agora. Tente de novo em instantes.',
   SYNC_LIMIT: 'Uma página de backup excedeu o limite seguro. Atualize o app e tente novamente.',
   ACCOUNT_STATE_CONFLICT:
     'Já existe uma conta ou conexão pendente neste aparelho. Continue com o token salvo ou desconecte antes de tentar outra.',
-  MIGRATION_EXPIRED:
-    'O prazo de migração automática terminou. Procure a recuperação operacional da conta.',
   SERVER: 'O servidor recusou a operação. Tente de novo.',
 };
 
@@ -142,44 +139,7 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
       handleResult(await syncNow());
     } finally {
       try {
-        // syncNow pode promover um token legado. Nunca continue exibindo ou
-        // copiando o bearer antigo depois da troca durável.
-        setPairedCode(await getCasaCode());
-      } finally {
-        setBusy(false);
-      }
-    }
-  }
-
-  async function handleLegacyMigration() {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const migrated = await migrarTokenLegado();
-      if (!migrated.ok) {
-        const text =
-          migrated.error === 'MIGRATION_EXPIRED'
-            ? 'O prazo de migração automática terminou. Procure a recuperação operacional da conta.'
-            : migrated.error === 'NETWORK'
-              ? 'Sem conexão. A operação ficou salva e será recuperada na próxima tentativa.'
-              : migrated.error === 'ACCOUNT_STATE_CONFLICT'
-                ? 'Há outra operação de conta pendente neste aparelho.'
-                : 'Não foi possível atualizar o token agora. Tente novamente.';
-        setMessage({ kind: 'error', text });
-        return;
-      }
-      // Para vínculo não verificado/pull-only, conclui a adoção sem enviar o
-      // scratch. Para binding existente, sincroniza normalmente com o novo token.
-      const syncResult = await syncNow();
-      handleResult(syncResult);
-      if (syncResult.ok) {
-        setMessage({
-          kind: 'ok',
-          text: 'Token atualizado. Copie e guarde a nova credencial exibida acima.',
-        });
-      }
-    } finally {
-      try {
+        // Reflete o token atual salvo (ex.: após parear numa nova casa).
         setPairedCode(await getCasaCode());
       } finally {
         setBusy(false);
@@ -292,23 +252,6 @@ function CasaSyncCard({ onSynced }: { onSynced: () => void }) {
             <Text selectable style={styles.syncPairedCode}>{pairedCode}</Text>
           </View>
           <Text style={styles.subtleText}>Use esse token para entrar no app web.</Text>
-          {isLegacyCasaCode(pairedCode) ? (
-            <>
-              <Text style={styles.formError}>
-                Este token antigo precisa ser atualizado. O anterior deixará de autenticar após o prazo de migração.
-              </Text>
-              <Pressable
-                style={[styles.saveButton, busy ? styles.saveButtonDisabled : null]}
-                disabled={busy}
-                onPress={handleLegacyMigration}
-              >
-                <MaterialCommunityIcons name="shield-key-outline" size={20} color={colors.surface} />
-                <Text style={styles.saveButtonText}>
-                  {busy ? 'Atualizando...' : 'Atualizar token agora'}
-                </Text>
-              </Pressable>
-            </>
-          ) : null}
           <Text style={styles.subtleText}>
             {lastSyncAt ? `Última sincronização: ${formatSyncMoment(lastSyncAt)}.` : 'Ainda não sincronizado.'}
           </Text>

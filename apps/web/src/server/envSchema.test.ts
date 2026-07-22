@@ -1,16 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_LEGACY_TOKEN_ACCEPT_UNTIL,
   EnvironmentValidationError,
-  LEGACY_TOKEN_MIGRATION_HARD_END,
   MIN_SECRET_LENGTH,
   parseAdminSecret,
   parseAuthSecret,
   parseCriticalEnvironment,
   parseDatabaseUrl,
   parseInviteTokenSecret,
-  parseLegacyTokenAcceptUntil,
   parseNextAuthOrigin,
   parseRateLimitPepper,
 } from "../../env-schema.mjs";
@@ -145,17 +142,4 @@ test("middleware/admin aplica o mesmo mínimo e permanece fail-closed", () => {
     if (original === undefined) delete process.env.ADMIN_SECRET;
     else process.env.ADMIN_SECRET = original;
   }
-});
-
-test("cutoff legado tem default finito e nunca ultrapassa o hard end", () => {
-  assert.equal(parseLegacyTokenAcceptUntil(undefined), DEFAULT_LEGACY_TOKEN_ACCEPT_UNTIL);
-  assert.equal(
-    parseLegacyTokenAcceptUntil(LEGACY_TOKEN_MIGRATION_HARD_END),
-    LEGACY_TOKEN_MIGRATION_HARD_END
-  );
-  assert.throws(
-    () => parseLegacyTokenAcceptUntil("2027-04-01T00:00:00.001Z"),
-    /hard end/i
-  );
-  assert.throws(() => parseLegacyTokenAcceptUntil("sem-data"), /LEGACY_TOKEN_ACCEPT_UNTIL/i);
 });

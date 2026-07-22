@@ -34,62 +34,6 @@ export const casas = pgTable("casas", {
 
 export type Casa = typeof casas.$inferSelect;
 
-// Alias temporário usado SOMENTE pelo endpoint de migração de tokens legados.
-// Login, sync e exclusão consultam apenas casas.invite_code_enc. A PK impede que
-// o mesmo bearer anterior aponte para duas casas e o UNIQUE limita uma grace por
-// casa; a geração serializada também exclui colisão cruzada com tokens atuais.
-export const casaTokenMigrationAliases = pgTable("casa_token_migration_aliases", {
-  tokenEnc: text("token_enc").primaryKey(),
-  casaId: integer("casa_id")
-    .notNull()
-    .unique()
-    .references(() => casas.id, { onDelete: "cascade" }),
-  validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-// Registro durável das mutações de conta disparadas pelo mobile. O cliente
-// persiste o Idempotency-Key antes do request e o servidor grava a operação na
-// mesma transação da criação/exclusão. Assim, timeout ou resposta perdida pode
-// ser repetido sem criar outra casa nem transformar uma exclusão já concluída
-// em 404. Não há FK para casas de propósito: o recibo de DELETE precisa
-// sobreviver à remoção da própria casa. O token de CREATE permanece cifrado.
-// (auditoria #90)
-export const accountOperations = pgTable(
-  "account_operations",
-  {
-    operationId: uuid("operation_id").primaryKey(),
-    // v1 = recibo legado sem verifier; v2 = HMACs estáveis + verifier cliente.
-    // DEFAULT 1 torna o db:push compatível com linhas existentes. Todo writer
-    // novo grava 2 explicitamente.
-    operationVersion: integer("operation_version").notNull().default(1),
-    operationType: text("operation_type").notNull(),
-    requestHash: text("request_hash").notNull(),
-    resultTokenEnc: text("result_token_enc"),
-    // Verificador HMAC do segredo de recovery, que existe somente no cliente.
-    // operation_id em um dump não basta para recuperar token descriptografado.
-    operationVerifierHash: text("operation_verifier_hash"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    check("account_operations_type_check", sql`${table.operationType} in ('create', 'delete', 'rotate')`),
-    check("account_operations_version_check", sql`${table.operationVersion} in (1, 2)`),
-    check(
-      "account_operations_result_check",
-      sql`(${table.operationType} in ('create', 'rotate') and ${table.resultTokenEnc} is not null)
-          or (${table.operationType} = 'delete' and ${table.resultTokenEnc} is null)`
-    ),
-    check(
-      "account_operations_verifier_check",
-      sql`(${table.operationVersion} = 1 and ${table.operationVerifierHash} is null)
-          or (${table.operationVersion} = 2 and (
-            (${table.operationType} in ('create', 'rotate') and ${table.operationVerifierHash} is not null)
-            or (${table.operationType} = 'delete' and ${table.operationVerifierHash} is null)
-          ))`
-    ),
-  ]
-);
-
 // Recibos idempotentes para mutações multi-tabela do web. O operation_id vem
 // do browser e é inserido na mesma instrução PostgreSQL que aplica os efeitos;
 // uma resposta perdida pode ser repetida sem novo consumo/finalização. (#22)

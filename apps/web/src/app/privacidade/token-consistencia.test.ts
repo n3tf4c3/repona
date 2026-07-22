@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { CASA_CODE_ENTROPY_BITS, CASA_CODE_LENGTH } from "@repona/core";
+import { CASA_CODE_LENGTH } from "@repona/core";
 
 // Consistência doc↔fonte (auditoria #98): a política pública não pode divulgar
 // um comprimento de token diferente do gerado de fato. Lê os arquivos como texto
@@ -17,5 +17,4 @@ test("política divulga o mesmo comprimento seguro do contrato compartilhado", (
     new RegExp(`token de ${CASA_CODE_LENGTH}\\s*\\n?\\s*caracteres`),
     `A política de privacidade deve dizer "token de ${CASA_CODE_LENGTH} caracteres"`
   );
-  assert.ok(CASA_CODE_ENTROPY_BITS >= 128);
 });

@@ -66,10 +66,5 @@ export { deriveInventoryQuantity, subtractInventoryQuantity } from "./inventory-
 export {
   CASA_CODE_ALPHABET,
   CASA_CODE_LENGTH,
-  CASA_CODE_LEGACY_LENGTHS,
-  CASA_CODE_ENTROPY_BITS,
-  CASA_CODE_CURRENT_REGEX,
-  CASA_CODE_LEGACY_REGEX,
   CASA_CODE_REGEX,
-  isLegacyCasaCode,
 } from "./account-code";

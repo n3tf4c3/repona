@@ -1,5 +1,3 @@
-import { CASA_CODE_REGEX } from '@repona/core';
-
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OPERATION_VERIFIER_REGEX = /^[0-9a-f]{64}$/;
 
@@ -8,7 +6,6 @@ export type PendingVerifiedOperation = {
   verifier: string;
 };
 export type PendingDeleteOperation = { operationId: string; casaCode: string };
-export type PendingTokenRotation = PendingVerifiedOperation & { casaCode: string };
 export type PendingCreateAck =
   | { kind: 'verified'; operation: PendingVerifiedOperation }
   | { kind: 'legacy'; operationId: string };
@@ -40,10 +37,6 @@ export function verifierFromRandomBytes(bytes: Uint8Array): string {
 export function hasPendingDeleteOperation(stored: string | null): boolean {
   // Mesmo corrompido pode representar request remoto que commitou ou ainda
   // está in-flight. Só a ação explícita de DELETE pode resolvê-lo.
-  return stored !== null;
-}
-
-export function hasPendingTokenRotation(stored: string | null): boolean {
   return stored !== null;
 }
 
@@ -106,45 +99,6 @@ export function pendingCreateAckMatches(
   return expected.kind === 'legacy'
     ? stored === expected.operationId
     : pendingVerifiedOperationMatches(stored, expected.operation);
-}
-
-export function resolveTokenRotationOperation(
-  stored: string | null,
-  casaCode: string,
-  create: () => PendingVerifiedOperation,
-): PendingTokenRotation {
-  if (stored !== null) {
-    const value = parseJson(stored);
-    if (
-      value &&
-      typeof value === 'object' &&
-      validVerifiedOperation(value) &&
-      'casaCode' in value &&
-      value.casaCode === casaCode
-    ) {
-      return { operationId: value.operationId, verifier: value.verifier, casaCode };
-    }
-    throw new Error('PENDING_ROTATION_CONFLICT');
-  }
-  const created = create();
-  if (!validVerifiedOperation(created)) throw new Error('INVALID_OPERATION_GENERATOR');
-  return { ...created, casaCode };
-}
-
-export function parseTokenRotationOperation(stored: string | null): PendingTokenRotation | null {
-  if (stored === null) return null;
-  const value = parseJson(stored);
-  if (
-    value &&
-    typeof value === 'object' &&
-    validVerifiedOperation(value) &&
-    'casaCode' in value &&
-    typeof value.casaCode === 'string' &&
-    CASA_CODE_REGEX.test(value.casaCode)
-  ) {
-    return { operationId: value.operationId, verifier: value.verifier, casaCode: value.casaCode };
-  }
-  throw new Error('CORRUPT_PENDING_ROTATION');
 }
 
 export function resolveDeleteOperation(
