@@ -6,7 +6,7 @@ import { CasaClient } from "./casa-client";
 // "app": já disponível no aplicativo. "breve": ainda no roadmap.
 const recursos: { title: string; description: string; Icon: LucideIcon; status: "app" | "breve" }[] = [
   { title: "Scanner de código", description: "Aponte a câmera e adicione produtos pelo código de barras.", Icon: ScanLine, status: "app" },
-  { title: "Cadastro por foto", description: "Tire uma foto do produto e complete o cadastro em menos passos.", Icon: Camera, status: "breve" },
+  { title: "Cadastro por foto", description: "Tire uma foto do produto e complete o cadastro em menos passos.", Icon: Camera, status: "app" },
   { title: "Estoque doméstico", description: "Saiba o que tem em casa, o que está acabando e o que precisa repor.", Icon: Home, status: "app" },
   { title: "Compartilhamento familiar", description: "Catálogo, estoque e histórico da casa compartilhados entre os aparelhos.", Icon: Users, status: "app" },
   { title: "Sugestões inteligentes", description: "Recompras previstas a partir dos hábitos de consumo.", Icon: Brain, status: "app" },

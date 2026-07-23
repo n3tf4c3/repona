@@ -365,7 +365,12 @@ function ProductCard({
     <div className="rounded-card border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <CategoriaBolha category={produto.category} />
+          {produto.photoUri ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={produto.photoUri} alt={produto.name} className="h-10 w-10 shrink-0 rounded-full object-cover border border-line" />
+          ) : (
+            <CategoriaBolha category={produto.category} />
+          )}
           <div>
             <p className="font-bold leading-tight">{produto.name}</p>
             <p className="text-xs text-ink-faint">
@@ -713,6 +718,7 @@ function ProdutoModal({
   const [name, setName] = useState(produto?.name ?? "");
   const [category, setCategory] = useState(produto?.category ?? CATEGORIAS[0]);
   const [brand, setBrand] = useState(produto?.brand ?? "");
+  const [photoUri, setPhotoUri] = useState(produto?.photoUri ?? "");
   const [alertThreshold, setAlertThreshold] = useState(produto?.alertThreshold ?? "");
   const [occasional, setOccasional] = useState(produto?.occasional ?? false);
 
@@ -776,6 +782,21 @@ function ProdutoModal({
             />
           </label>
           <label className="block">
+            <span className="text-sm font-semibold text-ink-soft">Foto do produto (URL / opcional)</span>
+            <div className="mt-1 flex items-center gap-2">
+              {photoUri ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={photoUri} alt="Preview" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-line" />
+              ) : null}
+              <input
+                value={photoUri}
+                onChange={(e) => setPhotoUri(e.target.value)}
+                placeholder="https://exemplo.com/foto.jpg"
+                className="w-full rounded-xl border border-line px-4 py-2.5 text-sm outline-none transition focus:border-primary"
+              />
+            </div>
+          </label>
+          <label className="block">
             <span className="text-sm font-semibold text-ink-soft">Alerta de estoque baixo (opcional)</span>
             <input
               value={alertThreshold}
@@ -816,7 +837,7 @@ function ProdutoModal({
                 alertThreshold,
                 occasional,
                 barcode: produto?.barcode ?? null,
-                photoUri: produto?.photoUri ?? null,
+                photoUri: photoUri.trim() || null,
               })
             }
             className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
