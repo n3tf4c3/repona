@@ -22,14 +22,14 @@ export function InicioClient({
   total,
   comprados,
   alertas,
-  sugestao,
+  sugestoes,
   costuma,
 }: {
   listName: string;
   total: number;
   comprados: number;
   alertas: InventoryAlert[];
-  sugestao: RebuySuggestion | null;
+  sugestoes: RebuySuggestion[];
   costuma: ProductDTO[];
 }) {
   const [erro, setErro] = useState<string | null>(null);
@@ -144,25 +144,31 @@ export function InicioClient({
         )}
       </section>
 
-      {/* Sugestão de recompra */}
-      {sugestao && (
+      {/* Sugestões de recompra */}
+      {sugestoes.length > 0 && (
         <section>
-          <h2 className="mb-2 text-sm font-bold text-ink-soft">Sugestão para você</h2>
-          <div className="rounded-card border border-line bg-primary-tint p-5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-xs font-bold text-primary-strong">
-              <Sparkles size={12} />
-              {sugestao.badge}
-            </span>
-            <p className="mt-2 text-lg font-black">{sugestao.title}</p>
-            <p className="text-sm text-ink-soft">{sugestao.description}</p>
-            <button
-              disabled={pending}
-              onClick={() => adicionar(sugestao.product.id)}
-              className="mt-3 flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-            >
-              <Plus size={16} strokeWidth={2.6} />
-              Adicionar à lista
-            </button>
+          <h2 className="mb-2 text-sm font-bold text-ink-soft">Sugestões de recompra</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {sugestoes.map((sugestao, idx) => (
+              <div key={sugestao.product.id ?? idx} className="flex flex-col justify-between rounded-card border border-line bg-primary-tint p-4">
+                <div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-xs font-bold text-primary-strong">
+                    <Sparkles size={12} />
+                    {sugestao.badge}
+                  </span>
+                  <p className="mt-2 text-base font-black">{sugestao.title}</p>
+                  <p className="text-xs text-ink-soft">{sugestao.description}</p>
+                </div>
+                <button
+                  disabled={pending}
+                  onClick={() => adicionar(sugestao.product.id)}
+                  className="mt-3 flex items-center justify-center gap-1.5 rounded-xl bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  <Plus size={14} strokeWidth={2.6} />
+                  Adicionar à lista
+                </button>
+              </div>
+            ))}
           </div>
         </section>
       )}

@@ -26,7 +26,7 @@ export type {
   InventoryAlertLevel,
   RebuySuggestion,
 } from "./home-rules";
-export { buildInventoryAlerts, buildRebuySuggestion } from "./home-rules";
+export { buildInventoryAlerts, buildRebuySuggestion, buildRebuySuggestionsList } from "./home-rules";
 export type {
   SyncProduct,
   SyncPurchase,
@@ -68,3 +68,6 @@ export {
   CASA_CODE_LENGTH,
   CASA_CODE_REGEX,
 } from "./account-code";
+export type { HouseExportData } from "./data-export";
+export { exportToJSON, exportToCSV, validateHouseImport } from "./data-export";
+

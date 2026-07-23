@@ -1,4 +1,4 @@
-import { buildInventoryAlerts, buildRebuySuggestion } from "@repona/core";
+import { buildInventoryAlerts, buildRebuySuggestionsList } from "@repona/core";
 import { requireCasa } from "@/server/auth/session";
 import { listProdutos } from "@/server/modules/produtos";
 import { garantirListaAtiva, listarItensAtivos } from "@/server/modules/listas";
@@ -13,7 +13,7 @@ export default async function InicioPage() {
   const listedIds = itens.map((i) => i.productId);
   const listedSet = new Set(listedIds);
   const alertas = buildInventoryAlerts(produtos);
-  const sugestao = buildRebuySuggestion(produtos, listedIds);
+  const sugestoes = buildRebuySuggestionsList(produtos, listedIds, 6);
   const costuma = produtos
     .filter((p) => !listedSet.has(p.id))
     .sort((a, b) => b.purchaseCount - a.purchaseCount)
@@ -27,7 +27,7 @@ export default async function InicioPage() {
       total={itens.length}
       comprados={comprados}
       alertas={alertas}
-      sugestao={sugestao}
+      sugestoes={sugestoes}
       costuma={costuma}
     />
   );

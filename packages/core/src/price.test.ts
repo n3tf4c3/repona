@@ -14,7 +14,9 @@ test("summarizePrices: um único preço é flat", () => {
     previousCents: null,
     minCents: 890,
     maxCents: 890,
+    avgCents: 890,
     trend: "flat",
+    trendPercentage: null,
   });
 });
 
@@ -28,7 +30,9 @@ test("summarizePrices: usa o mais recente e calcula tendência", () => {
   assert.equal(s?.previousCents, 610);
   assert.equal(s?.minCents, 500);
   assert.equal(s?.maxCents, 720);
+  assert.equal(s?.avgCents, 610);
   assert.equal(s?.trend, "up");
+  assert.equal(s?.trendPercentage, 18);
 });
 
 test("summarizePrices: queda de preço", () => {
@@ -37,4 +41,5 @@ test("summarizePrices: queda de preço", () => {
     { priceCents: 650, recordedAt: "2026-06-05T10:00:00.000Z" },
   ]);
   assert.equal(s?.trend, "down");
+  assert.equal(s?.trendPercentage, -19);
 });

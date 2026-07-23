@@ -9,7 +9,9 @@ export type PriceSummary = {
   previousCents: number | null;
   minCents: number;
   maxCents: number;
+  avgCents: number;
   trend: PriceTrend; // último vs. anterior
+  trendPercentage: number | null; // % de alteração em relação ao preço anterior
 };
 
 export type PricePoint = { priceCents: number; recordedAt: string };
@@ -26,6 +28,13 @@ export function summarizePrices(points: PricePoint[]): PriceSummary | null {
   const previousCents = cents.length > 1 ? cents[1] : null;
   const minCents = Math.min(...cents);
   const maxCents = Math.max(...cents);
+  const avgCents = Math.round(cents.reduce((sum, val) => sum + val, 0) / cents.length);
+
+  let trendPercentage: number | null = null;
+  if (previousCents !== null && previousCents > 0) {
+    trendPercentage = Math.round(((lastCents - previousCents) / previousCents) * 100);
+  }
+
   const trend: PriceTrend =
     previousCents === null || lastCents === previousCents
       ? "flat"
@@ -33,5 +42,14 @@ export function summarizePrices(points: PricePoint[]): PriceSummary | null {
         ? "up"
         : "down";
 
-  return { count: cents.length, lastCents, previousCents, minCents, maxCents, trend };
+  return {
+    count: cents.length,
+    lastCents,
+    previousCents,
+    minCents,
+    maxCents,
+    avgCents,
+    trend,
+    trendPercentage,
+  };
 }

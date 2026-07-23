@@ -2,11 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, Check, RefreshCw, Pencil, KeyRound, AlertCircle, Trash2 } from "lucide-react";
+import { Copy, Check, RefreshCw, Pencil, KeyRound, AlertCircle, Trash2, Download, Upload } from "lucide-react";
 import { signIn, signOut } from "next-auth/react";
 import type { CasaDTO } from "@/server/modules/casa";
 import { transportErrorMessage, withClientTimeout } from "@/lib/clientAsync";
-import { excluirContaAction, regenerarTokenAction, renomearCasaAction } from "./actions";
+import { excluirContaAction, regenerarTokenAction, renomearCasaAction, exportarDadosAction, importarDadosAction } from "./actions";
 
 type Resultado = { ok: boolean; error?: string };
 
@@ -181,6 +181,89 @@ export function CasaClient({ casa }: { casa: CasaDTO }) {
             É o mesmo token do app. Gerar um novo invalida o anterior (será preciso reconectar o app).
           </p>
         )}
+      </div>
+
+      {/* Exportação e Importação de Dados */}
+      <div className="border-t border-line pt-4 space-y-3">
+        <h3 className="text-sm font-bold text-ink-soft flex items-center gap-1.5">
+          <Download size={16} /> Backup e Exportação
+        </h3>
+        <p className="text-xs text-ink-faint">
+          Exporte os produtos, estoque e listas da casa em formato JSON para backup ou CSV para visualizar em planilhas.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            disabled={pending}
+            onClick={() => {
+              setErro(null);
+              startTransition(async () => {
+                const r = await exportarDadosAction();
+                if (!r.ok) setErro(r.error);
+                else {
+                  const blob = new Blob([r.json], { type: "application/json" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = r.filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              });
+            }}
+            className="flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink-soft transition hover:border-primary hover:text-primary-strong disabled:opacity-50"
+          >
+            <Download size={14} /> Exportar JSON (Backup)
+          </button>
+          <button
+            disabled={pending}
+            onClick={() => {
+              setErro(null);
+              startTransition(async () => {
+                const r = await exportarDadosAction();
+                if (!r.ok) setErro(r.error);
+                else {
+                  const blob = new Blob([r.csv], { type: "text/csv;charset=utf-8;" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = r.filename.replace(".json", ".csv");
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              });
+            }}
+            className="flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink-soft transition hover:border-primary hover:text-primary-strong disabled:opacity-50"
+          >
+            <Download size={14} /> Exportar CSV (Excel)
+          </button>
+          <label className="flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-xs font-semibold text-ink-soft cursor-pointer transition hover:border-primary hover:text-primary-strong">
+            <Upload size={14} /> Importar Backup
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                  const content = event.target?.result as string;
+                  if (!content) return;
+                  setErro(null);
+                  startTransition(async () => {
+                    const r = await importarDadosAction(content);
+                    if (!r.ok) setErro(r.error);
+                    else {
+                      alert(`${r.count} produtos importados com sucesso!`);
+                      router.refresh();
+                    }
+                  });
+                };
+                reader.readAsText(file);
+              }}
+            />
+          </label>
+        </div>
       </div>
 
       {/* Excluir conta */}

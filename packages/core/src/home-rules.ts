@@ -153,10 +153,11 @@ function compareInventoryAlerts<P extends ProductLike>(
 
 // ---- Sugestão de recompra ----
 
-export function buildRebuySuggestion<P extends ProductLike>(
+export function buildRebuySuggestionsList<P extends ProductLike>(
   products: P[],
-  listedProductIds: Iterable<number>
-): RebuySuggestion<P> | null {
+  listedProductIds: Iterable<number>,
+  limit: number = 10
+): RebuySuggestion<P>[] {
   const listed = new Set(listedProductIds);
   const suggestions = products.reduce<RebuySuggestion<P>[]>((items, product) => {
     if (product.occasional) return items;
@@ -167,8 +168,17 @@ export function buildRebuySuggestion<P extends ProductLike>(
   }, []);
 
   suggestions.sort((a, b) => b.score - a.score);
-  return suggestions[0] ?? null;
+  return limit > 0 ? suggestions.slice(0, limit) : suggestions;
 }
+
+export function buildRebuySuggestion<P extends ProductLike>(
+  products: P[],
+  listedProductIds: Iterable<number>
+): RebuySuggestion<P> | null {
+  const list = buildRebuySuggestionsList(products, listedProductIds, 1);
+  return list[0] ?? null;
+}
+
 
 function getProductRebuySuggestion<P extends ProductLike>(product: P): RebuySuggestion<P> | null {
   const purchaseCount = product.purchaseCount ?? 0;

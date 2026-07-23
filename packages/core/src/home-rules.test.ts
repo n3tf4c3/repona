@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildInventoryAlerts, buildRebuySuggestion } from "./home-rules";
+import { buildInventoryAlerts, buildRebuySuggestion, buildRebuySuggestionsList } from "./home-rules";
 import type { ProductDTO } from "./contracts";
 
 function produto(over: Partial<ProductDTO>): ProductDTO {
@@ -82,4 +82,16 @@ test("sugestão prioriza item em falta e ignora os já na lista", () => {
 test("sem candidatos retorna null", () => {
   const s = buildRebuySuggestion([produto({ purchaseCount: 1, consumptionCount: 0 })], []);
   assert.equal(s, null);
+});
+
+test("buildRebuySuggestionsList retorna múltiplos candidatos ordenados por score com limite", () => {
+  const products = [
+    produto({ id: 1, name: "Item em Falta", inventoryStatus: "missing", inventoryQuantity: "0 un" }),
+    produto({ id: 2, name: "Item Estoque Baixo", inventoryQuantity: "1 un", alertThreshold: "2 un" }),
+    produto({ id: 3, name: "Item Recorrente", purchaseCount: 12 }),
+  ];
+  const list = buildRebuySuggestionsList(products, [], 2);
+  assert.equal(list.length, 2);
+  assert.equal(list[0].product.id, 1);
+  assert.equal(list[1].product.id, 2);
 });

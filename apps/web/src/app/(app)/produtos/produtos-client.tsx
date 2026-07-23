@@ -545,6 +545,7 @@ function PrecoModal({
                 <>
                   <ResumoItem rotulo="Menor registrado" valor={formatCentsBRL(resumo.minCents)} />
                   <ResumoItem rotulo="Maior registrado" valor={formatCentsBRL(resumo.maxCents)} />
+                  <ResumoItem rotulo="Preço médio" valor={formatCentsBRL(resumo.avgCents)} />
                 </>
               )}
             </div>
