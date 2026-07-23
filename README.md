@@ -13,6 +13,15 @@ packages/
   core/     @repona/core — tipos/contratos de domínio puros, compartilhados
 ```
 
+## Recursos e Funcionalidades
+
+- **Scanner de Código de Barras**: cadastro e busca rápida de produtos.
+- **Cadastro por Foto (photoUri)**: suporte a fotos dos produtos no Web e Mobile.
+- **Sugestões Inteligentes de Recompra**: recomendações automáticas calculadas pelo `@repona/core` com base em falta, estoque baixo e hábitos de consumo.
+- **Histórico e Preço Médio**: gráficos de evolução de preços, preço mínimo, máximo, preço médio e variação percentual.
+- **Backup e Exportação**: exportação dos dados da casa em formato **JSON** (backup completo) e **CSV** (para Excel / Google Sheets), com suporte a importação.
+- **Sincronização Local-First (Sync V2)**: protocolo idempotente com suporte offline, tombstones, LWW e reconciliação de aliases de produtos.
+
 ## Comandos (na raiz)
 
 ```bash
