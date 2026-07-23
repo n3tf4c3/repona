@@ -44,7 +44,7 @@ export function NavTop() {
 export function NavBottom() {
   const pathname = usePathname();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/95 backdrop-blur sm:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface/60 backdrop-blur-xl sm:hidden">
       {links.map(({ href, label, Icon }) => {
         const ativo = ativoEm(pathname, href);
         return (

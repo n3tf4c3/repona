@@ -1,27 +1,27 @@
 import { Platform } from 'react-native';
 
 export const colors = {
-  bg: '#F6F5EF',
-  bg2: '#EFEEE6',
-  surface: '#FFFFFF',
-  surface2: '#FBFAF5',
-  ink: '#212418',
-  ink2: '#5C604F',
+  bg: '#f9faf6',
+  bg2: '#f3f4f0',
+  surface: '#ffffff',
+  surface2: '#f3f4f0',
+  ink: '#1a1c1a',
+  ink2: '#404943',
   // Texto auxiliar ainda precisa de 4,5:1 tanto sobre surface quanto sobre bg.
-  ink3: '#6B6F5E',
-  line: '#E7E5D9',
-  line2: '#EFEDE3',
+  ink3: '#69726c',
+  line: '#bfc9c1',
+  line2: '#e7e9e5',
   // Mantém texto branco acima de 4,5:1 (WCAG AA para texto pequeno).
-  primary: '#277A4B',
-  primaryStrong: '#236B43',
-  primarySoft: '#E2F0E5',
-  primaryTint: '#F0F7F0',
-  amber: '#E0913B',
-  amberSoft: '#FBEAD4',
-  coral: '#E0604A',
-  coralSoft: '#FAE1DB',
-  indigo: '#6471DE',
-  indigoSoft: '#E7E9FB',
+  primary: '#2d6a4f',
+  primaryStrong: '#0f5238',
+  primarySoft: '#a8e7c5',
+  primaryTint: '#f9faf6',
+  amber: '#e0913b',
+  amberSoft: '#fbead4',
+  coral: '#ba1a1a',
+  coralSoft: '#ffdad6',
+  indigo: '#3e6750',
+  indigoSoft: '#bdeacd',
 };
 
 export const spacing = {
@@ -29,7 +29,7 @@ export const spacing = {
 };
 
 export const radius = {
-  card: 20,
+  card: 24,
 };
 
 export const shadow = {

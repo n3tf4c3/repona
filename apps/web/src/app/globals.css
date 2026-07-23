@@ -1,35 +1,39 @@
 @import "tailwindcss";
 
-/* Paleta Repona (espelha apps/mobile/src/theme.ts) exposta como tokens Tailwind,
-   para usar utilitários semânticos: bg-surface, text-ink, border-line, bg-primary... */
 @theme {
-  --color-bg: #f6f5ef;
-  --color-bg2: #efeee6;
+  --color-bg: #f9faf6;
+  --color-bg2: #f3f4f0;
   --color-surface: #ffffff;
-  --color-surface-muted: #fbfaf5;
-  --color-ink: #212418;
-  --color-ink-soft: #5c604f;
-  --color-ink-faint: #6b6f5e;
-  --color-line: #e7e5d9;
-  --color-line2: #efede3;
-  --color-primary: #277a4b;
-  --color-primary-strong: #236b43;
-  --color-primary-soft: #e2f0e5;
-  --color-primary-tint: #f0f7f0;
+  --color-surface-muted: #edeeea;
+  --color-ink: #1a1c1a;
+  --color-ink-soft: #404943;
+  --color-ink-faint: #69726c;
+  --color-line: #bfc9c1;
+  --color-line2: #e7e9e5;
+  --color-primary: #2d6a4f;
+  --color-primary-strong: #0f5238;
+  --color-primary-soft: #a8e7c5;
+  --color-primary-tint: #f9faf6;
   --color-amber: #e0913b;
   --color-amber-soft: #fbead4;
   --color-amber-ink: #9a6314;
-  --color-coral: #e0604a;
-  --color-coral-soft: #fae1db;
-  --color-danger: #b23a2a;
-  --color-indigo: #6471de;
-  --color-indigo-soft: #e7e9fb;
+  --color-coral: #ba1a1a;
+  --color-coral-soft: #ffdad6;
+  --color-danger: #ba1a1a;
+  --color-indigo: #3e6750;
+  --color-indigo-soft: #bdeacd;
 
-  --radius-card: 1.25rem;
+  --radius-card: 1.5rem;
+  --radius-sm: 0.25rem;
+  --radius-default: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+  --font-display: var(--font-display), var(--font-sans);
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
 }
 
@@ -37,6 +41,12 @@ body {
   background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
 }
 
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {

@@ -7,7 +7,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   await requireCasa();
   return (
     <div className="min-h-screen bg-bg text-ink">
-      <header className="sticky top-0 z-10 border-b border-line bg-bg/90 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-line bg-surface/60 backdrop-blur-xl">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-2 text-lg font-black tracking-tight text-primary-strong">
